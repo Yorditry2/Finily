@@ -27,6 +27,7 @@ public:
     ShapeKind shapeKind() const { return m_shapeKind; }
     bool holdToShapeEnabled() const { return m_holdToShapeEnabled; }
     bool smartGuidesEnabled() const { return m_smartGuidesEnabled; }
+    bool mathBeautifyEnabled() const { return m_mathBeautifyEnabled; }
     bool swapPenButtons() const { return m_swapPenButtons; }
     bool hasSelectedShape() const { return !m_selectedShapeId.isEmpty(); }
     bool hasLassoSelection() const { return !m_selectedStrokeIds.isEmpty() || !m_selectedShapeIds.isEmpty(); }
@@ -59,6 +60,7 @@ public:
     void setShapeKind(ShapeKind kind);
     void setHoldToShapeEnabled(bool enabled);
     void setSmartGuidesEnabled(bool enabled);
+    void setMathBeautifyEnabled(bool enabled);
     void setSwapPenButtons(bool swapped);
     void setEraserMode(EraserMode mode);
     void setEraserSize(double size);
@@ -78,6 +80,8 @@ public:
     void deleteSelection();
     void duplicateSelection();
     void straightenSelection();
+    void convertSelectionToText();
+    bool saveSelectionAsTemplate(const QString& label);
     void clearSelection();
     bool pasteFromClipboard();
     bool importImageFile(const QString& filePath);
@@ -199,6 +203,7 @@ private:
     ShapeKind m_shapeKind = ShapeKind::Triangle;
     bool m_holdToShapeEnabled = true;
     bool m_smartGuidesEnabled = true;
+    bool m_mathBeautifyEnabled = true;
     EraserMode m_eraserMode = EraserMode::Stroke;
     double m_eraserSize = 18.0;
     QColor m_color = QColor("#f8fafc");

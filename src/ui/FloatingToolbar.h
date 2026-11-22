@@ -157,6 +157,10 @@ private:
     QVector<ToolType> m_writingKinds;
     QVector<QString> m_writingIcons;
     QWidget* m_dockDivider = nullptr;
+    static constexpr int kTrayDots = 5;          // tintas rápidas del estuche
+    QWidget* m_trayDivider = nullptr;
+    QVector<ColorDotButton*> m_trayDots;
+    QToolButton* m_trayMoreBtn = nullptr;
     QVector<QToolButton*> m_secondaryBtns;   // 6 herramientas duotono SVG: Figuras, Polilínea, Lazo, Texto, Láser, Mano
     QVector<ToolType> m_secondaryKinds;
     QVector<QString> m_secondaryIcons;
@@ -173,6 +177,8 @@ private:
     QToolButton* m_finishPolylineBtn = nullptr;
     QToolButton* m_closePolylineBtn = nullptr;
     QToolButton* m_straightenBtn = nullptr;
+    QToolButton* m_toTextBtn = nullptr;
+    QToolButton* m_saveTemplateBtn = nullptr;
     QToolButton* m_duplicateBtn = nullptr;
     QToolButton* m_deleteLassoBtn = nullptr;
     QToolButton* m_deleteShapeBtn = nullptr;
@@ -223,6 +229,7 @@ private:
     QSlider* m_stabilizerSlider = nullptr;
     QVector<QToolButton*> m_pressureBtns;
     QVector<PressureProfile> m_pressureSpecs;
+    QToolButton* m_mathBeautifyBtn = nullptr;
     QToolButton* m_eraserStrokeBtn = nullptr;
     QToolButton* m_eraserPartialBtn = nullptr;
     QLabel* m_eraserSizeLabel = nullptr;

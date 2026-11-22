@@ -1,8 +1,10 @@
 #include "CanvasWidget.h"
 #include "engine/InkEngine.h"
 #include "engine/GeometryEngine.h"
+#include "engine/HandwritingEngine.h"
 #include "engine/LassoEngine.h"
 #include "engine/PdfEngine.h"
+#include <QSettings>
 #include <QBuffer>
 #include <QClipboard>
 #include <QGuiApplication>
@@ -308,6 +310,7 @@ CanvasWidget::CanvasWidget(QWidget* parent):QWidget(parent),m_stabilizerFilter(s
         if(m_mode!=InteractionMode::None){m_autosaveTimer->start();return;}
         writeAutosaveNow();
     });
+    m_mathBeautifyEnabled=QSettings("Finily","Finily").value("ink/mathBeautify",true).toBool();
     m_pages.append(PageData{});loadAutosave();updateCursorShape();
 }
 CanvasWidget::~CanvasWidget() {
@@ -328,6 +331,12 @@ void CanvasWidget::setTool(ToolType tool) {
 void CanvasWidget::setShapeKind(ShapeKind kind) { m_shapeKind=kind;emit stateChanged(); }
 void CanvasWidget::setHoldToShapeEnabled(bool enabled) { m_holdToShapeEnabled=enabled;if(!enabled)m_holdTimer->stop();emit stateChanged(); }
 void CanvasWidget::setSmartGuidesEnabled(bool enabled) { m_smartGuidesEnabled=enabled;if(!enabled)m_activeGuides.clear();update();emit stateChanged(); }
+void CanvasWidget::setMathBeautifyEnabled(bool enabled) {
+    if(m_mathBeautifyEnabled==enabled)return;
+    m_mathBeautifyEnabled=enabled;
+    QSettings("Finily","Finily").setValue("ink/mathBeautify",enabled);
+    emit stateChanged();
+}
 void CanvasWidget::setSwapPenButtons(bool swapped) { m_swapPenButtons=swapped;saveAutosave();emit stateChanged(); }
 ShapeItem* CanvasWidget::findShapeById(const QString& id) {
     if(id.isEmpty())return nullptr;
@@ -380,6 +389,43 @@ void CanvasWidget::straightenSelection() {
     auto strokes=m_strokes;if(!straightenSelectedStrokes(strokes,m_selectedStrokeIds))return;
     pushUndoSnapshot(currentSnapshot());m_strokes=std::move(strokes);
     m_lassoBounds=computeSelectionBounds(m_strokes,m_shapes,m_selectedStrokeIds,m_selectedShapeIds);invalidateStaticCache();saveAutosave();emit stateChanged();emit toastRequested(QStringLiteral("Letras niveladas ✓"));
+}
+void CanvasWidget::convertSelectionToText() {
+    if(m_mode!=InteractionMode::None||m_selectedStrokeIds.isEmpty())return;
+    const QString recognized=HandwritingEngine::instance().recognizeStrokesToText(m_strokes,m_selectedStrokeIds);
+    if(recognized.trimmed().isEmpty()){emit toastRequested(QStringLiteral("No se reconoció texto en la selección"));return;}
+    const QRectF bounds=computeSelectionBounds(m_strokes,m_shapes,m_selectedStrokeIds,{});
+    QColor inkColor=m_color;
+    for(const auto& s:m_strokes)if(m_selectedStrokeIds.contains(s.id)){inkColor=s.color;break;}
+    pushUndoSnapshot(currentSnapshot());
+    m_strokes.removeIf([&](const Stroke& s){return m_selectedStrokeIds.contains(s.id);});
+    TextItem item;
+    item.id=freshId();
+    item.text=recognized;
+    item.color=inkColor;
+    const int lineCount=std::max(1,int(recognized.count(QLatin1Char('\n'))+1));
+    item.fontSize=std::clamp((bounds.height()/double(lineCount))*0.82,16.0,72.0);
+    item.pos=bounds.topLeft();
+    item.bounds=textBounds(item);
+    m_texts.append(item);
+    clearSelection();
+    m_selectedTextId=item.id;
+    invalidateStaticCache();saveAutosave();emit stateChanged();
+    emit toastRequested(QStringLiteral("Texto: «%1» ✓").arg(recognized.left(24)));
+}
+bool CanvasWidget::saveSelectionAsTemplate(const QString& label) {
+    if(m_mode!=InteractionMode::None||m_selectedStrokeIds.isEmpty()||label.trimmed().isEmpty())return false;
+    QVector<QVector<QPointF>> raw;
+    for(const auto& s:m_strokes) {
+        if(!m_selectedStrokeIds.contains(s.id)||s.points.size()<2)continue;
+        QVector<QPointF> pts;pts.reserve(s.points.size());
+        for(const auto& p:s.points)pts.append(QPointF(p.x,p.y));
+        raw.append(std::move(pts));
+    }
+    if(raw.isEmpty())return false;
+    if(!HandwritingEngine::instance().saveCustomTemplate(label,raw))return false;
+    emit toastRequested(QStringLiteral("Plantilla «%1» guardada ✓").arg(label.trimmed()));
+    return true;
 }
 bool CanvasWidget::pasteFromClipboard() {
     if(m_mode!=InteractionMode::None)return false;
@@ -1127,7 +1173,15 @@ void CanvasWidget::endInput(const QPointF& screen,Qt::KeyboardModifiers mods) {
         if(mods.testFlag(Qt::ShiftModifier))m_activeStroke.points={m_rawStartPoint,snappedPoint(m_rawStartPoint,end)};
         else if(distance({last.x,last.y},{end.x,end.y})>.001)m_activeStroke.points.append(end);
         pushUndoSnapshot(currentSnapshot());m_activeStroke.bounds=computeBounds(m_activeStroke.points,m_activeStroke.size*.7);
-        m_strokes.append(m_activeStroke);m_hasActiveStroke=false;invalidateStaticCache();
+        m_strokes.append(m_activeStroke);m_hasActiveStroke=false;
+        if(m_mathBeautifyEnabled&&!mods.testFlag(Qt::ShiftModifier)) {
+            QVector<Stroke> candidate=m_strokes;QString label;
+            if(HandwritingEngine::instance().beautifyRecentStrokes(candidate,&label)) {
+                pushUndoSnapshot(currentSnapshot()); // 1er Ctrl+Z vuelve al trazo original!
+                m_strokes=std::move(candidate);
+            }
+        }
+        invalidateStaticCache();
     } else if(m_mode==InteractionMode::ShapeCreate&&m_hasActiveShape) {
         // No artificial resize on release after recognition: a held pen can lift
         // at the same physical position without changing its recognized geometry.
