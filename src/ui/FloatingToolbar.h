@@ -161,6 +161,7 @@ private:
     QWidget* m_trayDivider = nullptr;
     QVector<ColorDotButton*> m_trayDots;
     QToolButton* m_trayMoreBtn = nullptr;
+    ColorDotButton* m_trayColorBtn = nullptr;
     QVector<QToolButton*> m_secondaryBtns;   // 6 herramientas duotono SVG: Figuras, Polilínea, Lazo, Texto, Láser, Mano
     QVector<ToolType> m_secondaryKinds;
     QVector<QString> m_secondaryIcons;
