@@ -8,6 +8,7 @@
 #include <QVector>
 #include <QWidget>
 
+class QButtonGroup;
 class QFrame;
 class QLabel;
 class QPropertyAnimation;
@@ -25,16 +26,26 @@ class ColorDotButton;      // punto de color antialias con anillo de selección 
 class StrokePreviewWidget; // punto de vista previa del trazo (definido en el .cpp)
 
 // Barra flotante minimalista estilo StarNote/Freenotes que se superpone al
-// CanvasWidget: pill superior (deshacer/rehacer, herramientas, presets de
-// tinta, popovers "Trazo" y "Papel", modo interfaz limpia) más una pill de
-// zoom en la esquina inferior derecha. Todo el cromo visual se deriva de
-// ThemeConfig: las superficies son GlassCapsule pintadas a mano (el estilo de
-// sistema Qt6 — Caelestia/KDE — jamás las sobreescribe) y los controles usan
-// QSS explícito con background transparent.
+// CanvasWidget con el cromo dividido en DOS cápsulas de cristal despejadas:
+//   1. Pill compacta de utilidades (arriba-izquierda): Inicio, Deshacer/Rehacer,
+//      popovers "Trazo", "Papel" y "Archivo", y modo interfaz limpia.
+//   2. Dock vertical de papelería (izquierda por defecto, acoplable
+//      Arriba/Abajo desde "Papel"): instrumentos realistas pintados a mano
+//      (pluma fuente, 5 bolígrafos de colores favoritos, borrador rosa) con
+//      animación táctil de deslizamiento, más un divisor y las herramientas
+//      secundarias compactas debajo.
+// Todo el cromo visual se deriva de ThemeConfig: las superficies son
+// GlassCapsule pintadas a mano (el estilo de sistema Qt6 — Caelestia/KDE —
+// jamás las sobreescribe) y los controles usan QSS explícito con background
+// transparent. Pill de zoom (abajo-derecha) y pill de páginas (abajo-izquierda)
+// completan el cromo.
 class FloatingToolbar : public QWidget {
     Q_OBJECT
 
 public:
+    // Posición acoplable del dock de papelería ("Posición de barra").
+    enum class DockPos { Izquierda, Arriba, Abajo };
+
     explicit FloatingToolbar(CanvasWidget* canvas, QWidget* parent = nullptr);
 
     // Sincroniza botones, sliders, presets y tema con el estado del lienzo.
@@ -65,6 +76,10 @@ public:
     // se sostiene 1.2 s y se desvanece sola (también alimenta updateOverlayMask).
     void showToast(const QString& message);
 
+signals:
+    // Botón 'Inicio' de la pill: volver a la biblioteca de cuadernos.
+    void homeRequested();
+
 protected:
     void resizeEvent(QResizeEvent* event) override;
     void tabletEvent(QTabletEvent* event) override;
@@ -74,7 +89,9 @@ private:
     void initPresets();
     void loadPresets();
     void savePresets();
-    void buildPill();
+    void buildUtilityPill();
+    void buildDock();
+    void layoutDock();
     void buildZoomPill();
     void buildPagePill();
     void buildRestoreButton();
@@ -98,13 +115,13 @@ private:
     void refreshShadowColors();
     // Punto de vista previa en vivo del popover "Trazo".
     void updateStrokePreview();
-    // Posición acoplable de la barra ("Barra arriba" / "Barra abajo").
+    // Posición acoplable del dock ("Posición de barra": Izquierda/Arriba/Abajo).
     void loadDockPosition();
-    void setDockBottom(bool bottom);
+    void setDockPosition(DockPos pos);
 
     void setColor(const QColor& color);
     void syncActivePresetFromCanvas();
-    void updatePresetDots();
+    void updateStationery();
     void updateZoomLabel();
     void onClearClicked();
     void disarmClearButton();
@@ -123,16 +140,27 @@ private:
     bool m_updatingUi = false;
     QString m_lastStateSig;
 
-    // Pill principal (superior, centrada) — cápsula de cristal antialias
+    // Pill compacta de utilidades (arriba-izquierda) — cápsula de cristal
     GlassCapsule* m_pill = nullptr;
+    QToolButton* m_homeBtn = nullptr;
     QToolButton* m_undoBtn = nullptr;
     QToolButton* m_redoBtn = nullptr;
-    QVector<ToolType> m_toolKinds;
-    QVector<QToolButton*> m_toolBtns;
-    QVector<ColorDotButton*> m_presetDots;
     QToolButton* m_strokeBtn = nullptr;
     QToolButton* m_paperBtn = nullptr;
     QToolButton* m_cleanBtn = nullptr;
+
+    // Dock vertical de papelería (izquierda por defecto) — cápsula de cristal
+    GlassCapsule* m_dock = nullptr;
+    DockPos m_dockPos = DockPos::Izquierda;
+    QButtonGroup* m_toolGroup = nullptr;     // selección exclusiva de las 10 herramientas
+    QVector<QToolButton*> m_writingBtns;     // 4 útiles ilustrados SVG: Pluma, Bolígrafo, Resaltador, Borrador
+    QVector<ToolType> m_writingKinds;
+    QVector<QString> m_writingIcons;
+    QWidget* m_dockDivider = nullptr;
+    QVector<QToolButton*> m_secondaryBtns;   // 6 herramientas duotono SVG: Figuras, Polilínea, Lazo, Texto, Láser, Mano
+    QVector<ToolType> m_secondaryKinds;
+    QVector<QString> m_secondaryIcons;
+    QString m_lastInkIconSig;
 
     // Popover "Figuras" y barra contextual de figuras/polilínea
     GlassCapsule* m_shapesPopover = nullptr;
@@ -205,6 +233,10 @@ private:
     QVector<QToolButton*> m_themeBtns;
     QVector<ThemeId> m_themeSpecs;
     QVector<QToolButton*> m_templateBtns;
+    QVector<QPair<QToolButton*, BackgroundTemplate>> m_templateSpecs;
+    // Formato de hoja: Infinita / Hoja A4 / Diapo 16:9
+    QVector<QToolButton*> m_formatBtns;
+    QVector<PageFormat> m_formatSpecs;
     QPushButton* m_clearBtn = nullptr;
     QTimer* m_clearTimer = nullptr;
 
@@ -226,15 +258,15 @@ private:
     // Vista previa en vivo del color/grosor de tinta (popover "Trazo").
     StrokePreviewWidget* m_strokePreview = nullptr;
 
-    // Posición acoplable de la barra: false = arriba (por defecto).
-    bool m_toolbarBottom = false;
+    // Botones segmentados "Posición de barra" en el popover "Papel".
+    QToolButton* m_dockLeftBtn = nullptr;
     QToolButton* m_dockTopBtn = nullptr;
     QToolButton* m_dockBottomBtn = nullptr;
 
     // Iconos (re)pintados con el color de texto del tema activo
+    QVector<QPair<QToolButton*, QString>> m_studioUtilSpecs;
     QVector<QPair<QToolButton*, QString>> m_iconSpecs;
     QVector<QPair<QToolButton*, LinePattern>> m_patternSpecs;
-    QVector<QPair<QToolButton*, BackgroundTemplate>> m_templateSpecs;
 };
 
 } // namespace finily

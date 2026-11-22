@@ -46,6 +46,7 @@ public:
     PressureProfile pressureProfile() const { return m_pressureProfile; }
     ThemeId themeId() const { return m_themeId; }
     BackgroundTemplate backgroundTemplate() const { return m_template; }
+    PageFormat pageFormat() const { return m_pageFormat; }
     Viewport viewport() const { return m_viewport; }
     bool canUndo() const { return !m_undoStack.isEmpty(); }
     bool canRedo() const { return !m_redoStack.isEmpty(); }
@@ -68,6 +69,7 @@ public:
     void setPressureProfile(PressureProfile profile);
     void setThemeId(ThemeId themeId);
     void setBackgroundTemplate(BackgroundTemplate tpl);
+    void setPageFormat(PageFormat format);
 
     // Shape, polyline, lasso, image & PDF actions
     void finishActivePolyline(bool closeShape = false);
@@ -206,6 +208,7 @@ private:
     PressureProfile m_pressureProfile = PressureProfile::Light;
     ThemeId m_themeId = ThemeId::DarkBoard;
     BackgroundTemplate m_template = BackgroundTemplate::Dots;
+    PageFormat m_pageFormat = PageFormat::Infinite;
     Viewport m_viewport;
 
     // Live interaction state

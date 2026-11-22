@@ -72,6 +72,12 @@ enum class BackgroundTemplate {
     Ruled
 };
 
+enum class PageFormat {
+    Infinite,
+    A4,
+    Slide16x9
+};
+
 enum class ThemeId {
     DarkBoard,
     GreenBoard,

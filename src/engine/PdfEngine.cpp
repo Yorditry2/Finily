@@ -57,7 +57,7 @@ QRectF strokeBounds(const Stroke& s) {
         }
         return bounds;
 }
-QVector<QRectF> pdfPageBounds(const PageData& document) {
+QVector<QRectF> pdfPageBounds(const PageData& document,PageFormat pageFormat) {
     const auto& strokes=document.strokes;const auto& shapes=document.shapes;const auto& images=document.images;const auto& texts=document.texts;
     QVector<QRectF> pages;QVector<const ImageItem*> pdfPages;
     for(const auto& image:images)if(image.isPdfPage&&!image.rect.isEmpty())pdfPages.append(&image);
@@ -67,8 +67,15 @@ QVector<QRectF> pdfPageBounds(const PageData& document) {
         for(const auto& s:shapes)add(computeShapeBounds(s));
         for(const auto& image:images)add(image.rect);
         for(const auto& item:texts)add(textBounds(item));
-        if(first)bounds=QRectF(0,0,1000,700);
-        pages.append(bounds.adjusted(-40,-40,40,40));
+        const auto sheet=sheetRectForPageFormat(pageFormat);
+        if(!sheet.isEmpty()) {
+            QRectF extent=sheet;
+            if(!first&&!sheet.contains(bounds))extent=extent.united(bounds.adjusted(-20,-20,20,20));
+            pages.append(extent);
+        } else {
+            if(first)bounds=QRectF(0,0,1000,700);
+            pages.append(bounds.adjusted(-40,-40,40,40));
+        }
     } else {
         for(auto* page:pdfPages)pages.append(page->rect);
         // Each annotation belongs to its closest slide. Include marginal notes
@@ -89,15 +96,15 @@ QVector<QRectF> pdfPageBounds(const PageData& document) {
 }
 } // namespace
 bool exportDocumentToPdf(const QString& path,const QVector<Stroke>& strokes,const QVector<ShapeItem>& shapes,const QVector<ImageItem>& images,const ThemeConfig& theme,BackgroundTemplate tpl,const QVector<TextItem>& texts) {
-    return exportPagesToPdf(path,{PageData{strokes,shapes,images,texts,{}}},theme,tpl);
+    return exportPagesToPdf(path,{PageData{strokes,shapes,images,texts,{},{},{}}},theme,tpl);
 }
-bool exportPagesToPdf(const QString& path,const QVector<PageData>& notebook,const ThemeConfig& theme,BackgroundTemplate tpl) {
+bool exportPagesToPdf(const QString& path,const QVector<PageData>& notebook,const ThemeConfig& theme,BackgroundTemplate tpl,PageFormat pageFormat) {
     // Keep the logical page attached to every PDF sheet: equal world coordinates
     // on different notebook pages must never merge their annotations.
     const QVector<PageData> documents=notebook.isEmpty()?QVector<PageData>{PageData{}}:notebook;
     struct Sheet { qsizetype document;QRectF rect; };
     QVector<Sheet> pages;
-    for(qsizetype i=0;i<documents.size();++i)for(const auto& rect:pdfPageBounds(documents[i]))pages.append({i,rect});
+    for(qsizetype i=0;i<documents.size();++i)for(const auto& rect:pdfPageBounds(documents[i],pageFormat))pages.append({i,rect});
     QSaveFile output(path);if(!output.open(QIODevice::WriteOnly))return false;
     bool success=true;
     {
@@ -105,7 +112,7 @@ bool exportPagesToPdf(const QString& path,const QVector<PageData>& notebook,cons
         auto layout=[&](QRectF rect) {
             // One world pixel is 0.75pt; coordinates remain vector paths.
             const QSizeF millimeters=rect.size()*std::min(25.4/96.0,4800.0/std::max(rect.width(),rect.height()));
-            return writer.setPageLayout(QPageLayout(QPageSize(millimeters,QPageSize::Millimeter),QPageLayout::Portrait,QMarginsF(),QPageLayout::Millimeter));
+            return writer.setPageLayout(QPageLayout(QPageSize(millimeters,QPageSize::Millimeter,QString(),QPageSize::ExactMatch),QPageLayout::Portrait,QMarginsF(),QPageLayout::Millimeter));
         };
         if(!layout(pages.front().rect))return false;
         QPainter painter;if(!painter.begin(&writer))return false;
@@ -115,7 +122,15 @@ bool exportPagesToPdf(const QString& path,const QVector<PageData>& notebook,cons
             if(page>0){if(!layout(rect)||!writer.newPage()){success=false;break;}}
             painter.save();painter.setRenderHint(QPainter::Antialiasing);painter.setRenderHint(QPainter::SmoothPixmapTransform);
             painter.scale(double(writer.width())/rect.width(),double(writer.height())/rect.height());painter.translate(-rect.left(),-rect.top());painter.setClipRect(rect);
-            painter.fillRect(rect,theme.background);drawBackgroundTemplate(painter,tpl,theme,Viewport{},rect);
+            const bool imported=std::any_of(images.cbegin(),images.cend(),[](const ImageItem& image){return image.isPdfPage&&!image.rect.isEmpty();});
+            const auto sheet=imported?QRectF():sheetRectForPageFormat(pageFormat);
+            if(sheet.isEmpty()) {
+                painter.fillRect(rect,theme.background);drawBackgroundTemplate(painter,tpl,theme,Viewport{},rect);
+            } else {
+                painter.fillRect(rect,theme.isDark?QColor("#0c0e13"):QColor("#e6e7ec"));
+                painter.save();painter.setClipRect(sheet,Qt::IntersectClip);
+                painter.fillRect(sheet,theme.background);drawBackgroundTemplate(painter,tpl,theme,Viewport{},sheet);painter.restore();
+            }
             for(int pass=0;pass<2;++pass)for(const auto& image:images)if(image.isPdfPage==(pass==0)&&image.rect.intersects(rect)&&!image.image.isNull())painter.drawImage(image.rect,image.image);
             for(const auto& s:strokes)if(s.tool==ToolType::Highlighter&&strokeBounds(s).intersects(rect))drawStroke(painter,s);
             for(const auto& s:shapes)if(computeShapeBounds(s).intersects(rect))drawShape(painter,s);

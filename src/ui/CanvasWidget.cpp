@@ -49,6 +49,13 @@ HighlighterLayers& highlighterLayers(CanvasWidget* widget) {
     auto* child=widget->findChild<QObject*>(QStringLiteral("_finily_highlighter_layers"),Qt::FindDirectChildrenOnly);
     return child?*static_cast<HighlighterLayers*>(child):*new HighlighterLayers(widget);
 }
+Viewport fittedSheetViewport(PageFormat format,const QSize& size) {
+    const auto sheet=sheetRectForPageFormat(format);
+    if(sheet.isEmpty())return {};
+    const double zoom=std::clamp(std::min(std::max(1.0,size.width()-96.0)/sheet.width(),
+        std::max(1.0,size.height()-96.0)/sheet.height()),0.2,5.0);
+    return {size.width()/2.0-sheet.center().x()*zoom,size.height()/2.0-sheet.center().y()*zoom,zoom};
+}
 qint64 nowMs() { static const QElapsedTimer timer=[] { QElapsedTimer t;t.start();return t; }();return timer.elapsed(); }
 QString autosavePath() { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)+QStringLiteral("/autosave.json"); }
 QJsonObject strokeJson(const Stroke& s) {
@@ -107,9 +114,9 @@ void finishTextEditor(CanvasWidget* widget,bool accept) {
     for(auto* child:widget->findChildren<QLineEdit*>(QStringLiteral("_finily_text_editor"),Qt::FindDirectChildrenOnly))
         static_cast<InlineTextEditor*>(child)->finish(accept);
 }
-QJsonObject documentSettings(ShapeKind kind,bool hold,bool guides,bool swap,PressureProfile profile,ThemeId theme,BackgroundTemplate tpl,Viewport viewport) {
+QJsonObject documentSettings(ShapeKind kind,bool hold,bool guides,bool swap,PressureProfile profile,ThemeId theme,BackgroundTemplate tpl,Viewport viewport,PageFormat pageFormat) {
     return {{"shapeKind",int(kind)},{"holdToShapeEnabled",hold},{"smartGuidesEnabled",guides},{"swapPenButtons",swap},
-        {"pressureProfile",int(profile)},{"theme",int(theme)},{"template",int(tpl)},
+        {"pressureProfile",int(profile)},{"theme",int(theme)},{"template",int(tpl)},{"pageFormat",int(pageFormat)},
         {"viewport",QJsonObject{{"x",viewport.x},{"y",viewport.y},{"zoom",viewport.zoom}}}};
 }
 struct PngCache { QHash<qint64,QString> previous,next; };
@@ -234,7 +241,7 @@ PageData deserializePage(const QJsonObject& root,QHash<QString,QVector<ImageItem
     const auto view=root.value("viewport").toObject();
     const double x=view.value("x").toDouble(),y=view.value("y").toDouble(),zoom=view.value("zoom").toDouble(1);
     Viewport viewport;if(finite(x)&&finite(y)&&finite(zoom))viewport={x,y,std::clamp(zoom,.2,5.0)};
-    return {loaded,loadedShapes,loadedImages,loadedTexts,viewport};
+    return {loaded,loadedShapes,loadedImages,loadedTexts,viewport,{},{}};
 }
 void syncWorkingPage(QVector<PageData>& pages,int& index,const DocumentSnapshot& document,Viewport viewport) {
     if(pages.isEmpty())pages.append(PageData{});
@@ -413,7 +420,7 @@ bool CanvasWidget::exportToPdf(const QString& path) const {
     if(m_polylineActive)self->finishActivePolyline();
     if(m_mode!=InteractionMode::None)return false;
     syncWorkingPage(self->m_pages,self->m_currentPageIndex,currentSnapshot(),m_viewport);
-    const bool saved=exportPagesToPdf(path,m_pages,getThemeConfig(m_themeId),m_template);
+    const bool saved=exportPagesToPdf(path,m_pages,getThemeConfig(m_themeId),m_template,m_pageFormat);
     if(saved)emit self->toastRequested(QStringLiteral("PDF exportado ✓"));
     return saved;
 }
@@ -518,6 +525,14 @@ void CanvasWidget::setThemeId(ThemeId id) {
     invalidateStaticCache();saveAutosave();emit stateChanged();
 }
 void CanvasWidget::setBackgroundTemplate(BackgroundTemplate tpl) { m_template=tpl;invalidateStaticCache();saveAutosave();emit stateChanged(); }
+void CanvasWidget::setPageFormat(PageFormat format) {
+    if(format!=PageFormat::Infinite&&format!=PageFormat::A4&&format!=PageFormat::Slide16x9)return;
+    if(m_pageFormat==format)return;
+    m_pageFormat=format;m_dirty=true;
+    m_zoomAnimation->stop();clearPenCursor();
+    if(format!=PageFormat::Infinite)m_viewport=fittedSheetViewport(format,size());
+    invalidateStaticCache();saveAutosave();emit stateChanged();emit viewportChanged(m_viewport.zoom);
+}
 QPointF CanvasWidget::screenToWorld(const QPointF& p) const { return {(p.x()-m_viewport.x)/m_viewport.zoom,(p.y()-m_viewport.y)/m_viewport.zoom}; }
 void CanvasWidget::zoomByFactor(double factor,const QPointF& anchor) {
     if(!finite(factor)||factor<=0)return;
@@ -540,7 +555,10 @@ void CanvasWidget::animateZoom(double factor) {
 }
 void CanvasWidget::zoomIn() { animateZoom(1.2); }
 void CanvasWidget::zoomOut() { animateZoom(1/1.2); }
-void CanvasWidget::resetViewport() { animateViewport(Viewport{}); }
+void CanvasWidget::resetViewport() {
+    animateViewport(fittedSheetViewport(m_pageFormat,size()));
+    saveAutosave();
+}
 void CanvasWidget::goToPage(int index) {
     finishTextEditor(this,true);if(m_polylineActive)finishActivePolyline();
     if(m_mode==InteractionMode::LaserTrail)m_mode=InteractionMode::None;
@@ -561,7 +579,7 @@ void CanvasWidget::addPage() {
     if(m_mode==InteractionMode::LaserTrail)m_mode=InteractionMode::None;
     if(m_mode!=InteractionMode::None)return;
     syncWorkingPage(m_pages,m_currentPageIndex,currentSnapshot(),m_viewport);
-    const int next=m_currentPageIndex+1;m_pages.insert(next,PageData{});m_dirty=true;goToPage(next);emit stateChanged();
+    const int next=m_currentPageIndex+1;PageData page;page.viewport=fittedSheetViewport(m_pageFormat,size());m_pages.insert(next,page);m_dirty=true;goToPage(next);emit stateChanged();
     emit toastRequested(QStringLiteral("Página %1 / %2").arg(m_currentPageIndex+1).arg(pageCount()));
 }
 void CanvasWidget::nextPage() { goToPage(m_currentPageIndex+1); }
@@ -581,7 +599,7 @@ void CanvasWidget::deleteCurrentPage() {
 bool CanvasWidget::currentPageHasContent() const { return !m_strokes.isEmpty()||!m_shapes.isEmpty()||!m_images.isEmpty()||!m_texts.isEmpty(); }
 bool CanvasWidget::hasUnsavedChanges() const {
     if(!m_dirty)return false;
-    if(currentPageHasContent()||m_pages.size()>1)return true;
+    if(currentPageHasContent()||m_pages.size()>1||m_pageFormat!=PageFormat::Infinite)return true;
     return !m_currentFilePath.isEmpty(); // un cuaderno guardado que se vació también es un cambio
 }
 DocumentSnapshot CanvasWidget::currentSnapshot() const { return {m_strokes,m_shapes,m_images,m_texts}; }
@@ -613,13 +631,13 @@ void CanvasWidget::newDocument() {
     m_mode=InteractionMode::None;m_tabletActive=false;m_hasActiveStroke=false;m_hasActiveShape=false;m_holdSnappedToShape=false;
     cancelActivePolyline();m_strokes.clear();m_shapes.clear();m_images.clear();m_texts.clear();m_currentFilePath.clear();
     m_pages={PageData{}};m_currentPageIndex=0;m_dirty=false;
-    m_undoStack.clear();m_redoStack.clear();m_showEraserCursor=false;clearSelection();m_viewport={};emit viewportChanged(m_viewport.zoom);updateCursorShape();saveAutosave();emit stateChanged();
+    m_undoStack.clear();m_redoStack.clear();m_showEraserCursor=false;clearSelection();m_viewport=fittedSheetViewport(m_pageFormat,size());emit viewportChanged(m_viewport.zoom);updateCursorShape();saveAutosave();emit stateChanged();
 }
 bool CanvasWidget::saveToFile(const QString& path) {
     finishTextEditor(this,true);if(m_polylineActive)finishActivePolyline();
     if(path.isEmpty()||m_mode!=InteractionMode::None)return false;
     syncWorkingPage(m_pages,m_currentPageIndex,currentSnapshot(),m_viewport);
-    if(!serializeDocumentToFile(path,m_pages,m_currentPageIndex,documentSettings(m_shapeKind,m_holdToShapeEnabled,m_smartGuidesEnabled,m_swapPenButtons,m_pressureProfile,m_themeId,m_template,m_viewport)))return false;
+    if(!serializeDocumentToFile(path,m_pages,m_currentPageIndex,documentSettings(m_shapeKind,m_holdToShapeEnabled,m_smartGuidesEnabled,m_swapPenButtons,m_pressureProfile,m_themeId,m_template,m_viewport,m_pageFormat)))return false;
     m_currentFilePath=path;m_dirty=false;saveAutosave();emit stateChanged();emit toastRequested(QStringLiteral("Guardado ✓"));return true;
 }
 void CanvasWidget::saveAutosave() const { m_autosaveTimer->start(); }
@@ -634,7 +652,7 @@ void CanvasWidget::writeAutosaveNow() const {
     const auto path=autosavePath();if(!QDir().mkpath(QFileInfo(path).absolutePath()))return;
     auto* self=const_cast<CanvasWidget*>(this);
     syncWorkingPage(self->m_pages,self->m_currentPageIndex,document,m_viewport);
-    auto settings=documentSettings(m_shapeKind,m_holdToShapeEnabled,m_smartGuidesEnabled,m_swapPenButtons,m_pressureProfile,m_themeId,m_template,m_viewport);
+    auto settings=documentSettings(m_shapeKind,m_holdToShapeEnabled,m_smartGuidesEnabled,m_swapPenButtons,m_pressureProfile,m_themeId,m_template,m_viewport,m_pageFormat);
     // Datos de sesión: al reabrir la app se recupera el cuaderno asociado y si
     // tenía cambios sin guardar (los .finily del usuario nunca los llevan).
     settings.insert("sessionFilePath",m_currentFilePath);settings.insert("sessionDirty",m_dirty);
@@ -670,6 +688,8 @@ bool CanvasWidget::loadFromFile(const QString& path) {
     m_swapPenButtons=root.value("swapPenButtons").toBool(false);
     const int profile=root.value("pressureProfile").toInt(int(PressureProfile::Light));
     if(profile>=int(PressureProfile::Light)&&profile<=int(PressureProfile::Firm))m_pressureProfile=PressureProfile(profile);
+    const int format=root.value("pageFormat").toInt(int(PageFormat::Infinite));
+    m_pageFormat=format>=int(PageFormat::Infinite)&&format<=int(PageFormat::Slide16x9)?PageFormat(format):PageFormat::Infinite;
     const int theme=root.value("theme").toInt(0),tpl=root.value("template").toInt(2);
     if(theme>=0&&theme<=int(ThemeId::PaperCream))m_themeId=ThemeId(theme);
     if(tpl>=0&&tpl<=int(BackgroundTemplate::Ruled))m_template=BackgroundTemplate(tpl);
@@ -685,10 +705,26 @@ void CanvasWidget::rebuildStaticCache() {
     if(m_staticCache.size()!=pixels||m_staticCache.devicePixelRatio()!=dpr) {
         m_staticCache=QImage(pixels,QImage::Format_ARGB32_Premultiplied);m_staticCache.setDevicePixelRatio(dpr);
     }
-    const auto theme=getThemeConfig(m_themeId);m_staticCache.fill(theme.background);
+    const auto theme=getThemeConfig(m_themeId);
+    const auto sheet=sheetRectForPageFormat(m_pageFormat);
+    m_staticCache.fill(sheet.isEmpty()?theme.background:(theme.isDark?QColor("#0c0e13"):QColor("#e6e7ec")));
     QPainter p(&m_staticCache);p.translate(m_viewport.x,m_viewport.y);p.scale(m_viewport.zoom,m_viewport.zoom);
     const QRectF visible(screenToWorld(QPointF(0,0)),screenToWorld(QPointF(width(),height())));
-    drawBackgroundTemplate(p,m_template,theme,m_viewport,visible);
+    if(sheet.isEmpty())drawBackgroundTemplate(p,m_template,theme,m_viewport,visible);
+    else {
+        p.save();p.setRenderHint(QPainter::Antialiasing);p.setPen(Qt::NoPen);
+        const QRectF shadow=sheet.translated(0,6/m_viewport.zoom);
+        for(int layer=12;layer>=1;--layer) {
+            const double spread=layer/m_viewport.zoom;
+            p.setBrush(QColor(0,0,0,theme.isDark?5:3));
+            p.drawRoundedRect(shadow.adjusted(-spread,-spread,spread,spread),spread,spread);
+        }
+        p.fillRect(sheet,theme.background);
+        p.save();p.setClipRect(sheet,Qt::IntersectClip);
+        drawBackgroundTemplate(p,m_template,theme,m_viewport,sheet.intersected(visible));p.restore();
+        p.setBrush(Qt::NoBrush);QPen border(theme.isDark?QColor(255,255,255,24):QColor(15,23,42,26));
+        border.setWidthF(1/m_viewport.zoom);p.setPen(border);p.drawRect(sheet);p.restore();
+    }
     p.setRenderHint(QPainter::SmoothPixmapTransform);
     for(int pass=0;pass<2;++pass)for(const auto& image:m_images) {
         if(image.isPdfPage!=(pass==0)||image.id==m_selectedImageId||!image.rect.intersects(visible))continue;

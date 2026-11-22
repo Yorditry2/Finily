@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Pdf)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Pdf Svg)
 
 add_executable(finily
     src/main.cpp
@@ -20,11 +20,15 @@ add_executable(finily
     src/engine/PdfEngine.cpp
     src/ui/CanvasWidget.h
     src/ui/CanvasWidget.cpp
+    src/ui/IconLibrary.h
+    src/ui/IconLibrary.cpp
     src/ui/FloatingToolbar.h
     src/ui/FloatingToolbar.cpp
+    src/ui/HomeScreen.h
+    src/ui/HomeScreen.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
 )
 
 target_include_directories(finily PRIVATE src)
-target_link_libraries(finily PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Pdf)
+target_link_libraries(finily PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Pdf Qt6::Svg)

@@ -2,7 +2,9 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QFileInfo>
 #include <QGuiApplication>
+#include <QStringList>
 
 int main(int argc, char* argv[]) {
     // Qt 6 activa el escalado High-DPI por defecto; fijamos la política de redondeo.
@@ -22,6 +24,15 @@ int main(int argc, char* argv[]) {
 
     finily::MainWindow window;
     window.show();
+
+    // Doble clic en un .finily / .pdf (o 'finily archivo.finily'): abrir directo
+    // en el editor; sin argumento, arranca limpio en la biblioteca.
+    const QStringList arguments = QApplication::arguments();
+    if (arguments.size() > 1) {
+        const QString path = arguments.value(1);
+        if (!path.isEmpty() && QFileInfo::exists(path))
+            window.openInitialFile(path);
+    }
 
     return QApplication::exec();
 }

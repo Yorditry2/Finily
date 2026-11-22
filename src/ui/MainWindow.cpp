@@ -2,15 +2,18 @@
 
 #include "ui/CanvasWidget.h"
 #include "ui/FloatingToolbar.h"
+#include "ui/HomeScreen.h"
 
 #include <QCloseEvent>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QKeySequence>
 #include <QShortcut>
 #include <QSocketNotifier>
+#include <QStackedWidget>
 #include <QWidget>
 
 #include <fcntl.h>
@@ -25,12 +28,20 @@ MainWindow::MainWindow() {
     resize(1360, 840);
     setMinimumSize(960, 640);
 
-    // Contenedor plano: el lienzo y la barra son HERMANOS (la barra NO es hija
-    // del lienzo). Así, los QTabletEvent ignorados por la barra se propagan al
-    // contenedor sin ser aceptados por CanvasWidget::tabletEvent() y Qt genera
-    // los clics de mouse sintéticos que hacen funcionales los botones con lápiz.
-    m_container = new QWidget(this);
-    setCentralWidget(m_container);
+    // Dos páginas: 0 = biblioteca (HomeScreen), 1 = editor. El editor vive en
+    // un contenedor plano donde el lienzo y la barra son HERMANOS (la barra NO
+    // es hija del lienzo). Así, los QTabletEvent ignorados por la barra se
+    // propagan al contenedor sin ser aceptados por CanvasWidget::tabletEvent()
+    // y Qt genera los clics de mouse sintéticos que hacen funcionales los
+    // botones con lápiz.
+    m_stack = new QStackedWidget(this);
+    setCentralWidget(m_stack);
+
+    m_homeScreen = new HomeScreen(m_stack);
+    m_stack->addWidget(m_homeScreen); // página 0
+
+    m_container = new QWidget(m_stack);
+    m_stack->addWidget(m_container); // página 1
 
     m_canvas = new CanvasWidget(m_container);
 
@@ -43,6 +54,78 @@ MainWindow::MainWindow() {
     // Título de ventana sincronizado con el cuaderno (.finily) actual.
     connect(m_canvas, &CanvasWidget::stateChanged, this, &MainWindow::updateWindowTitle);
     updateWindowTitle();
+
+    // --- Conexiones HomeScreen -> editor / biblioteca ---
+    connect(m_homeScreen, &HomeScreen::createNotebookRequested, this,
+            [this](const QString& path, ThemeId theme, BackgroundTemplate tpl, PageFormat format) {
+                if (!m_canvas)
+                    return;
+                m_canvas->newDocument();
+                m_canvas->setThemeId(theme);
+                m_canvas->setBackgroundTemplate(tpl);
+                m_canvas->setPageFormat(format);
+                m_canvas->saveToFile(path);
+                showEditorPage();
+                m_toolbar->refreshFromCanvas();
+                m_canvas->setFocus();
+            });
+    connect(m_homeScreen, &HomeScreen::openNotebookRequested, this, [this](const QString& path) {
+        if (!m_canvas)
+            return;
+        m_canvas->loadFromFile(path);
+        showEditorPage();
+        m_toolbar->refreshFromCanvas();
+        m_canvas->setFocus();
+    });
+    connect(m_homeScreen, &HomeScreen::importPdfFromHomeRequested, this, [this] {
+        if (!m_canvas)
+            return;
+        const QString pdfPath = QFileDialog::getOpenFileName(this, QStringLiteral("Importar PDF"),
+                                                             QString(),
+                                                             QStringLiteral("Archivos PDF (*.pdf)"));
+        if (pdfPath.isEmpty())
+            return;
+        m_canvas->newDocument();
+        m_canvas->importPdfFile(pdfPath);
+        showEditorPage();
+        m_toolbar->refreshFromCanvas();
+        m_canvas->setFocus();
+    });
+    connect(m_homeScreen, &HomeScreen::openExternalFileRequested, this, [this] {
+        if (!m_canvas)
+            return;
+        const QString path =
+            QFileDialog::getOpenFileName(this, QStringLiteral("Abrir cuaderno"), QString(),
+                                         QStringLiteral("Cuaderno Finily (*.finily)"));
+        if (path.isEmpty())
+            return;
+        m_canvas->loadFromFile(path);
+        showEditorPage();
+        m_toolbar->refreshFromCanvas();
+        m_canvas->setFocus();
+    });
+    connect(m_homeScreen, &HomeScreen::continueDraftRequested, this, [this] {
+        if (!m_canvas)
+            return;
+        m_canvas->loadAutosave();
+        showEditorPage();
+        m_toolbar->refreshFromCanvas();
+        m_canvas->setFocus();
+    });
+
+    // Botón 'Inicio' de la pill: guardar y volver a la biblioteca.
+    connect(m_toolbar, &FloatingToolbar::homeRequested, this, [this] {
+        if (!m_canvas)
+            return;
+        if (!m_canvas->currentFilePath().isEmpty())
+            m_canvas->saveToFile(m_canvas->currentFilePath());
+        else {
+            m_canvas->saveAutosave();   // programa el autoguardado
+            m_canvas->flushAutosave();  // y lo escribe ya antes de salir
+        }
+        m_homeScreen->refreshLibrary();
+        showHomePage();
+    });
 
     installShortcuts();
     setupWacomPadListener();
@@ -61,6 +144,44 @@ MainWindow::~MainWindow() {
         ::close(m_padFd);
         m_padFd = -1;
     }
+}
+
+void MainWindow::openInitialFile(const QString& path) {
+    if (!m_canvas)
+        return;
+    const QFileInfo info(path);
+    if (!info.exists() || !info.isFile())
+        return; // sin archivo válido: arranca limpio en la pantalla de inicio
+    const QString suffix = info.suffix().toLower();
+    if (suffix == QLatin1String("pdf")) {
+        m_canvas->newDocument();
+        m_canvas->importPdfFile(info.absoluteFilePath());
+        showEditorPage();
+        m_toolbar->refreshFromCanvas();
+        m_canvas->setFocus();
+    } else if (suffix == QLatin1String("finily")) {
+        m_canvas->loadFromFile(info.absoluteFilePath());
+        showEditorPage();
+        m_toolbar->refreshFromCanvas();
+        m_canvas->setFocus();
+    }
+}
+
+void MainWindow::showEditorPage() {
+    if (m_stack)
+        m_stack->setCurrentWidget(m_container);
+    layoutChildren();
+    if (m_toolbar) {
+        m_toolbar->raise();
+        m_toolbar->refreshFromCanvas();
+    }
+    updateWindowTitle();
+}
+
+void MainWindow::showHomePage() {
+    if (m_stack)
+        m_stack->setCurrentWidget(m_homeScreen);
+    setWindowTitle(tr("Finily — Biblioteca"));
 }
 
 void MainWindow::setupWacomPadListener() {
@@ -99,6 +220,9 @@ void MainWindow::onWacomPadReadable() {
         if ((ev.type & JS_EVENT_INIT) != 0)
             continue;
         if (ev.type != JS_EVENT_BUTTON || ev.value != 1)
+            continue;
+        // Solo actúa en la página del editor (la biblioteca ignora el pad).
+        if (!m_stack || m_stack->currentWidget() != m_container)
             continue;
         // Solo actuar cuando la ventana de Finily está enfocada
         if ((!isActiveWindow() && !(m_canvas && m_canvas->hasFocus())) || !m_canvas || !m_toolbar)
@@ -154,14 +278,18 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
-    if (watched == m_container && event->type() == QEvent::Resize)
+    if (watched == m_container && (event->type() == QEvent::Resize || event->type() == QEvent::Show))
         layoutChildren();
     return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::installShortcuts() {
+    // Todos los atajos del editor viven en el contenedor del editor con
+    // WidgetWithChildrenShortcut: así escribir en la búsqueda de la biblioteca
+    // o en el diálogo de nuevo cuaderno NUNCA dispara atajos del lienzo.
     auto addShortcut = [this](const QKeySequence& sequence, const std::function<void()>& action) {
-        auto* shortcut = new QShortcut(sequence, this);
+        auto* shortcut = new QShortcut(sequence, m_container);
+        shortcut->setContext(Qt::WidgetWithChildrenShortcut);
         connect(shortcut, &QShortcut::activated, this, action);
     };
 
