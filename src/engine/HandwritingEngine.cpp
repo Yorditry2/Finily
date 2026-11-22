@@ -733,7 +733,7 @@ bool HandwritingEngine::beautifyRecentStrokes(QVector<Stroke>& strokes,
     const Stroke& newest = strokes.back();
     if (newest.tool != ToolType::Pen && newest.tool != ToolType::Ballpoint)
         return false;
-    if (newest.points.size() < 4)
+    if (newest.points.size() < 2)
         return false;
 
     // Never beautify huge drawings (diagrams/boxes) or tiny accidental dots

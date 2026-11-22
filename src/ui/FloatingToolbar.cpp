@@ -2679,8 +2679,8 @@ void FloatingToolbar::loadDockPosition() {
         m_dockPos = DockPos::Abajo;
     else if (pos == QLatin1String("left"))
         m_dockPos = DockPos::Izquierda;
-    else // por defecto el estuche va abajo, al alcance de la mano
-        m_dockPos = DockPos::Abajo;
+    else // por defecto a la izquierda (pensado para zurdos: la mano no tapa la barra)
+        m_dockPos = DockPos::Izquierda;
 }
 
 // Alterna "Posición de barra" (Izquierda/Arriba/Abajo): reorienta el dock,
@@ -2933,6 +2933,8 @@ void FloatingToolbar::refreshFromCanvas() {
     const PageFormat pageFormat = m_canvas->pageFormat();
     for (int i = 0; i < m_formatBtns.size() && i < m_formatSpecs.size(); ++i)
         m_formatBtns.at(i)->setChecked(m_formatSpecs.at(i) == pageFormat);
+    if (m_mathBeautifyBtn)
+        m_mathBeautifyBtn->setChecked(m_canvas->mathBeautifyEnabled());
 
     // Huella de estado: evita reflashear la UI en cada punto de un trazo a 200 Hz.
     const QString signature = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15|%16|%17|%18|%19|%20|%21|%22|%23")
