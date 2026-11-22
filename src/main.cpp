@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QFont>
 #include <QGuiApplication>
 #include <QStringList>
 
@@ -21,6 +22,14 @@ int main(int argc, char* argv[]) {
     QApplication::setOrganizationName("Finily");
     QApplication::setOrganizationDomain("finily.app");
     QApplication::setApplicationVersion("0.1.0");
+
+    // Tipografía de interfaz: Inter si está instalada (aspecto limpio y
+    // premium); si no, la sans del sistema.
+    QFont uiFont = QApplication::font();
+    uiFont.setFamilies({QStringLiteral("Inter"), QStringLiteral("SF Pro Text"),
+                        QStringLiteral("Noto Sans"), QStringLiteral("sans-serif")});
+    uiFont.setHintingPreference(QFont::PreferNoHinting);
+    QApplication::setFont(uiFont);
 
     finily::MainWindow window;
     window.show();

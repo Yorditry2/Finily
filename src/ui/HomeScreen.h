@@ -9,6 +9,7 @@ class QLabel;
 class QLineEdit;
 class QScrollArea;
 class QToolButton;
+class QAction;
 
 namespace finily {
 
@@ -79,6 +80,7 @@ private:
     QLabel* m_sectionTitle = nullptr;
     QLabel* m_countPill = nullptr;
     QLineEdit* m_search = nullptr;
+    QAction* m_searchAction = nullptr;
     QScrollArea* m_scroll = nullptr;
     QWidget* m_gridContent = nullptr;
     NewNotebookCard* m_newCard = nullptr;
