@@ -882,6 +882,7 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     m_toastLabel = new QLabel(m_toastPill);
     m_toastLabel->setObjectName("finilyToast");
     m_toastLabel->setAlignment(Qt::AlignCenter);
+    toastLayout->addWidget(m_toastLabel);
     m_toastPill->hide();
     m_toastTimer = new QTimer(this);
     m_toastTimer->setSingleShot(true);
@@ -1048,15 +1049,21 @@ void FloatingToolbar::buildUtilityPill() {
 
     row->addWidget(makeSeparator(m_pill));
 
-    // Popovers
-    m_strokeBtn = new QToolButton(m_pill);
-    m_strokeBtn->setFixedSize(36, 36);
-    m_strokeBtn->setIconSize(QSize(22, 22));
-    m_strokeBtn->setToolTip("Trazo");
-    polishButton(m_strokeBtn);
-    connect(m_strokeBtn, &QToolButton::clicked, this, [this] { openPopover(m_strokePopover, m_strokeBtn); });
-    m_studioUtilSpecs.append(qMakePair(m_strokeBtn, QStringLiteral("stroke")));
-    row->addWidget(m_strokeBtn);
+    // Modo Ecuación ∑ (atajo M): separa limpiamente escritura libre vs matemática
+    m_mathModeBtn = new QToolButton(m_pill);
+    m_mathModeBtn->setObjectName("finilyTool");
+    m_mathModeBtn->setFixedSize(36, 36);
+    m_mathModeBtn->setIconSize(QSize(22, 22));
+    m_mathModeBtn->setCheckable(true);
+    m_mathModeBtn->setToolTip("Modo Ecuación (M)");
+    polishButton(m_mathModeBtn);
+    connect(m_mathModeBtn, &QToolButton::clicked, this, [this] {
+        if (m_canvas && m_mathModeBtn)
+            m_canvas->setMathBeautifyEnabled(m_mathModeBtn->isChecked());
+        refreshFromCanvas();
+    });
+    m_studioUtilSpecs.append(qMakePair(m_mathModeBtn, QStringLiteral("math")));
+    row->addWidget(m_mathModeBtn);
 
     m_paperBtn = new QToolButton(m_pill);
     m_paperBtn->setFixedSize(36, 36);
@@ -1641,6 +1648,40 @@ void FloatingToolbar::buildStrokePopover() {
         refreshFromCanvas();
     });
     pressureColumn->addWidget(m_mathBeautifyBtn);
+
+    auto* opColorRow = new QHBoxLayout();
+    opColorRow->setSpacing(6);
+    m_autoColorOpsBtn = new QToolButton(pressureSection);
+    m_autoColorOpsBtn->setFixedSize(238, 28);
+    m_autoColorOpsBtn->setText("Colorear signos (+ − = √ () [] {})");
+    m_autoColorOpsBtn->setToolTip("Pinta automáticamente los signos operativos y de agrupación con el color elegido");
+    m_autoColorOpsBtn->setCheckable(true);
+    m_autoColorOpsBtn->setChecked(m_canvas ? m_canvas->autoColorOperators() : true);
+    polishButton(m_autoColorOpsBtn);
+    connect(m_autoColorOpsBtn, &QToolButton::clicked, this, [this] {
+        if (m_canvas && m_autoColorOpsBtn)
+            m_canvas->setAutoColorOperators(m_autoColorOpsBtn->isChecked());
+        refreshFromCanvas();
+    });
+    opColorRow->addWidget(m_autoColorOpsBtn);
+
+    m_opColorBtn = new ColorDotButton(pressureSection);
+    m_opColorBtn->setCheckable(false);
+    m_opColorBtn->setDotColor(m_canvas ? m_canvas->operatorColor() : QColor("#ef4444"));
+    m_opColorBtn->setToolTip("Cambiar color automático de signos");
+    polishButton(m_opColorBtn);
+    connect(m_opColorBtn, &QToolButton::clicked, this, [this] {
+        if (!m_canvas)
+            return;
+        const QColor chosen = QColorDialog::getColor(m_canvas->operatorColor(), window(),
+                                                     QStringLiteral("Color para signos matemáticos"));
+        if (chosen.isValid()) {
+            m_canvas->setOperatorColor(chosen);
+            refreshFromCanvas();
+        }
+    });
+    opColorRow->addWidget(m_opColorBtn);
+    pressureColumn->addLayout(opColorRow);
     column->addWidget(pressureSection);
 
     // --- Borrador (visible solo con el borrador activo) ---
@@ -1840,30 +1881,24 @@ void FloatingToolbar::buildShapesPopover() {
     auto* grid = new QGridLayout();
     grid->setHorizontalSpacing(6);
     grid->setVerticalSpacing(6);
-    const QVector<QString> names = {"Línea",        "Círculo",    "Elipse",    "Triángulo", "Rectángulo",
-                                    "Curva",        "Raíz √",     "Ángulo 90°", "Llave { }", "Ejes X/Y"};
-    const QVector<QString> glyphs = {"shape-line", "shape-circle", "shape-ellipse", "shape-triangle",
-                                     "shape-rect", "shape-curve",  "shape-radical", "shape-rightangle",
-                                     "shape-brace", "shape-axes"};
-    const QVector<QString> tips = {"Línea", "Círculo", "Elipse", "Triángulo", "Rectángulo",
-                                   "Curva / arco suave editable", "Raíz cuadrada auto-ajustable (R)",
-                                   "Marca de ángulo recto (90°)", "Llave editable para esquemas y sistemas",
-                                   "Plano cartesiano con ejes X/Y"};
+    const QVector<QString> names = {"Línea", "Círculo", "Elipse", "Triángulo", "Rectángulo", "Curva"};
+    const QVector<QString> glyphs = {"shape-line", "shape-circle", "shape-ellipse",
+                                     "shape-triangle", "shape-rect", "shape-curve"};
+    const QVector<QString> tips = {"Línea recta", "Círculo perfecto", "Elipse",
+                                   "Triángulo", "Rectángulo", "Curva / arco suave editable"};
     const QVector<ShapeKind> kinds = {ShapeKind::Line, ShapeKind::Circle, ShapeKind::Ellipse,
-                                      ShapeKind::Triangle, ShapeKind::Rectangle, ShapeKind::Curve,
-                                      ShapeKind::Radical, ShapeKind::RightAngle, ShapeKind::Brace,
-                                      ShapeKind::Axes};
-    for (int i = 0; i < kinds.size(); ++i) {
+                                      ShapeKind::Triangle, ShapeKind::Rectangle, ShapeKind::Curve};
+    auto addShapeBtn = [&](QGridLayout* targetGrid, int idx, const QString& name,
+                           const QString& glyph, const QString& tip, ShapeKind kind) {
         auto* button = new QToolButton(m_shapesPopover);
         button->setObjectName("finilyShapeBtn");
         button->setFixedSize(133, 36);
         button->setIconSize(QSize(16, 16));
         button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        button->setText(names.at(i));
-        button->setToolTip(tips.at(i));
+        button->setText(name);
+        button->setToolTip(tip);
         button->setCheckable(true);
         polishButton(button);
-        const ShapeKind kind = kinds.at(i);
         connect(button, &QToolButton::clicked, this, [this, kind] {
             if (!m_canvas)
                 return;
@@ -1874,10 +1909,23 @@ void FloatingToolbar::buildShapesPopover() {
         });
         m_shapeKindBtns.append(button);
         m_shapeKindSpecs.append(kind);
-        m_iconSpecs.append(qMakePair(button, glyphs.at(i)));
-        grid->addWidget(button, i / 2, i % 2);
-    }
+        m_iconSpecs.append(qMakePair(button, glyph));
+        targetGrid->addWidget(button, idx / 2, idx % 2);
+    };
+    for (int i = 0; i < kinds.size(); ++i)
+        addShapeBtn(grid, i, names.at(i), glyphs.at(i), tips.at(i), kinds.at(i));
     column->addLayout(grid);
+
+    column->addWidget(makeDivider(m_shapesPopover));
+    column->addWidget(makeSectionTitle("Matemática", m_shapesPopover));
+    auto* mathGrid = new QGridLayout();
+    mathGrid->setHorizontalSpacing(6);
+    mathGrid->setVerticalSpacing(6);
+    addShapeBtn(mathGrid, 0, QStringLiteral("Ejes X/Y"), QStringLiteral("shape-axes"),
+                QStringLiteral("Plano cartesiano con ejes X/Y"), ShapeKind::Axes);
+    addShapeBtn(mathGrid, 1, QStringLiteral("Raíz √"), QStringLiteral("shape-radical"),
+                QStringLiteral("Raíz cuadrada auto-ajustable (R)"), ShapeKind::Radical);
+    column->addLayout(mathGrid);
 
     m_holdToShapeBtn = new QToolButton(m_shapesPopover);
     m_holdToShapeBtn->setFixedSize(272, 30);
@@ -2698,8 +2746,8 @@ void FloatingToolbar::setDockPosition(DockPos pos) {
     closePopovers();
     positionChildren();
     refreshFromCanvas(); // sincroniza los botones Izquierda/Arriba/Abajo
-    if (open == m_strokePopover)
-        openPopover(m_strokePopover, m_strokeBtn);
+    if (open == m_strokePopover && !m_writingBtns.isEmpty())
+        openPopover(m_strokePopover, m_writingBtns.first());
     else if (open == m_paperPopover)
         openPopover(m_paperPopover, m_paperBtn);
     else if (open == m_shapesPopover)
@@ -2843,9 +2891,6 @@ void FloatingToolbar::updateStationery() {
         }
     if (sig != m_lastInkIconSig) {
         m_lastInkIconSig = sig;
-        if (m_strokeBtn)
-            m_strokeBtn->setIcon(
-                makeStudioIcon(QStringLiteral("stroke"), 22, theme.uiText, theme.accent, ink, theme.isDark));
     }
 
     // Muestras de la paleta del popover "Trazo" (ColorDotButton antialias):
@@ -2935,6 +2980,15 @@ void FloatingToolbar::refreshFromCanvas() {
         m_formatBtns.at(i)->setChecked(m_formatSpecs.at(i) == pageFormat);
     if (m_mathBeautifyBtn)
         m_mathBeautifyBtn->setChecked(m_canvas->mathBeautifyEnabled());
+    if (m_mathModeBtn)
+        m_mathModeBtn->setChecked(m_canvas->mathBeautifyEnabled());
+    if (m_autoColorOpsBtn)
+        m_autoColorOpsBtn->setChecked(m_canvas->autoColorOperators());
+    if (m_opColorBtn) {
+        const ThemeConfig theme = getThemeConfig(m_theme);
+        m_opColorBtn->setDotColor(m_canvas->operatorColor());
+        m_opColorBtn->setRimColor(theme.isDark ? QColor(255, 255, 255, 80) : QColor(15, 23, 42, 80));
+    }
 
     // Huella de estado: evita reflashear la UI en cada punto de un trazo a 200 Hz.
     const QString signature = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15|%16|%17|%18|%19|%20|%21|%22|%23")
@@ -3002,6 +3056,15 @@ void FloatingToolbar::refreshFromCanvas() {
         m_pressureBtns.at(i)->setChecked(m_pressureSpecs.at(i) == profile);
     if (m_mathBeautifyBtn)
         m_mathBeautifyBtn->setChecked(m_canvas->mathBeautifyEnabled());
+    if (m_mathModeBtn)
+        m_mathModeBtn->setChecked(m_canvas->mathBeautifyEnabled());
+    if (m_autoColorOpsBtn)
+        m_autoColorOpsBtn->setChecked(m_canvas->autoColorOperators());
+    if (m_opColorBtn) {
+        const ThemeConfig theme = getThemeConfig(m_theme);
+        m_opColorBtn->setDotColor(m_canvas->operatorColor());
+        m_opColorBtn->setRimColor(theme.isDark ? QColor(255, 255, 255, 80) : QColor(15, 23, 42, 80));
+    }
 
     const QColor ink = m_canvas->inkColor();
     for (int i = 0; i < m_swatches.size() && i < m_palette.size(); ++i)

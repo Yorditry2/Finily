@@ -258,6 +258,17 @@ QString svgSourceFor(const QString& name,
             .arg(st);
     }
 
+    if (name == QLatin1String("math")) {
+        // Símbolo ∑ (Modo Ecuación) en la misma cuadrícula óptica 32x32 duotono
+        return QStringLiteral(R"SVG(
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect x="5.0" y="5.0" width="22" height="22" rx="6.0" fill="%2" fill-opacity="%3"/>
+  <path d="M22.2 9.5 H10.2 L16.8 16.0 L10.2 22.5 H22.2" fill="none" stroke="%1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M22.2 9.5 V11.5 M22.2 22.5 V20.5" fill="none" stroke="%1" stroke-width="2.0" stroke-linecap="round"/>
+</svg>)SVG")
+            .arg(st, duoFill, duoOpacity);
+    }
+
     if (name == QLatin1String("stroke")) {
         return QStringLiteral(R"SVG(
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">

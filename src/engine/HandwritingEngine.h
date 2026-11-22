@@ -2,6 +2,7 @@
 
 #include "core/Types.h"
 
+#include <QColor>
 #include <QPointF>
 #include <QSet>
 #include <QString>
@@ -14,7 +15,9 @@ struct RecognitionResult {
     bool matched = false;
     QString label;
     double score = 0.0; // [0.0, 1.0], higher = more confident
-    QVector<QVector<QPointF>> canonicalStrokes; // Normalized in [0, 1] x [0, 1]
+    // If true, canonicalStrokes are ALREADY in world coordinates (e.g. exact-length √ or · or °).
+    bool canonicalInWorld = false;
+    QVector<QVector<QPointF>> canonicalStrokes;
 };
 
 class HandwritingEngine {
@@ -22,39 +25,42 @@ public:
     static HandwritingEngine& instance();
 
     // Recognize a single character cluster (1..3 raw strokes in world coordinates).
-    // If mathAndDigitsOnly is true, restricts to digits, math symbols, and user custom templates.
     RecognitionResult recognizeCluster(const QVector<QVector<QPointF>>& rawStrokes,
-                                       bool mathAndDigitsOnly = false) const;
+                                       bool mathAndDigitsOnly = false,
+                                       const QRectF& neighborLeftBox = QRectF(),
+                                       bool hasRightNeighbor = false) const;
 
-    // Auto-beautify the most recent 1..3 strokes in `strokes` if they form a high-confidence
-    // digit, math symbol, or custom user template. Returns true if strokes were replaced.
-    bool beautifyRecentStrokes(QVector<Stroke>& strokes,
-                               QString* recognizedLabel = nullptr) const;
+    // Auto-beautify the cluster of strokes at indices [startIdx .. endIdx-1] (if endIdx < 0, uses strokes.size()).
+    // Uses spatial context from surrounding strokes & shapes (never touches strokes over shapes like angle arcs!).
+    // Returns true if strokes were replaced; sets *outDeltaCount to (newCount - oldCount) if non-null.
+    bool beautifyCluster(QVector<Stroke>& strokes,
+                         int startIdx,
+                         int endIdx = -1,
+                         const QColor& operatorColor = QColor(),
+                         QString* recognizedLabel = nullptr,
+                         int* outDeltaCount = nullptr,
+                         const QVector<ShapeItem>& shapes = {}) const;
 
     // Recognize all Lasso-selected strokes (grouped into lines & characters) into a clean string.
     QString recognizeStrokesToText(const QVector<Stroke>& strokes,
                                    const QSet<QString>& selectedIds) const;
 
     // Save user's own drawn strokes as a persistent personal template for `label`.
-    // Used both for recognition AND as the beautified vector replacement!
     bool saveCustomTemplate(const QString& label, const QVector<QVector<QPointF>>& worldStrokes);
     bool removeCustomTemplate(const QString& label);
     QStringList customTemplateLabels() const;
 
-private:
-    struct CloudPoint {
-        double x = 0.0;
-        double y = 0.0;
-        int strokeId = 0;
-    };
+    static bool isOperatorOrGrouping(const QString& label);
 
+private:
     struct GlyphTemplate {
         QString label;
         bool isMathOrDigit = true;
         bool isCustom = false;
         int strokeCount = 1;
-        double aspectRatio = 1.0; // width / height clamped to [0.15, 6.0]
-        QVector<CloudPoint> cloud;
+        double aspectRatio = 1.0;
+        // Ordered resampled strokes normalized around centroid (for accurate directed matching)
+        QVector<QVector<QPointF>> directedStrokes;
         QVector<QVector<QPointF>> canonicalStrokes;
     };
 
@@ -70,11 +76,16 @@ private:
                      const QVector<QVector<QPointF>>& canonicalStrokes,
                      bool isCustom = false);
 
-    static QVector<CloudPoint> normalizeToCloud(const QVector<QVector<QPointF>>& strokes,
-                                                int sampleCount,
-                                                double* outAspect = nullptr);
+    // Structural geometric recognizer for math operators, brackets, braces, √, θ, °, ·
+    RecognitionResult matchGeometric(const QVector<QVector<QPointF>>& rawStrokes,
+                                     const QRectF& neighborLeftBox,
+                                     bool hasRightNeighbor) const;
+
+    static QVector<QVector<QPointF>> normalizeDirected(const QVector<QVector<QPointF>>& strokes,
+                                                       double* outAspect = nullptr);
     static QVector<QVector<QPointF>> normalizeStrokes01(const QVector<QVector<QPointF>>& strokes);
-    static double cloudDistance(const QVector<CloudPoint>& a, const QVector<CloudPoint>& b);
+    static double directedStrokeDistance(const QVector<QVector<QPointF>>& a,
+                                         const QVector<QVector<QPointF>>& b);
 
     QVector<GlyphTemplate> m_templates;
 };

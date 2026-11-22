@@ -1,3 +1,11 @@
 build/
 build-*/
 *.user
+*.o
+*.autosave
+.vscode/
+.idea/
+.DS_Store
+CMakeUserPresets.json
+compile_commands.json
+*.swp

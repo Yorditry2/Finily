@@ -28,6 +28,8 @@ public:
     bool holdToShapeEnabled() const { return m_holdToShapeEnabled; }
     bool smartGuidesEnabled() const { return m_smartGuidesEnabled; }
     bool mathBeautifyEnabled() const { return m_mathBeautifyEnabled; }
+    bool autoColorOperators() const { return m_autoColorOperators; }
+    QColor operatorColor() const { return m_operatorColor; }
     bool swapPenButtons() const { return m_swapPenButtons; }
     bool hasSelectedShape() const { return !m_selectedShapeId.isEmpty(); }
     bool hasLassoSelection() const { return !m_selectedStrokeIds.isEmpty() || !m_selectedShapeIds.isEmpty(); }
@@ -61,6 +63,8 @@ public:
     void setHoldToShapeEnabled(bool enabled);
     void setSmartGuidesEnabled(bool enabled);
     void setMathBeautifyEnabled(bool enabled);
+    void setAutoColorOperators(bool enabled);
+    void setOperatorColor(const QColor& color);
     void setSwapPenButtons(bool swapped);
     void setEraserMode(EraserMode mode);
     void setEraserSize(double size);
@@ -161,6 +165,7 @@ private:
     DocumentSnapshot currentSnapshot() const;
     void updateCursorShape();
     void triggerHoldToShape();
+    void flushPendingBeautify();
     ShapeItem* findShapeById(const QString& id);
     const ShapeItem* findShapeById(const QString& id) const;
 
@@ -203,7 +208,9 @@ private:
     ShapeKind m_shapeKind = ShapeKind::Triangle;
     bool m_holdToShapeEnabled = true;
     bool m_smartGuidesEnabled = true;
-    bool m_mathBeautifyEnabled = true;
+    bool m_mathBeautifyEnabled = false; // Escritura libre por defecto; Modo Ecuación con ∑ (M)
+    bool m_autoColorOperators = true;
+    QColor m_operatorColor = QColor("#ef4444");
     EraserMode m_eraserMode = EraserMode::Stroke;
     double m_eraserSize = 18.0;
     QColor m_color = QColor("#f8fafc");
@@ -229,6 +236,11 @@ private:
     QTimer* m_holdTimer = nullptr;
     QPointF m_holdAnchorWorld;
     bool m_holdSnappedToShape = false;
+
+    // Deferred smart handwriting beautification (waits ~420ms or until next stroke moves away)
+    QTimer* m_beautifyTimer = nullptr;
+    int m_pendingBeautifyStart = -1;
+    QRectF m_pendingBeautifyBox;
 
     // Shape creation / editing / polyline / smart guides state
     bool m_hasActiveShape = false;

@@ -145,7 +145,7 @@ private:
     QToolButton* m_homeBtn = nullptr;
     QToolButton* m_undoBtn = nullptr;
     QToolButton* m_redoBtn = nullptr;
-    QToolButton* m_strokeBtn = nullptr;
+    QToolButton* m_mathModeBtn = nullptr;
     QToolButton* m_paperBtn = nullptr;
     QToolButton* m_cleanBtn = nullptr;
 
@@ -230,6 +230,8 @@ private:
     QVector<QToolButton*> m_pressureBtns;
     QVector<PressureProfile> m_pressureSpecs;
     QToolButton* m_mathBeautifyBtn = nullptr;
+    QToolButton* m_autoColorOpsBtn = nullptr;
+    ColorDotButton* m_opColorBtn = nullptr;
     QToolButton* m_eraserStrokeBtn = nullptr;
     QToolButton* m_eraserPartialBtn = nullptr;
     QLabel* m_eraserSizeLabel = nullptr;

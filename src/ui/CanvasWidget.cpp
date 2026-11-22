@@ -310,7 +310,15 @@ CanvasWidget::CanvasWidget(QWidget* parent):QWidget(parent),m_stabilizerFilter(s
         if(m_mode!=InteractionMode::None){m_autosaveTimer->start();return;}
         writeAutosaveNow();
     });
-    m_mathBeautifyEnabled=QSettings("Finily","Finily").value("ink/mathBeautify",true).toBool();
+    m_beautifyTimer=new QTimer(this);m_beautifyTimer->setSingleShot(true);m_beautifyTimer->setInterval(420);
+    connect(m_beautifyTimer,&QTimer::timeout,this,&CanvasWidget::flushPendingBeautify);
+    {
+        QSettings settings("Finily","Finily");
+        m_mathBeautifyEnabled=settings.value("ink/mathBeautify",false).toBool();
+        m_autoColorOperators=settings.value("ink/autoColorOperators",true).toBool();
+        const QColor savedOp(settings.value("ink/operatorColor","#ef4444").toString());
+        if(savedOp.isValid())m_operatorColor=savedOp;
+    }
     m_pages.append(PageData{});loadAutosave();updateCursorShape();
 }
 CanvasWidget::~CanvasWidget() {
@@ -335,6 +343,20 @@ void CanvasWidget::setMathBeautifyEnabled(bool enabled) {
     if(m_mathBeautifyEnabled==enabled)return;
     m_mathBeautifyEnabled=enabled;
     QSettings("Finily","Finily").setValue("ink/mathBeautify",enabled);
+    emit toastRequested(enabled ? QStringLiteral("Modo Ecuación ∑ activado (M)")
+                                : QStringLiteral("Modo Escritura libre (M)"));
+    emit stateChanged();
+}
+void CanvasWidget::setAutoColorOperators(bool enabled) {
+    if(m_autoColorOperators==enabled)return;
+    m_autoColorOperators=enabled;
+    QSettings("Finily","Finily").setValue("ink/autoColorOperators",enabled);
+    emit stateChanged();
+}
+void CanvasWidget::setOperatorColor(const QColor& color) {
+    if(!color.isValid()||m_operatorColor==color)return;
+    m_operatorColor=color;
+    QSettings("Finily","Finily").setValue("ink/operatorColor",color.name(QColor::HexRgb));
     emit stateChanged();
 }
 void CanvasWidget::setSwapPenButtons(bool swapped) { m_swapPenButtons=swapped;saveAutosave();emit stateChanged(); }
@@ -1000,6 +1022,7 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
         m_activeShape.kind=m_shapeKind;m_activeShape.color=m_color;m_activeShape.size=m_size;m_activeShape.linePattern=m_linePattern;
         createShapeVertices(m_activeShape,snap.point,snap.point);m_hasActiveShape=true;m_selectedShapeId=m_activeShape.id;update();return;
     }
+    if(m_beautifyTimer)m_beautifyTimer->stop();
     clearSelection();m_mode=InteractionMode::Draw;m_holdSnappedToShape=false;m_stabilizerFilter->reset();m_activeStroke={};
     m_activeStroke.id=freshId();m_activeStroke.tool=m_tool;m_activeStroke.color=m_color;m_activeStroke.size=m_size;
     m_activeStroke.linePattern=m_linePattern;m_activeStroke.pressureProfile=m_pressureProfile;m_activeStroke.hasHardwarePressure=hardware;
@@ -1174,12 +1197,41 @@ void CanvasWidget::endInput(const QPointF& screen,Qt::KeyboardModifiers mods) {
         else if(distance({last.x,last.y},{end.x,end.y})>.001)m_activeStroke.points.append(end);
         pushUndoSnapshot(currentSnapshot());m_activeStroke.bounds=computeBounds(m_activeStroke.points,m_activeStroke.size*.7);
         m_strokes.append(m_activeStroke);m_hasActiveStroke=false;
-        if(m_mathBeautifyEnabled&&!mods.testFlag(Qt::ShiftModifier)) {
-            QVector<Stroke> candidate=m_strokes;QString label;
-            if(HandwritingEngine::instance().beautifyRecentStrokes(candidate,&label)) {
-                pushUndoSnapshot(currentSnapshot()); // 1er Ctrl+Z vuelve al trazo original!
-                m_strokes=std::move(candidate);
+        if(m_mathBeautifyEnabled&&!mods.testFlag(Qt::ShiftModifier)
+           &&(m_activeStroke.tool==ToolType::Pen||m_activeStroke.tool==ToolType::Ballpoint)) {
+            int newIdx=int(m_strokes.size())-1;
+            const QRectF nb=m_activeStroke.bounds;
+            bool sameChar=false;
+            if(m_pendingBeautifyStart>=0&&m_pendingBeautifyStart<newIdx&&(newIdx-m_pendingBeautifyStart)<3) {
+                const QRectF& pb=m_pendingBeautifyBox;
+                const double overlapX=std::min(pb.right(),nb.right())-std::max(pb.left(),nb.left());
+                const double minW=std::max(6.0,std::min(pb.width(),nb.width()));
+                const double refH=std::max({pb.height(),nb.height(),24.0});
+                const double dy=std::abs(pb.center().y()-nb.center().y());
+                // Un circulito pequeño arriba-derecha (signo de grado °) NO se fusiona con el número previo!
+                const bool isDegreePos=(std::max(nb.width(),nb.height())<=pb.height()*0.55)
+                                       &&(nb.center().y()<=pb.top()+pb.height()*0.38)
+                                       &&(nb.center().x()>=pb.center().x());
+                // SOLO fusionar trazos que realmente se solapan en X (>= 28% del ancho menor),
+                // jamás dígitos vecinos como '1' y '0' o '2' y '0'!
+                sameChar=(!isDegreePos&&dy<=refH*1.10&&overlapX>=minW*0.28);
             }
+            if(sameChar) {
+                m_pendingBeautifyBox=m_pendingBeautifyBox.united(nb);
+            } else {
+                if(m_pendingBeautifyStart>=0&&m_pendingBeautifyStart<newIdx) {
+                    QVector<Stroke> candidate=m_strokes;QString label;int delta=0;
+                    const QColor opCol=m_autoColorOperators?m_operatorColor:QColor();
+                    if(HandwritingEngine::instance().beautifyCluster(candidate,m_pendingBeautifyStart,newIdx,opCol,&label,&delta,m_shapes)) {
+                        pushUndoSnapshot(currentSnapshot());
+                        m_strokes=std::move(candidate);
+                        newIdx+=delta;
+                    }
+                }
+                m_pendingBeautifyStart=newIdx;
+                m_pendingBeautifyBox=nb;
+            }
+            m_beautifyTimer->start(380);
         }
         invalidateStaticCache();
     } else if(m_mode==InteractionMode::ShapeCreate&&m_hasActiveShape) {
@@ -1200,6 +1252,25 @@ void CanvasWidget::endInput(const QPointF& screen,Qt::KeyboardModifiers mods) {
         m_snapshotBeforeErase={};m_erasedAnything=false;
     }
     m_mode=InteractionMode::None;m_activeGuides.clear();m_activeHandleIndex=-1;updateCursorShape();saveAutosave();emit stateChanged();update();
+}
+void CanvasWidget::flushPendingBeautify() {
+    if(m_beautifyTimer)m_beautifyTimer->stop();
+    const int start=m_pendingBeautifyStart;
+    m_pendingBeautifyStart=-1;
+    m_pendingBeautifyBox=QRectF();
+    if(!m_mathBeautifyEnabled||m_mode!=InteractionMode::None||start<0||start>=m_strokes.size())
+        return;
+    QVector<Stroke> candidate=m_strokes;
+    QString label;
+    const QColor opCol=m_autoColorOperators?m_operatorColor:QColor();
+    if(HandwritingEngine::instance().beautifyCluster(candidate,start,-1,opCol,&label,nullptr,m_shapes)) {
+        pushUndoSnapshot(currentSnapshot()); // 1er Ctrl+Z vuelve al trazo original!
+        m_strokes=std::move(candidate);
+        invalidateStaticCache();
+        saveAutosave();
+        emit stateChanged();
+        update();
+    }
 }
 void CanvasWidget::applyEraseAt(const QPointF& world) {
     QVector<Stroke> next;bool changed=false;

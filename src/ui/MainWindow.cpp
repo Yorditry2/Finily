@@ -348,6 +348,10 @@ void MainWindow::installShortcuts() {
     });
     // Lazo, portapapeles, línea auxiliar y PDF
     addShortcut(QKeySequence("A"), [this] { m_toolbar->selectTool(ToolType::Lasso); });
+    addShortcut(QKeySequence("M"), [this] {
+        m_canvas->setMathBeautifyEnabled(!m_canvas->mathBeautifyEnabled());
+        m_toolbar->refreshFromCanvas();
+    });
     addShortcut(QKeySequence("D"), [this] {
         const LinePattern next =
             (m_canvas->linePattern() == LinePattern::Solid) ? LinePattern::Dashed : LinePattern::Solid;

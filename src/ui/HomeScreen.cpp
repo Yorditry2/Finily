@@ -897,7 +897,7 @@ QToolButton#finilyFilter {
 }
 QToolButton#finilyFilter:hover { color: %2; }
 QToolButton#finilyFilter:checked { background: @SEGON@; color: %2; border: 1px solid %5; }
-QToolButton#finilyCardAction { background: %9; border: 1px solid %5; border-radius: 14px; }
+QToolButton#finilyCardAction { background: %7; border: 1px solid %5; border-radius: 14px; }
 QToolButton#finilyCardAction:hover { border: 1px solid %3; }
 QScrollArea, QWidget#finilyHomeGrid { background: transparent; border: none; }
 QScrollBar:vertical { background: transparent; width: 10px; margin: 4px 2px 4px 0px; }
@@ -911,8 +911,6 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: trans
                       .arg(pal.tint.name(QColor::HexArgb))
                       .arg(pal.border.name(QColor::HexArgb))
                       .arg(pal.surface.name(QColor::HexArgb))
-                      .arg(pal.hover.name(QColor::HexArgb))
-                      .arg(pal.accentHover.name(QColor::HexArgb))
                       .arg(pal.cardActionBg.name(QColor::HexArgb))
                       .replace(QStringLiteral("@TRACK@"), QStringLiteral("rgba(%1,%2,%3,%4)")
                                                              .arg(pal.track.red()).arg(pal.track.green())
@@ -1074,32 +1072,46 @@ void HomeScreen::openCreateDialog() {
     QDialog dialog(this);
     dialog.setWindowTitle(QStringLiteral("Nuevo cuaderno"));
     dialog.setModal(true);
-    dialog.setMinimumWidth(420);
+    dialog.setFixedWidth(480);
     dialog.setStyleSheet(
         QStringLiteral(R"(
 QDialog { background: %1; }
-QLabel { color: %2; background: transparent; font-size: 12px; }
-QLabel#finilyDialogHeading { color: %3; font-size: 15px; font-weight: 700; }
+QLabel { color: %2; background: transparent; font-size: 11px; font-weight: 700; letter-spacing: 0.6px; }
+QLabel#finilyDialogHeading { color: %3; font-size: 20px; font-weight: 800; letter-spacing: 0px; }
+QLabel#finilyDialogSub { color: %2; font-size: 12px; font-weight: 400; letter-spacing: 0px; }
 QLineEdit {
-    background: %4; border: 1px solid %5; border-radius: 10px;
-    color: %3; padding: 7px 10px; font-size: 12px;
+    background: %4; border: 1.5px solid %5; border-radius: 12px;
+    color: %3; padding: 9px 14px; font-size: 14px; font-weight: 500;
+    selection-background-color: %6; selection-color: #ffffff;
 }
-QLineEdit:focus { border: 1px solid %6; }
+QLineEdit:focus { border: 1.5px solid %6; }
 QToolButton {
-    background: %4; border: 1px solid %5; border-radius: 10px;
-    color: %3; padding: 6px 10px; font-size: 12px;
+    background: %4; border: 1.5px solid %5; border-radius: 11px;
+    color: %3; padding: 7px 10px; font-size: 12px; font-weight: 600;
 }
-QToolButton:hover { border: 1px solid %6; }
+QToolButton:hover { border: 1.5px solid %6; }
 QToolButton:checked {
-    background: %7; border: 1px solid %6; color: %3; font-weight: 600;
+    background: %7; border: 1.5px solid %6; color: %3; font-weight: 700;
+}
+QToolButton#finilyThemeCard {
+    background: %4; border: 1.5px solid %5; border-radius: 13px;
+    color: %3; padding: 8px 6px; font-size: 11px; font-weight: 600;
+}
+QToolButton#finilyThemeCard:hover { border: 1.5px solid %6; }
+QToolButton#finilyThemeCard:checked {
+    background: %7; border: 2px solid %6; color: %3; font-weight: 700;
 }
 QPushButton {
-    background: %4; border: 1px solid %5; border-radius: 10px;
-    color: %3; padding: 7px 16px; font-size: 12px;
+    background: transparent; border: 1.5px solid %5; border-radius: 11px;
+    color: %3; padding: 8px 18px; font-size: 13px; font-weight: 600;
 }
-QPushButton:hover { border: 1px solid %6; }
-QPushButton:default { background: %6; border: 1px solid %6; color: #ffffff; font-weight: 600; }
-})")
+QPushButton:hover { border: 1.5px solid %6; }
+QPushButton#finilyCreatePrimary {
+    background: %6; border: 1.5px solid %6; color: #ffffff;
+    padding: 8px 22px; font-size: 13px; font-weight: 700;
+}
+QPushButton#finilyCreatePrimary:hover { background: %6; border: 1.5px solid %3; }
+)")
             .arg(pal.bg.name(QColor::HexArgb))
             .arg(pal.muted.name(QColor::HexArgb))
             .arg(pal.text.name(QColor::HexArgb))
@@ -1109,23 +1121,84 @@ QPushButton:default { background: %6; border: 1px solid %6; color: #ffffff; font
             .arg(pal.tint.name(QColor::HexArgb)));
 
     auto* column = new QVBoxLayout(&dialog);
-    column->setContentsMargins(18, 16, 18, 14);
+    column->setContentsMargins(24, 22, 24, 20);
     column->setSpacing(10);
 
-    auto* heading = new QLabel(QStringLiteral("Crear un cuaderno nuevo"), &dialog);
+    auto* heading = new QLabel(QStringLiteral("Nuevo cuaderno"), &dialog);
     heading->setObjectName("finilyDialogHeading");
     column->addWidget(heading);
 
-    column->addWidget(new QLabel(QStringLiteral("Nombre"), &dialog));
+    auto* sub = new QLabel(QStringLiteral("Elige el estilo de papel y formato para tu clase o apuntes"), &dialog);
+    sub->setObjectName("finilyDialogSub");
+    column->addWidget(sub);
+    column->addSpacing(4);
+
+    column->addWidget(new QLabel(QStringLiteral("NOMBRE"), &dialog));
     auto* nameEdit = new QLineEdit(&dialog);
+    nameEdit->setFixedHeight(40);
+    nameEdit->setPlaceholderText(QStringLiteral("Ej: Álgebra — Semana 4"));
     nameEdit->setText(QStringLiteral("Cuaderno sin título"));
     nameEdit->selectAll();
     column->addWidget(nameEdit);
+    column->addSpacing(4);
 
-    // Formato de hoja: Infinita / Hoja A4 / Diapo 16:9.
-    column->addWidget(new QLabel(QStringLiteral("Formato"), &dialog));
+    // 4 tarjetas visuales de tema con su color REAL de pizarra/papel
+    column->addWidget(new QLabel(QStringLiteral("SUPERFICIE"), &dialog));
+    auto* themeRow = new QHBoxLayout();
+    themeRow->setSpacing(8);
+    auto* themeGroup = new QButtonGroup(&dialog);
+    themeGroup->setExclusive(true);
+    const QVector<ThemeId> themes = {ThemeId::DarkBoard, ThemeId::GreenBoard, ThemeId::PaperLight,
+                                     ThemeId::PaperCream};
+    const QVector<QString> shortThemeNames = {QStringLiteral("Oscura"), QStringLiteral("Academia"),
+                                              QStringLiteral("Blanco"), QStringLiteral("Crema")};
+    auto makeThemePreview = [](ThemeId id) -> QIcon {
+        const ThemeConfig tc = getThemeConfig(id);
+        QPixmap pm(144, 88);
+        pm.setDevicePixelRatio(2.0);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const QRectF r(1.0, 1.0, 70.0, 42.0);
+        p.setPen(QPen(tc.isDark ? QColor(255, 255, 255, 40) : QColor(15, 23, 42, 35), 1.0));
+        p.setBrush(tc.background);
+        p.drawRoundedRect(r, 7.0, 7.0);
+        p.setPen(Qt::NoPen);
+        p.setBrush(tc.patternColor);
+        for (int y = 10; y <= 34; y += 12)
+            for (int x = 12; x <= 60; x += 12)
+                p.drawEllipse(QPointF(x, y), 1.0, 1.0);
+        QPainterPath wave;
+        wave.moveTo(14.0, 28.0);
+        wave.cubicTo(24.0, 15.0, 38.0, 32.0, 56.0, 17.0);
+        p.setPen(QPen(tc.defaultInk, 1.8, Qt::SolidLine, Qt::RoundCap));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(wave);
+        return QIcon(pm);
+    };
+    for (int i = 0; i < themes.size(); ++i) {
+        auto* button = new QToolButton(&dialog);
+        button->setObjectName("finilyThemeCard");
+        button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        button->setIcon(makeThemePreview(themes.at(i)));
+        button->setIconSize(QSize(72, 44));
+        button->setText(shortThemeNames.at(i));
+        button->setFixedHeight(84);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        button->setCheckable(true);
+        button->setChecked(i == 0);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFocusPolicy(Qt::NoFocus);
+        themeGroup->addButton(button, i);
+        themeRow->addWidget(button);
+    }
+    column->addLayout(themeRow);
+    column->addSpacing(4);
+
+    // Formato de hoja: Infinita / Hoja A4 / Diapo 16:9
+    column->addWidget(new QLabel(QStringLiteral("FORMATO DE HOJA"), &dialog));
     auto* formatRow = new QHBoxLayout();
-    formatRow->setSpacing(6);
+    formatRow->setSpacing(8);
     auto* formatGroup = new QButtonGroup(&dialog);
     formatGroup->setExclusive(true);
     const QVector<QPair<QString, PageFormat>> formats = {
@@ -1136,6 +1209,8 @@ QPushButton:default { background: %6; border: 1px solid %6; color: #ffffff; font
     for (int i = 0; i < formats.size(); ++i) {
         auto* button = new QToolButton(&dialog);
         button->setText(formats.at(i).first);
+        button->setFixedHeight(36);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         button->setCheckable(true);
         button->setChecked(i == 0);
         button->setCursor(Qt::PointingHandCursor);
@@ -1144,30 +1219,12 @@ QPushButton:default { background: %6; border: 1px solid %6; color: #ffffff; font
         formatRow->addWidget(button);
     }
     column->addLayout(formatRow);
+    column->addSpacing(4);
 
-    column->addWidget(new QLabel(QStringLiteral("Tema"), &dialog));
-    auto* themeRow = new QGridLayout();
-    themeRow->setHorizontalSpacing(6);
-    themeRow->setVerticalSpacing(6);
-    auto* themeGroup = new QButtonGroup(&dialog);
-    themeGroup->setExclusive(true);
-    const QVector<ThemeId> themes = {ThemeId::DarkBoard, ThemeId::GreenBoard, ThemeId::PaperLight,
-                                     ThemeId::PaperCream};
-    for (int i = 0; i < themes.size(); ++i) {
-        auto* button = new QToolButton(&dialog);
-        button->setText(getThemeConfig(themes.at(i)).name);
-        button->setCheckable(true);
-        button->setChecked(i == 0);
-        button->setCursor(Qt::PointingHandCursor);
-        button->setFocusPolicy(Qt::NoFocus);
-        themeGroup->addButton(button, i);
-        themeRow->addWidget(button, i / 2, i % 2);
-    }
-    column->addLayout(themeRow);
-
-    column->addWidget(new QLabel(QStringLiteral("Plantilla"), &dialog));
+    // Plantilla: Liso / Cuadrícula / Puntos / Rayado
+    column->addWidget(new QLabel(QStringLiteral("PLANTILLA"), &dialog));
     auto* templateRow = new QHBoxLayout();
-    templateRow->setSpacing(6);
+    templateRow->setSpacing(8);
     auto* templateGroup = new QButtonGroup(&dialog);
     templateGroup->setExclusive(true);
     const QVector<QPair<QString, BackgroundTemplate>> templates = {
@@ -1179,21 +1236,35 @@ QPushButton:default { background: %6; border: 1px solid %6; color: #ffffff; font
     for (int i = 0; i < templates.size(); ++i) {
         auto* button = new QToolButton(&dialog);
         button->setText(templates.at(i).first);
+        button->setFixedHeight(36);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         button->setCheckable(true);
-        button->setChecked(templates.at(i).second == BackgroundTemplate::Dots);
+        button->setChecked(templates.at(i).second == BackgroundTemplate::Grid);
         button->setCursor(Qt::PointingHandCursor);
         button->setFocusPolicy(Qt::NoFocus);
         templateGroup->addButton(button, i);
         templateRow->addWidget(button);
     }
     column->addLayout(templateRow);
+    column->addSpacing(10);
 
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Crear"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("Cancelar"));
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    column->addWidget(buttons);
+    // Botones de acción limpios
+    auto* actionsRow = new QHBoxLayout();
+    actionsRow->setSpacing(10);
+    actionsRow->addStretch(1);
+    auto* cancelBtn = new QPushButton(QStringLiteral("Cancelar"), &dialog);
+    cancelBtn->setCursor(Qt::PointingHandCursor);
+    cancelBtn->setFocusPolicy(Qt::NoFocus);
+    connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+    actionsRow->addWidget(cancelBtn);
+
+    auto* createBtn = new QPushButton(QStringLiteral("Crear cuaderno"), &dialog);
+    createBtn->setObjectName("finilyCreatePrimary");
+    createBtn->setDefault(true);
+    createBtn->setCursor(Qt::PointingHandCursor);
+    connect(createBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+    actionsRow->addWidget(createBtn);
+    column->addLayout(actionsRow);
 
     if (dialog.exec() != QDialog::Accepted)
         return;
