@@ -267,6 +267,8 @@ void MainWindow::updateWindowTitle() {
     const bool unsaved = m_canvas && m_canvas->hasUnsavedChanges();
     // "•" marca cambios que aún no están en ningún .finily (Ctrl+S).
     setWindowTitle(tr("%1%2 — Finily").arg(unsaved ? QStringLiteral("• ") : QString(), name));
+    if (m_toolbar)
+        m_toolbar->setDocumentTitle(path.isEmpty() ? name : QFileInfo(path).completeBaseName(), unsaved);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

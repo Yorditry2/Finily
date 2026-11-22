@@ -38,6 +38,7 @@ public:
     bool isDrawingPolyline() const { return m_polylineActive; }
     int pdfPageCount() const;
     int currentPageIndex() const { return m_currentPageIndex; }
+    QImage pageThumbnail(int index, const QSize& size) const;
     int pageCount() const { return std::max(1, int(m_pages.size())); }
     QString currentFilePath() const { return m_currentFilePath; }
     EraserMode eraserMode() const { return m_eraserMode; }

@@ -25,6 +25,7 @@
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
 #include <QTabletEvent>
@@ -252,6 +253,17 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
         painter.drawRoundedRect(QRectF(3.5, 8.0, 15.0, 9.5), 1.5, 1.5);
         painter.drawLine(QPointF(7.5, 12.0), QPointF(14.5, 12.0));
         painter.drawLine(QPointF(7.5, 14.5), QPointF(12.5, 14.5));
+    } else if (kind == "more") {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(color);
+        for (double x : {5.0, 11.0, 17.0})
+            painter.drawEllipse(QPointF(x, 11.0), 1.5, 1.5);
+    } else if (kind == "pages") {
+        painter.drawRoundedRect(QRectF(7.0, 3.5, 9.5, 12.0), 2.0, 2.0);
+        painter.drawPolyline(QPolygonF() << QPointF(4.5, 7.0) << QPointF(4.5, 17.0) << QPointF(12.0, 17.0));
+    } else if (kind == "present") {
+        painter.drawRoundedRect(QRectF(3.5, 4.5, 15.0, 10.0), 2.5, 2.5);
+        painter.drawLine(QPointF(8.0, 18.0), QPointF(14.0, 18.0));
     } else if (kind == "clean") {
         painter.drawEllipse(QPointF(11.0, 11.0), 7.0, 4.8);
         painter.drawLine(QPointF(5.5, 16.5), QPointF(16.5, 5.5));
@@ -508,6 +520,44 @@ private:
     QColor m_border{255, 255, 255, 28};
     QColor m_highlight{255, 255, 255, 0};
     int m_radius = 22;
+};
+
+// Fila con interruptor (texto a la izquierda, switch a la derecha).
+class SwitchButton : public QToolButton {
+public:
+    explicit SwitchButton(QWidget* parent) : QToolButton(parent) {
+        setCheckable(true);
+        setCursor(Qt::PointingHandCursor);
+        setObjectName("finilySwitch");
+    }
+    void setColors(const QColor& text, const QColor& accent, bool dark) {
+        m_text = text;
+        m_accent = accent;
+        m_dark = dark;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(m_text);
+        QFont f = font();
+        f.setPixelSize(13);
+        p.setFont(f);
+        p.drawText(QRect(4, 0, width() - 56, height()), Qt::AlignVCenter | Qt::AlignLeft, text());
+        const QRectF track(width() - 40, height() / 2.0 - 10, 34, 20);
+        p.setPen(Qt::NoPen);
+        p.setBrush(isChecked() ? m_accent : QColor(128, 128, 128, m_dark ? 90 : 110));
+        p.drawRoundedRect(track, 10, 10);
+        p.setBrush(isChecked() && m_dark ? QColor(16, 20, 18) : QColor(255, 255, 255));
+        p.drawEllipse(QPointF(track.left() + (isChecked() ? 24.0 : 10.0), track.center().y()), 7.5, 7.5);
+    }
+
+private:
+    QColor m_text{230, 235, 240};
+    QColor m_accent{91, 227, 164};
+    bool m_dark = true;
 };
 
 // Punto de color antialias para presets de tinta y paleta del popover "Trazo":
@@ -862,6 +912,7 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     }
 
     buildUtilityPill();
+    buildTopRight();
     buildDock();
     buildZoomPill();
     buildPagePill();
@@ -871,6 +922,7 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     buildShapesPopover();
     buildFilePopover();
     buildContextPill();
+    buildThumbPanel();
 
     // Toast flotante: cápsula de cristal + etiqueta centrada. El fundido usa
     // una QGraphicsOpacityEffect sobre la cápsula (único efecto del widget).
@@ -919,7 +971,7 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
         {m_pill, 22},          {m_contextPill, 16}, {m_zoomPill, 18},
         {m_pagePill, 18},      {m_toastPill, 16},   {m_strokePopover, 16},
         {m_paperPopover, 16},  {m_shapesPopover, 16}, {m_filePopover, 16},
-        {m_dock, 20},
+        {m_dock, 20},          {m_topRight, 22},    {m_thumbPanel, 16},
     };
     for (const auto& capsule : capsuleSpecs) {
         if (!capsule.first)
@@ -1018,6 +1070,15 @@ void FloatingToolbar::buildUtilityPill() {
     m_studioUtilSpecs.append(qMakePair(m_homeBtn, QStringLiteral("home")));
     row->addWidget(m_homeBtn);
 
+    m_titleDot = new QLabel(m_pill);
+    m_titleDot->setFixedSize(6, 6);
+    row->addSpacing(4);
+    row->addWidget(m_titleDot, 0, Qt::AlignVCenter);
+    m_titleLabel = new QLabel("Sin título", m_pill);
+    m_titleLabel->setMaximumWidth(200);
+    row->addWidget(m_titleLabel);
+    row->addSpacing(4);
+
     row->addWidget(makeSeparator(m_pill));
 
     // Deshacer / Rehacer
@@ -1047,55 +1108,141 @@ void FloatingToolbar::buildUtilityPill() {
     m_studioUtilSpecs.append(qMakePair(m_redoBtn, QStringLiteral("redo")));
     row->addWidget(m_redoBtn);
 
-    row->addWidget(makeSeparator(m_pill));
-
-    // Modo Ecuación ∑ (atajo M): separa limpiamente escritura libre vs matemática
+    // Modo Ecuación (atajo M): botón oculto, la lógica sigue en refreshFromCanvas.
     m_mathModeBtn = new QToolButton(m_pill);
-    m_mathModeBtn->setObjectName("finilyTool");
-    m_mathModeBtn->setFixedSize(36, 36);
-    m_mathModeBtn->setIconSize(QSize(22, 22));
     m_mathModeBtn->setCheckable(true);
-    m_mathModeBtn->setToolTip("Modo Ecuación (M)");
-    polishButton(m_mathModeBtn);
+    m_mathModeBtn->hide();
     connect(m_mathModeBtn, &QToolButton::clicked, this, [this] {
         if (m_canvas && m_mathModeBtn)
             m_canvas->setMathBeautifyEnabled(m_mathModeBtn->isChecked());
         refreshFromCanvas();
     });
-    m_studioUtilSpecs.append(qMakePair(m_mathModeBtn, QStringLiteral("math")));
-    row->addWidget(m_mathModeBtn);
-    m_mathModeBtn->hide(); // duplicado de "Pulir signos" (atajo M sigue activo)
+}
 
-    m_paperBtn = new QToolButton(m_pill);
-    m_paperBtn->setFixedSize(36, 36);
-    m_paperBtn->setIconSize(QSize(22, 22));
-    m_paperBtn->setToolTip("Papel");
-    polishButton(m_paperBtn);
-    connect(m_paperBtn, &QToolButton::clicked, this, [this] { openPopover(m_paperPopover, m_paperBtn); });
-    m_studioUtilSpecs.append(qMakePair(m_paperBtn, QStringLiteral("paper")));
-    row->addWidget(m_paperBtn);
-
-    // Popover "Archivo / PDF"
-    m_fileBtn = new QToolButton(m_pill);
-    m_fileBtn->setFixedSize(36, 36);
-    m_fileBtn->setIconSize(QSize(22, 22));
-    m_fileBtn->setToolTip("Archivo");
-    polishButton(m_fileBtn);
-    connect(m_fileBtn, &QToolButton::clicked, this, [this] { openPopover(m_filePopover, m_fileBtn); });
-    m_studioUtilSpecs.append(qMakePair(m_fileBtn, QStringLiteral("file")));
-    row->addWidget(m_fileBtn);
-
-    row->addWidget(makeSeparator(m_pill));
-
-    // Modo interfaz limpia (Tab)
-    m_cleanBtn = new QToolButton(m_pill);
-    m_cleanBtn->setFixedSize(36, 36);
-    m_cleanBtn->setIconSize(QSize(22, 22));
-    m_cleanBtn->setToolTip("Ocultar (Tab)");
-    polishButton(m_cleanBtn);
+// Cápsula superior derecha: Presentar (interfaz limpia), Páginas y menú ⋯.
+void FloatingToolbar::buildTopRight() {
+    m_topRight = new GlassCapsule(this);
+    m_topRight->setObjectName("finilyPill");
+    auto* row = new QHBoxLayout(m_topRight);
+    row->setContentsMargins(8, 7, 8, 7);
+    row->setSpacing(3);
+    auto mk = [&](const QString& tip, const QString& glyph) {
+        auto* b = new QToolButton(m_topRight);
+        b->setFixedSize(36, 36);
+        b->setIconSize(QSize(22, 22));
+        b->setToolTip(tip);
+        polishButton(b);
+        m_iconSpecs.append(qMakePair(b, glyph));
+        row->addWidget(b);
+        return b;
+    };
+    m_cleanBtn = mk("Presentar · oculta la interfaz (Tab)", "present");
     connect(m_cleanBtn, &QToolButton::clicked, this, &FloatingToolbar::toggleCleanUi);
-    m_studioUtilSpecs.append(qMakePair(m_cleanBtn, QStringLiteral("clean")));
-    row->addWidget(m_cleanBtn);
+    m_pagesBtn = mk("Páginas", "pages");
+    m_pagesBtn->setCheckable(true);
+    connect(m_pagesBtn, &QToolButton::clicked, this, [this] {
+        closePopovers();
+        if (m_thumbPanel) {
+            m_thumbPanel->setVisible(m_pagesBtn->isChecked());
+            if (m_pagesBtn->isChecked())
+                rebuildThumbs();
+        }
+        positionChildren();
+    });
+    m_fileBtn = mk("Menú", "more");
+    connect(m_fileBtn, &QToolButton::clicked, this, [this] { openPopover(m_filePopover, m_fileBtn); });
+    m_paperBtn = m_fileBtn; // el popover de papel se abre desde el menú ⋯
+}
+
+// Panel lateral de páginas con miniaturas reales.
+void FloatingToolbar::buildThumbPanel() {
+    m_thumbPanel = new GlassCapsule(this);
+    m_thumbPanel->setObjectName("finilyPopover");
+    m_thumbPanel->setFixedWidth(150);
+    m_thumbPanel->hide();
+    auto* outer = new QVBoxLayout(m_thumbPanel);
+    outer->setContentsMargins(8, 8, 8, 8);
+    outer->setSpacing(6);
+    m_thumbScroll = new QScrollArea(m_thumbPanel);
+    m_thumbScroll->setFrameShape(QFrame::NoFrame);
+    m_thumbScroll->setWidgetResizable(true);
+    m_thumbScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_thumbScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_thumbScroll->setStyleSheet("QScrollArea{background:transparent;} QScrollArea>QWidget>QWidget{background:transparent;}");
+    m_thumbHost = new QWidget();
+    m_thumbHost->setStyleSheet("background:transparent;");
+    m_thumbLayout = new QVBoxLayout(m_thumbHost);
+    m_thumbLayout->setContentsMargins(0, 0, 0, 0);
+    m_thumbLayout->setSpacing(10);
+    m_thumbScroll->setWidget(m_thumbHost);
+    outer->addWidget(m_thumbScroll, 1);
+    auto* add = new QToolButton(m_thumbPanel);
+    add->setFixedHeight(32);
+    add->setText("+  Nueva página");
+    add->setToolTip("Añadir página");
+    polishButton(add);
+    connect(add, &QToolButton::clicked, this, [this] {
+        if (m_canvas)
+            m_canvas->addPage();
+        refreshFromCanvas();
+    });
+    outer->addWidget(add);
+    m_thumbTimer = new QTimer(this);
+    m_thumbTimer->setSingleShot(true);
+    m_thumbTimer->setInterval(350);
+    connect(m_thumbTimer, &QTimer::timeout, this, &FloatingToolbar::rebuildThumbs);
+}
+
+void FloatingToolbar::rebuildThumbs() {
+    if (!m_thumbPanel || m_thumbPanel->isHidden() || !m_canvas)
+        return;
+    while (QLayoutItem* it = m_thumbLayout->takeAt(0)) {
+        delete it->widget();
+        delete it;
+    }
+    const ThemeConfig theme = getThemeConfig(m_theme);
+    const int cur = m_canvas->currentPageIndex();
+    for (int i = 0; i < m_canvas->pageCount(); ++i) {
+        auto* b = new QToolButton(m_thumbHost);
+        b->setFixedSize(132, 96);
+        b->setIconSize(QSize(124, 88));
+        b->setIcon(QIcon(QPixmap::fromImage(m_canvas->pageThumbnail(i, QSize(124, 88)))));
+        b->setToolTip(QString("Página %1").arg(i + 1));
+        b->setCursor(Qt::PointingHandCursor);
+        b->setStyleSheet(QString("QToolButton{border:%1;border-radius:9px;background:transparent;}"
+                                 "QToolButton:hover{border:2px solid %2;}")
+                             .arg(i == cur ? QString("2px solid %1").arg(theme.accent.name())
+                                           : QString("1px solid %1").arg(theme.uiBorder.name()),
+                                  theme.accent.name()));
+        connect(b, &QToolButton::clicked, this, [this, i] {
+            if (m_canvas)
+                m_canvas->goToPage(i);
+            refreshFromCanvas();
+        });
+        auto* wrap = new QWidget(m_thumbHost);
+        auto* v = new QVBoxLayout(wrap);
+        v->setContentsMargins(0, 0, 0, 0);
+        v->setSpacing(3);
+        v->addWidget(b, 0, Qt::AlignHCenter);
+        auto* n = new QLabel(QString::number(i + 1), wrap);
+        n->setAlignment(Qt::AlignCenter);
+        n->setStyleSheet(QString("color:%1;font-size:11px;background:transparent;").arg(theme.uiMuted.name()));
+        v->addWidget(n);
+        m_thumbLayout->addWidget(wrap);
+    }
+    m_thumbLayout->addStretch(1);
+}
+
+void FloatingToolbar::setDocumentTitle(const QString& title, bool unsaved) {
+    if (!m_titleLabel)
+        return;
+    m_titleLabel->setText(title);
+    m_titleLabel->setToolTip(title);
+    const ThemeConfig theme = getThemeConfig(m_theme);
+    m_titleDot->setStyleSheet(QString("background:%1;border-radius:3px;")
+                                  .arg(unsaved ? QStringLiteral("#f5b84b") : theme.accent.name()));
+    m_titleDot->setToolTip(unsaved ? "Cambios sin guardar" : "Guardado");
+    positionChildren();
 }
 
 // Dock de herramientas 100% homologado (10 herramientas exclusivas, cero
@@ -1114,19 +1261,18 @@ void FloatingToolbar::buildDock() {
 
     // 4 útiles de escritura ilustrados SVG (1er clic = activar, 2do clic = abrir "Trazo").
     const QVector<QPair<ToolType, QPair<QString, QString>>> writingTools = {
-        {ToolType::Pen, qMakePair(QStringLiteral("Pluma (P)"), QStringLiteral("fountain-pen"))},
-        {ToolType::Ballpoint, qMakePair(QStringLiteral("Bolígrafo (B)"), QStringLiteral("gel-pen"))},
+        {ToolType::Pen, qMakePair(QStringLiteral("Pluma (P)"), QStringLiteral("pen"))},
         {ToolType::Highlighter, qMakePair(QStringLiteral("Resaltador (H)"), QStringLiteral("highlighter"))},
         {ToolType::Eraser, qMakePair(QStringLiteral("Borrador (E)"), QStringLiteral("eraser"))},
     };
     for (const auto& entry : writingTools) {
-        const PenTrayButton::Kind kind = entry.first == ToolType::Pen         ? PenTrayButton::Kind::Fountain
-                                         : entry.first == ToolType::Ballpoint ? PenTrayButton::Kind::Gel
-                                         : entry.first == ToolType::Highlighter
-                                             ? PenTrayButton::Kind::Marker
-                                             : PenTrayButton::Kind::Eraser;
-        auto* button = new PenTrayButton(kind, m_dock);
-        button->setObjectName("finilyPen");
+        auto* button = new QToolButton(m_dock);
+        button->setObjectName("finilyTool");
+        button->setFixedSize(42, 40);
+        button->setIconSize(QSize(24, 24));
+        button->setCheckable(true);
+        polishButton(button);
+        m_iconSpecs.append(qMakePair(static_cast<QToolButton*>(button), entry.second.second));
         button->setToolTip(entry.second.first);
         m_toolGroup->addButton(button);
         const ToolType tool = entry.first;
@@ -1146,7 +1292,6 @@ void FloatingToolbar::buildDock() {
         });
         m_writingKinds.append(tool);
         m_writingBtns.append(button);
-        m_writingIcons.append(entry.second.second);
     }
 
     m_dockDivider = new QWidget(m_dock);
@@ -1162,7 +1307,7 @@ void FloatingToolbar::buildDock() {
     for (const auto& entry : secondary) {
         auto* button = new QToolButton(m_dock);
         button->setObjectName("finilyTool");
-        button->setFixedSize(40, 38);
+        button->setFixedSize(42, 40);
         button->setIconSize(QSize(24, 24));
         button->setCheckable(true);
         button->setToolTip(entry.second.first);
@@ -1234,17 +1379,17 @@ void FloatingToolbar::layoutDock() {
     // Estuche: los lápices asoman desde el borde exterior (abajo en horizontal,
     // izquierda en vertical) y el elegido se eleva. Luego herramientas y tintas.
     const bool vertical = m_dockPos == DockPos::Izquierda;
-    const int penLong = 70, penShort = 38, pad = 10;
-    const int toolSize = 38, dotSize = 30;
-    const int crossLen = 76; // grosor del estuche
-    const int along = pad + m_writingBtns.size() * (penShort + 2) + 12
+    const int penLong = 40, penShort = 40, pad = 10;
+    const int toolSize = 40, dotSize = 30;
+    const int crossLen = 56; // grosor del estuche
+    const int along = pad + m_writingBtns.size() * (toolSize + 2) + 12
                       + m_secondaryBtns.size() * (toolSize + 2) + 12
                       + 38 + pad;
     if (vertical)
         m_dock->setFixedSize(crossLen, along);
     else
         m_dock->setFixedSize(along, crossLen);
-    m_dock->setCapsuleRadius(22);
+    m_dock->setCapsuleRadius(24);
 
     auto place = [&](QWidget* w, int pos, int len, int cross) {
         const int off = (crossLen - cross) / 2;
@@ -1257,15 +1402,8 @@ void FloatingToolbar::layoutDock() {
 
     int pos = pad;
     for (QToolButton* button : m_writingBtns) {
-        if (auto* pen = dynamic_cast<PenTrayButton*>(button))
-            pen->setSideways(vertical);
-        // El lápiz ocupa del borde interior hasta el borde exterior del estuche.
-        if (vertical)
-            button->setGeometry(0, pos, penLong, penShort);
-        else
-            button->setGeometry(pos, crossLen - penLong, penShort, penLong);
-        button->raise();
-        pos += penShort + 2;
+        place(button, pos, toolSize, toolSize);
+        pos += toolSize + 2;
     }
     pos += 4;
     if (vertical)
@@ -1561,7 +1699,7 @@ void FloatingToolbar::buildStrokePopover() {
     auto* stabilizerColumn = new QVBoxLayout(moreBox);
     stabilizerColumn->setContentsMargins(0, 0, 0, 0);
     stabilizerColumn->setSpacing(8);
-    m_stabilizerLabel = new QLabel("Estabilizador: 15 %", moreBox);
+    m_stabilizerLabel = new QLabel("Estabilizador · 15 %", moreBox);
     m_stabilizerLabel->setObjectName("finilyValue");
     stabilizerColumn->addWidget(m_stabilizerLabel);
     m_stabilizerSlider = new QSlider(Qt::Horizontal, moreBox);
@@ -1573,7 +1711,7 @@ void FloatingToolbar::buildStrokePopover() {
         if (m_updatingUi || !m_canvas)
             return;
         m_canvas->setStabilizer(value / 100.0);
-        m_stabilizerLabel->setText(QString("Estabilizador: %1 %").arg(value));
+        m_stabilizerLabel->setText(QString("Estabilizador · %1 %").arg(value));
     });
     // --- Presión Wacom (perfil de respuesta de la tableta), dentro de "Más ajustes" ---
     auto* pressureSection = new QWidget(moreBox);
@@ -1610,26 +1748,24 @@ void FloatingToolbar::buildStrokePopover() {
     pressureRow->addStretch(1);
     pressureColumn->addLayout(pressureRow);
 
-    auto* swapBtn = new QToolButton(pressureSection);
-    swapBtn->setFixedSize(272, 28);
+    auto* swapBtn = new SwitchButton(pressureSection);
+    swapBtn->setFixedSize(272, 32);
     swapBtn->setText("Invertir botones del lápiz");
     swapBtn->setToolTip("Botón grande = Borrar · Botón pequeño = Escribir (pulsa para invertir si vienen al revés)");
     swapBtn->setCheckable(true);
     swapBtn->setChecked(m_canvas && m_canvas->swapPenButtons());
-    polishButton(swapBtn);
     connect(swapBtn, &QToolButton::clicked, this, [this, swapBtn] {
         if (m_canvas)
             m_canvas->setSwapPenButtons(swapBtn->isChecked());
     });
     pressureColumn->addWidget(swapBtn);
 
-    m_mathBeautifyBtn = new QToolButton(pressureSection);
-    m_mathBeautifyBtn->setFixedSize(272, 28);
+    m_mathBeautifyBtn = new SwitchButton(pressureSection);
+    m_mathBeautifyBtn->setFixedSize(272, 32);
     m_mathBeautifyBtn->setText("Pulir signos y números");
     m_mathBeautifyBtn->setToolTip("Embellece números, signos matemáticos y tus plantillas al escribir (Ctrl+Z deshace)");
     m_mathBeautifyBtn->setCheckable(true);
     m_mathBeautifyBtn->setChecked(m_canvas ? m_canvas->mathBeautifyEnabled() : true);
-    polishButton(m_mathBeautifyBtn);
     connect(m_mathBeautifyBtn, &QToolButton::clicked, this, [this] {
         if (m_canvas && m_mathBeautifyBtn)
             m_canvas->setMathBeautifyEnabled(m_mathBeautifyBtn->isChecked());
@@ -1639,13 +1775,12 @@ void FloatingToolbar::buildStrokePopover() {
 
     auto* opColorRow = new QHBoxLayout();
     opColorRow->setSpacing(6);
-    m_autoColorOpsBtn = new QToolButton(pressureSection);
-    m_autoColorOpsBtn->setFixedSize(238, 28);
+    m_autoColorOpsBtn = new SwitchButton(pressureSection);
+    m_autoColorOpsBtn->setFixedSize(238, 32);
     m_autoColorOpsBtn->setText("Colorear signos (+ − = √)");
     m_autoColorOpsBtn->setToolTip("Pinta automáticamente los signos operativos y de agrupación con el color elegido");
     m_autoColorOpsBtn->setCheckable(true);
     m_autoColorOpsBtn->setChecked(m_canvas ? m_canvas->autoColorOperators() : true);
-    polishButton(m_autoColorOpsBtn);
     connect(m_autoColorOpsBtn, &QToolButton::clicked, this, [this] {
         if (m_canvas && m_autoColorOpsBtn)
             m_canvas->setAutoColorOperators(m_autoColorOpsBtn->isChecked());
@@ -2126,7 +2261,17 @@ void FloatingToolbar::buildFilePopover() {
     column->setSpacing(8);
 
     // --- Sección 1: Cuaderno (.finily) ---
-    column->addWidget(makeSectionTitle("Cuaderno", m_filePopover));
+    auto* paperRow = new QToolButton(m_filePopover);
+    paperRow->setFixedSize(272, 34);
+    paperRow->setText("Papel y fondo");
+    polishButton(paperRow);
+    connect(paperRow, &QToolButton::clicked, this, [this] {
+        closePopovers();
+        openPopover(m_paperPopover, m_fileBtn);
+    });
+    column->addWidget(paperRow);
+    makeMenuRow(paperRow);
+    column->addWidget(makeDivider(m_filePopover));
 
     m_newNotebookBtn = new QToolButton(m_filePopover);
     m_newNotebookBtn->setFixedSize(272, 34);
@@ -2163,8 +2308,6 @@ void FloatingToolbar::buildFilePopover() {
     column->addWidget(makeDivider(m_filePopover));
 
     // --- Sección 2: PDF e Imágenes ---
-    column->addWidget(makeSectionTitle("PDF e Imágenes", m_filePopover));
-
     m_importPdfBtn = new QToolButton(m_filePopover);
     m_importPdfBtn->setFixedSize(272, 34);
     m_importPdfBtn->setText("Importar PDF / PPT (Ctrl+O)");
@@ -2487,6 +2630,15 @@ void FloatingToolbar::refreshIcons() {
 
     // 2. 4 útiles ilustrados del dock (SVG 32px con tinta activa)
 
+    for (QToolButton* b : findChildren<QToolButton*>("finilySwitch"))
+        if (auto* sw = dynamic_cast<SwitchButton*>(b))
+            sw->setColors(theme.uiText, theme.accent, theme.isDark);
+    if (m_titleLabel)
+        m_titleLabel->setStyleSheet(QString("color:%1;font-size:13px;font-weight:600;background:transparent;")
+                                        .arg(theme.uiText.name()));
+    if (m_titleDot)
+        m_titleDot->setStyleSheet(QString("background:%1;border-radius:3px;").arg(theme.accent.name()));
+
     // 3. 6 herramientas duotono del dock (SVG 24px)
     for (int i = 0; i < m_secondaryBtns.size() && i < m_secondaryIcons.size(); ++i)
         m_secondaryBtns.at(i)->setIcon(
@@ -2508,6 +2660,16 @@ void FloatingToolbar::positionChildren() {
     if (m_pill && !m_pill->isHidden()) {
         m_pill->adjustSize();
         m_pill->move(14, 12);
+    }
+    if (m_topRight && !m_topRight->isHidden()) {
+        m_topRight->adjustSize();
+        m_topRight->move(width() - m_topRight->width() - 14, 12);
+    }
+    if (m_thumbPanel && !m_thumbPanel->isHidden()) {
+        const int top = m_topRight ? m_topRight->geometry().bottom() + 10 : 60;
+        const int bottom = height() - (m_zoomPill ? m_zoomPill->height() : 40) - 28;
+        m_thumbPanel->setGeometry(width() - m_thumbPanel->width() - 14, top, m_thumbPanel->width(),
+                                  std::max(160, bottom - top));
     }
     if (m_zoomPill && !m_zoomPill->isHidden()) {
         m_zoomPill->adjustSize();
@@ -2560,7 +2722,7 @@ void FloatingToolbar::positionChildren() {
 // eventFilter cierra cualquier popover abierto.
 void FloatingToolbar::updateOverlayMask() {
     QRegion region;
-    const QVector<QWidget*> overlayChildren = {m_pill,          m_contextPill, m_zoomPill,   m_restoreBtn,
+    const QVector<QWidget*> overlayChildren = {m_pill,          m_topRight,     m_thumbPanel,   m_contextPill, m_zoomPill,   m_restoreBtn,
                                                m_strokePopover, m_paperPopover, m_shapesPopover, m_filePopover,
                                                m_pagePill,      m_toastPill,    m_dock};
     for (QWidget* child : overlayChildren) {
@@ -2605,7 +2767,10 @@ void FloatingToolbar::openPopover(GlassCapsule* popover, QWidget* anchor) {
     // vertical (bajo la pill de utilidades), debajo del dock acoplado arriba,
     // o bajo la pill en cualquier otro caso; nunca tapados ni recortados.
     int x, y;
-    if (m_dockPos == DockPos::Izquierda && m_dock && !m_dock->isHidden()) {
+    if (m_topRight && anchor->parentWidget() == m_topRight) {
+        x = m_topRight->geometry().right() - popover->width();
+        y = m_topRight->geometry().bottom() + 10;
+    } else if (m_dockPos == DockPos::Izquierda && m_dock && !m_dock->isHidden()) {
         x = m_dock->geometry().right() + 10;
         if (anchor->parentWidget() == m_dock) {
             // Al abrir desde un útil o Figuras del dock, alinear verticalmente junto a ese botón
@@ -2627,7 +2792,8 @@ void FloatingToolbar::openPopover(GlassCapsule* popover, QWidget* anchor) {
     y = std::clamp(y, margin, std::max(margin, height() - popover->height() - margin));
     const QPoint finalPos(x, y);
     // Desliza 8 px hacia su lugar final (desde el cromo que lo ancla).
-    const QPoint startPos = m_dockPos == DockPos::Izquierda ? QPoint(x - 8, y)
+    const QPoint startPos = (m_topRight && anchor->parentWidget() == m_topRight) ? QPoint(x, y - 8)
+                            : m_dockPos == DockPos::Izquierda ? QPoint(x - 8, y)
                             : m_dockPos == DockPos::Abajo   ? QPoint(x, y - 8)
                                                             : QPoint(x, y + 8);
     popover->move(startPos);
@@ -2780,6 +2946,10 @@ void FloatingToolbar::toggleCleanUi() {
             m_contextPill->hide();
         if (m_pagePill)
             m_pagePill->hide();
+        if (m_topRight)
+            m_topRight->hide();
+        if (m_thumbPanel)
+            m_thumbPanel->hide();
         if (m_dock)
             m_dock->hide();
         if (m_restoreBtn)
@@ -2811,6 +2981,10 @@ void FloatingToolbar::toggleCleanUi() {
             m_zoomPill->show();
         if (m_pagePill)
             m_pagePill->show();
+        if (m_topRight)
+            m_topRight->show();
+        if (m_thumbPanel && m_pagesBtn && m_pagesBtn->isChecked())
+            m_thumbPanel->show();
         if (m_dock)
             m_dock->show();
         positionChildren();
@@ -2977,6 +3151,8 @@ void FloatingToolbar::refreshFromCanvas() {
             m_canvas->setInkColor(adaptInkToTheme(m_canvas->inkColor(), getThemeConfig(theme).isDark));
     }
 
+    if (m_thumbPanel && !m_thumbPanel->isHidden() && m_thumbTimer)
+        m_thumbTimer->start();
     syncActivePresetFromCanvas();
 
     // Toggle "Posición de barra" (estado propio del toolbar, fuera de la
@@ -3060,7 +3236,7 @@ void FloatingToolbar::refreshFromCanvas() {
     const int stabilizerPercent = qRound(m_canvas->stabilizer() * 100.0);
     if (m_stabilizerSlider->value() != stabilizerPercent)
         m_stabilizerSlider->setValue(stabilizerPercent);
-    m_stabilizerLabel->setText(QString("Estabilizador: %1 %").arg(stabilizerPercent));
+    m_stabilizerLabel->setText(QString("Estabilizador · %1 %").arg(stabilizerPercent));
 
     // Perfil de presión Wacom y embellecedor matemático
     const PressureProfile profile = m_canvas->pressureProfile();

@@ -18,6 +18,9 @@ class QTabletEvent;
 class QTimer;
 class QToolButton;
 
+class QLabel;
+class QScrollArea;
+class QVBoxLayout;
 namespace finily {
 
 class CanvasWidget;
@@ -80,6 +83,9 @@ signals:
     // Botón 'Inicio' de la pill: volver a la biblioteca de cuadernos.
     void homeRequested();
 
+public slots:
+    void setDocumentTitle(const QString& title, bool unsaved);
+
 protected:
     void resizeEvent(QResizeEvent* event) override;
     void tabletEvent(QTabletEvent* event) override;
@@ -90,6 +96,9 @@ private:
     void loadPresets();
     void savePresets();
     void buildUtilityPill();
+    void buildTopRight();
+    void buildThumbPanel();
+    void rebuildThumbs();
     void buildDock();
     void layoutDock();
     void buildZoomPill();
@@ -142,6 +151,15 @@ private:
 
     // Pill compacta de utilidades (arriba-izquierda) — cápsula de cristal
     GlassCapsule* m_pill = nullptr;
+    GlassCapsule* m_topRight = nullptr;
+    GlassCapsule* m_thumbPanel = nullptr;
+    QScrollArea* m_thumbScroll = nullptr;
+    QWidget* m_thumbHost = nullptr;
+    QVBoxLayout* m_thumbLayout = nullptr;
+    QTimer* m_thumbTimer = nullptr;
+    QToolButton* m_pagesBtn = nullptr;
+    QLabel* m_titleLabel = nullptr;
+    QLabel* m_titleDot = nullptr;
     QToolButton* m_homeBtn = nullptr;
     QToolButton* m_undoBtn = nullptr;
     QToolButton* m_redoBtn = nullptr;

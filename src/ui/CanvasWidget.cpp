@@ -1443,4 +1443,62 @@ void CanvasWidget::updateCursorShape() {
     else if(m_tool==ToolType::Eraser||m_mode==InteractionMode::Erase)setCursor(Qt::BlankCursor);
     else setCursor(Qt::CrossCursor);
 }
+
+// Miniatura simplificada de una página (fondo del tema + trazos y figuras como polilíneas).
+QImage CanvasWidget::pageThumbnail(int index, const QSize& size) const {
+    QImage img(size * 2, QImage::Format_ARGB32_Premultiplied);
+    img.setDevicePixelRatio(2.0);
+    const ThemeConfig theme = getThemeConfig(m_themeId);
+    img.fill(theme.background);
+    if (index < 0 || index >= m_pages.size())
+        return img;
+    const bool cur = index == m_currentPageIndex;
+    const QVector<Stroke>& strokes = cur ? m_strokes : m_pages[index].strokes;
+    const QVector<ShapeItem>& shapes = cur ? m_shapes : m_pages[index].shapes;
+    QRectF box;
+    for (const auto& st : strokes)
+        box = box.isNull() ? st.bounds : box.united(st.bounds);
+    for (const auto& sh : shapes)
+        box = box.isNull() ? sh.bounds : box.united(sh.bounds);
+    if (box.isNull() || box.width() <= 0 || box.height() <= 0)
+        return img;
+    const double margin = 8;
+    const double k = std::min((size.width() - 2 * margin) / std::max(box.width(), 1.0),
+                              (size.height() - 2 * margin) / std::max(box.height(), 1.0));
+    const double scale = std::min(k, 0.6);
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.translate(size.width() / 2.0 - box.center().x() * scale, size.height() / 2.0 - box.center().y() * scale);
+    p.scale(scale, scale);
+    auto pen = [&](const QColor& c, double w, double op) {
+        QColor col = c;
+        col.setAlphaF(op);
+        QPen q(col, std::max(w, 1.4 / scale), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        p.setPen(q);
+    };
+    for (const auto& st : strokes) {
+        pen(st.color, st.size, st.tool == ToolType::Highlighter ? 0.35 : st.opacity);
+        QPolygonF poly;
+        for (const auto& pt : st.points)
+            poly << QPointF(pt.x, pt.y);
+        if (poly.size() > 1)
+            p.drawPolyline(poly);
+        else if (poly.size() == 1)
+            p.drawPoint(poly[0]);
+    }
+    for (const auto& sh : shapes) {
+        pen(sh.color, sh.size, sh.opacity);
+        QPolygonF poly(sh.vertices);
+        if (sh.kind == ShapeKind::Circle && sh.vertices.size() >= 2) {
+            const double r = QLineF(sh.vertices[0], sh.vertices[1]).length();
+            p.drawEllipse(sh.vertices[0], r, r);
+        } else if ((sh.kind == ShapeKind::Ellipse || sh.kind == ShapeKind::Rectangle) && sh.vertices.size() >= 2) {
+            const QRectF r(sh.vertices[0], sh.vertices[1]);
+            sh.kind == ShapeKind::Ellipse ? p.drawEllipse(r.normalized()) : p.drawRect(r.normalized());
+        } else if (poly.size() > 1) {
+            sh.closed ? p.drawPolygon(poly) : p.drawPolyline(poly);
+        }
+    }
+    return img;
+}
 } // namespace finily
