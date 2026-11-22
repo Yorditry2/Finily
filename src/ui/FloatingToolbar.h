@@ -57,6 +57,9 @@ public:
     void openNotebookDialog();
     void saveNotebookAction();
     void saveNotebookAsDialog();
+    // Pregunta Guardar / No guardar / Cancelar si hay cambios sin guardar.
+    // Devuelve true si se puede continuar con la acción.
+    bool confirmDiscardChanges(const QString& action);
 
     // Toast flotante estilo StarNote: pill centrada que aparece con fundido,
     // se sostiene 1.2 s y se desvanece sola (también alimenta updateOverlayMask).

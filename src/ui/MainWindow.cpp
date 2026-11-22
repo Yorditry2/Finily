@@ -47,8 +47,7 @@ MainWindow::MainWindow() {
     installShortcuts();
     setupWacomPadListener();
 
-    // Autoguardado: restaurar la sesión anterior al arrancar.
-    m_canvas->loadAutosave();
+    // La sesión anterior ya la restauró el constructor de CanvasWidget.
     m_toolbar->refreshFromCanvas();
 }
 
@@ -140,15 +139,16 @@ void MainWindow::layoutChildren() {
 
 void MainWindow::updateWindowTitle() {
     const QString path = m_canvas ? m_canvas->currentFilePath() : QString();
-    if (path.isEmpty())
-        setWindowTitle(tr("Finily"));
-    else
-        setWindowTitle(tr("Finily — %1").arg(QFileInfo(path).fileName()));
+    const QString name = path.isEmpty() ? tr("Sin título") : QFileInfo(path).fileName();
+    const bool unsaved = m_canvas && m_canvas->hasUnsavedChanges();
+    // "•" marca cambios que aún no están en ningún .finily (Ctrl+S).
+    setWindowTitle(tr("%1%2 — Finily").arg(unsaved ? QStringLiteral("• ") : QString(), name));
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
+    // Cerrar es seguro: la sesión entera se restaura al volver a abrir.
     if (m_canvas)
-        m_canvas->saveAutosave();
+        m_canvas->flushAutosave();
     QMainWindow::closeEvent(event);
     event->accept();
 }

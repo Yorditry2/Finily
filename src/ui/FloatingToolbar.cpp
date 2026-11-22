@@ -13,6 +13,7 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
@@ -965,8 +966,18 @@ void FloatingToolbar::buildPagePill() {
     m_pageDeleteBtn->setToolTip("Eliminar página actual");
     polishButton(m_pageDeleteBtn);
     connect(m_pageDeleteBtn, &QToolButton::clicked, this, [this] {
-        if (m_canvas)
-            m_canvas->deleteCurrentPage();
+        if (!m_canvas)
+            return;
+        if (m_canvas->currentPageHasContent()) {
+            const auto answer = QMessageBox::question(
+                window(), QStringLiteral("Eliminar página"),
+                QStringLiteral("¿Eliminar la página %1 y todo su contenido?\nEsta acción no se puede deshacer.")
+                    .arg(m_canvas->currentPageIndex() + 1),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (answer != QMessageBox::Yes)
+                return;
+        }
+        m_canvas->deleteCurrentPage();
         refreshFromCanvas();
     });
     m_iconSpecs.append(qMakePair(m_pageDeleteBtn, QString("page-delete")));
@@ -1663,6 +1674,8 @@ void FloatingToolbar::newDocumentAction() {
     if (!m_canvas)
         return;
     closePopovers();
+    if (!confirmDiscardChanges(QStringLiteral("crear un cuaderno nuevo")))
+        return;
     m_canvas->newDocument();
     refreshFromCanvas();
 }
@@ -1671,12 +1684,36 @@ void FloatingToolbar::openNotebookDialog() {
     if (!m_canvas)
         return;
     closePopovers();
+    if (!confirmDiscardChanges(QStringLiteral("abrir otro cuaderno")))
+        return;
     const QString path = QFileDialog::getOpenFileName(window(), "Abrir cuaderno", QString(),
                                                       "Cuaderno Finily (*.finily)");
     if (path.isEmpty())
         return;
     m_canvas->loadFromFile(path);
     refreshFromCanvas();
+}
+
+bool FloatingToolbar::confirmDiscardChanges(const QString& action) {
+    if (!m_canvas || !m_canvas->hasUnsavedChanges())
+        return true;
+    QMessageBox box(QMessageBox::Warning, QStringLiteral("Cambios sin guardar"),
+                    QStringLiteral("El cuaderno actual tiene cambios sin guardar.\n"
+                                   "¿Quieres guardarlos antes de %1?").arg(action),
+                    QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, window());
+    box.setDefaultButton(QMessageBox::Save);
+    box.button(QMessageBox::Save)->setText(QStringLiteral("Guardar"));
+    box.button(QMessageBox::Discard)->setText(QStringLiteral("No guardar"));
+    box.button(QMessageBox::Cancel)->setText(QStringLiteral("Cancelar"));
+    switch (box.exec()) {
+        case QMessageBox::Save:
+            saveNotebookAction();
+            return !m_canvas->hasUnsavedChanges(); // si canceló el diálogo, no seguimos
+        case QMessageBox::Discard:
+            return true;
+        default:
+            return false;
+    }
 }
 
 void FloatingToolbar::saveNotebookAction() {

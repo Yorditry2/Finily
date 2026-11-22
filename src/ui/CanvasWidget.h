@@ -49,6 +49,9 @@ public:
     Viewport viewport() const { return m_viewport; }
     bool canUndo() const { return !m_undoStack.isEmpty(); }
     bool canRedo() const { return !m_redoStack.isEmpty(); }
+    // Hay trabajo que no está en ningún .finily (el autoguardado no cuenta).
+    bool hasUnsavedChanges() const;
+    bool currentPageHasContent() const;
 
     // State setters
     void setTool(ToolType tool);
@@ -99,7 +102,8 @@ public:
     void newDocument();
     bool saveToFile(const QString& filePath);
     bool loadFromFile(const QString& filePath);
-    void saveAutosave() const;
+    void saveAutosave() const;   // programa un autoguardado diferido (1.5 s)
+    void flushAutosave();        // escribe ya el autoguardado pendiente
     void loadAutosave();
 
 signals:
@@ -147,6 +151,7 @@ private:
     void endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods);
     void applyEraseAt(const QPointF& worldPos);
     void pushUndoSnapshot(const DocumentSnapshot& snapshot);
+    void writeAutosaveNow() const;
     DocumentSnapshot currentSnapshot() const;
     void updateCursorShape();
     void triggerHoldToShape();
@@ -181,6 +186,8 @@ private:
     QVector<DocumentSnapshot> m_undoStack;
     QVector<DocumentSnapshot> m_redoStack;
     QString m_currentFilePath;
+    bool m_dirty = false;
+    QTimer* m_autosaveTimer = nullptr;
 
     // Active tool & styling
     ToolType m_tool = ToolType::Pen;

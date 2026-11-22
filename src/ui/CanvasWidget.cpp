@@ -112,6 +112,8 @@ QJsonObject documentSettings(ShapeKind kind,bool hold,bool guides,bool swap,Pres
         {"pressureProfile",int(profile)},{"theme",int(theme)},{"template",int(tpl)},
         {"viewport",QJsonObject{{"x",viewport.x},{"y",viewport.y},{"zoom",viewport.zoom}}}};
 }
+struct PngCache { QHash<qint64,QString> previous,next; };
+PngCache& pngCache() { static PngCache cache;return cache; }
 QJsonObject serializePage(const PageData& document,bool& valid) {
     QJsonArray strokes,shapes,images,texts;
     for(const auto& stroke:document.strokes)strokes.append(strokeJson(stroke));
@@ -121,17 +123,26 @@ QJsonObject serializePage(const PageData& document,bool& valid) {
     for(const auto& image:document.images) {
         QJsonObject value{{"id",image.id},{"rect",QJsonArray{image.rect.x(),image.rect.y(),image.rect.width(),image.rect.height()}},
             {"isPdfPage",image.isPdfPage},{"pdfPageIndex",image.pdfPageIndex},{"pdfSourcePath",image.pdfSourcePath}};
-        QByteArray png;QBuffer buffer(&png);buffer.open(QIODevice::WriteOnly);
-        if(!image.image.save(&buffer,"PNG")){valid=false;return {};}
-        value.insert("png",QString::fromLatin1(png.toBase64()));images.append(value);
+        // Codificar a PNG es lo más caro del guardado: se reutiliza el resultado
+        // mientras los píxeles de la imagen no cambien (QImage::cacheKey).
+        const qint64 key=image.image.cacheKey();QString encoded=pngCache().previous.value(key);
+        if(encoded.isEmpty()) {
+            QByteArray png;QBuffer buffer(&png);buffer.open(QIODevice::WriteOnly);
+            if(!image.image.save(&buffer,"PNG")){valid=false;return {};}
+            encoded=QString::fromLatin1(png.toBase64());
+        }
+        pngCache().next.insert(key,encoded);
+        value.insert("png",encoded);images.append(value);
     }
     return {{"strokes",strokes},{"shapes",shapes},{"images",images},{"texts",texts},
         {"viewport",QJsonObject{{"x",document.viewport.x},{"y",document.viewport.y},{"zoom",document.viewport.zoom}}}};
 }
 bool serializeDocumentToFile(const QString& path,const QVector<PageData>& pages,int currentPage,QJsonObject root) {
-    QJsonArray serialized;bool valid=true;
+    QJsonArray serialized;bool valid=true;pngCache().next.clear();
     for(const auto& page:pages){serialized.append(serializePage(page,valid));if(!valid)return false;}
     if(serialized.isEmpty())serialized.append(serializePage(PageData{},valid));
+    // Conserva solo las imágenes que siguen en el documento.
+    pngCache().previous=std::move(pngCache().next);pngCache().next.clear();
     root.remove("viewport");root.insert("version",5);root.insert("pages",serialized);root.insert("currentPageIndex",currentPage);
     QSaveFile file(path);if(!file.open(QIODevice::WriteOnly))return false;
     const auto data=QJsonDocument(root).toJson(QJsonDocument::Compact);
@@ -228,7 +239,8 @@ PageData deserializePage(const QJsonObject& root,QHash<QString,QVector<ImageItem
 void syncWorkingPage(QVector<PageData>& pages,int& index,const DocumentSnapshot& document,Viewport viewport) {
     if(pages.isEmpty())pages.append(PageData{});
     index=std::clamp(index,0,int(pages.size())-1);
-    pages[index]={document.strokes,document.shapes,document.images,document.texts,viewport};
+    auto& page=pages[index];
+    page.strokes=document.strokes;page.shapes=document.shapes;page.images=document.images;page.texts=document.texts;page.viewport=viewport;
 }
 void createShapeVertices(ShapeItem& shape,QPointF origin,QPointF end) {
     const QRectF r=QRectF(origin,end).normalized();
@@ -282,11 +294,18 @@ CanvasWidget::CanvasWidget(QWidget* parent):QWidget(parent),m_stabilizerFilter(s
     connect(m_shapePulseAnimation,&QVariantAnimation::valueChanged,this,[this](const QVariant& value) {
         m_shapePulseAlpha=value.toDouble();update(shapePulseRect());
     });
+    // Autoguardado diferido: se agrupan los cambios y se escribe 1.5 s después
+    // del último, nunca en mitad de un trazo.
+    m_autosaveTimer=new QTimer(this);m_autosaveTimer->setSingleShot(true);m_autosaveTimer->setInterval(1500);
+    connect(m_autosaveTimer,&QTimer::timeout,this,[this] {
+        if(m_mode!=InteractionMode::None){m_autosaveTimer->start();return;}
+        writeAutosaveNow();
+    });
     m_pages.append(PageData{});loadAutosave();updateCursorShape();
 }
 CanvasWidget::~CanvasWidget() {
     finishTextEditor(this,false);
-    saveAutosave();
+    m_autosaveTimer->stop();writeAutosaveNow();
 }
 void CanvasWidget::setTool(ToolType tool) {
     clearPenCursor();
@@ -530,10 +549,11 @@ void CanvasWidget::goToPage(int index) {
     syncWorkingPage(m_pages,m_currentPageIndex,currentSnapshot(),m_viewport);
     index=std::clamp(index,0,int(m_pages.size())-1);if(index==m_currentPageIndex)return;
     m_holdTimer->stop();m_laserTimer->stop();m_laserTrail.clear();m_tabletActive=false;
+    m_pages[m_currentPageIndex].undoStack=std::move(m_undoStack);m_pages[m_currentPageIndex].redoStack=std::move(m_redoStack);
     m_currentPageIndex=index;const auto page=m_pages[index];
     m_strokes=page.strokes;m_shapes=page.shapes;m_images=page.images;m_texts=page.texts;m_viewport=page.viewport;
     m_hasActiveStroke=false;m_hasActiveShape=false;m_holdSnappedToShape=false;m_activeGuides.clear();m_showEraserCursor=false;
-    m_undoStack.clear();m_redoStack.clear();clearSelection();updateCursorShape();invalidateStaticCache();saveAutosave();
+    m_undoStack=page.undoStack;m_redoStack=page.redoStack;clearSelection();updateCursorShape();invalidateStaticCache();saveAutosave();
     emit stateChanged();emit viewportChanged(m_viewport.zoom);
 }
 void CanvasWidget::addPage() {
@@ -541,7 +561,7 @@ void CanvasWidget::addPage() {
     if(m_mode==InteractionMode::LaserTrail)m_mode=InteractionMode::None;
     if(m_mode!=InteractionMode::None)return;
     syncWorkingPage(m_pages,m_currentPageIndex,currentSnapshot(),m_viewport);
-    const int next=m_currentPageIndex+1;m_pages.insert(next,PageData{});goToPage(next);emit stateChanged();
+    const int next=m_currentPageIndex+1;m_pages.insert(next,PageData{});m_dirty=true;goToPage(next);emit stateChanged();
     emit toastRequested(QStringLiteral("Página %1 / %2").arg(m_currentPageIndex+1).arg(pageCount()));
 }
 void CanvasWidget::nextPage() { goToPage(m_currentPageIndex+1); }
@@ -554,24 +574,30 @@ void CanvasWidget::deleteCurrentPage() {
     const int old=m_currentPageIndex;
     // Load the surviving neighbor before removal, so goToPage cannot sync the
     // deleted working vectors over that neighbor after indices shift.
-    goToPage(old+1<int(m_pages.size())?old+1:old-1);m_pages.removeAt(old);
+    goToPage(old+1<int(m_pages.size())?old+1:old-1);m_pages.removeAt(old);m_dirty=true;
     if(m_currentPageIndex>old)--m_currentPageIndex;
     saveAutosave();emit stateChanged();
 }
+bool CanvasWidget::currentPageHasContent() const { return !m_strokes.isEmpty()||!m_shapes.isEmpty()||!m_images.isEmpty()||!m_texts.isEmpty(); }
+bool CanvasWidget::hasUnsavedChanges() const {
+    if(!m_dirty)return false;
+    if(currentPageHasContent()||m_pages.size()>1)return true;
+    return !m_currentFilePath.isEmpty(); // un cuaderno guardado que se vació también es un cambio
+}
 DocumentSnapshot CanvasWidget::currentSnapshot() const { return {m_strokes,m_shapes,m_images,m_texts}; }
 void CanvasWidget::pushUndoSnapshot(const DocumentSnapshot& snapshot) {
-    m_undoStack.append(snapshot);while(m_undoStack.size()>100)m_undoStack.removeFirst();m_redoStack.clear();
+    m_undoStack.append(snapshot);while(m_undoStack.size()>100)m_undoStack.removeFirst();m_redoStack.clear();m_dirty=true;
 }
 void CanvasWidget::undo() {
     if(m_mode!=InteractionMode::None)return;
     if(m_polylineActive){cancelActivePolyline();return;}
     if(m_undoStack.isEmpty())return;
-    m_redoStack.append(currentSnapshot());const auto snapshot=m_undoStack.takeLast();m_strokes=snapshot.strokes;m_shapes=snapshot.shapes;m_images=snapshot.images;m_texts=snapshot.texts;
+    m_dirty=true;m_redoStack.append(currentSnapshot());const auto snapshot=m_undoStack.takeLast();m_strokes=snapshot.strokes;m_shapes=snapshot.shapes;m_images=snapshot.images;m_texts=snapshot.texts;
     clearSelection();saveAutosave();emit stateChanged();
 }
 void CanvasWidget::redo() {
     if(m_mode!=InteractionMode::None||m_polylineActive||m_redoStack.isEmpty())return;
-    m_undoStack.append(currentSnapshot());while(m_undoStack.size()>100)m_undoStack.removeFirst();
+    m_dirty=true;m_undoStack.append(currentSnapshot());while(m_undoStack.size()>100)m_undoStack.removeFirst();
     const auto snapshot=m_redoStack.takeLast();m_strokes=snapshot.strokes;m_shapes=snapshot.shapes;m_images=snapshot.images;m_texts=snapshot.texts;
     clearSelection();saveAutosave();emit stateChanged();
 }
@@ -586,7 +612,7 @@ void CanvasWidget::newDocument() {
     finishTextEditor(this,false);m_holdTimer->stop();m_laserTimer->stop();m_laserTrail.clear();
     m_mode=InteractionMode::None;m_tabletActive=false;m_hasActiveStroke=false;m_hasActiveShape=false;m_holdSnappedToShape=false;
     cancelActivePolyline();m_strokes.clear();m_shapes.clear();m_images.clear();m_texts.clear();m_currentFilePath.clear();
-    m_pages={PageData{}};m_currentPageIndex=0;
+    m_pages={PageData{}};m_currentPageIndex=0;m_dirty=false;
     m_undoStack.clear();m_redoStack.clear();m_showEraserCursor=false;clearSelection();m_viewport={};emit viewportChanged(m_viewport.zoom);updateCursorShape();saveAutosave();emit stateChanged();
 }
 bool CanvasWidget::saveToFile(const QString& path) {
@@ -594,9 +620,11 @@ bool CanvasWidget::saveToFile(const QString& path) {
     if(path.isEmpty()||m_mode!=InteractionMode::None)return false;
     syncWorkingPage(m_pages,m_currentPageIndex,currentSnapshot(),m_viewport);
     if(!serializeDocumentToFile(path,m_pages,m_currentPageIndex,documentSettings(m_shapeKind,m_holdToShapeEnabled,m_smartGuidesEnabled,m_swapPenButtons,m_pressureProfile,m_themeId,m_template,m_viewport)))return false;
-    m_currentFilePath=path;emit stateChanged();emit toastRequested(QStringLiteral("Guardado ✓"));return true;
+    m_currentFilePath=path;m_dirty=false;saveAutosave();emit stateChanged();emit toastRequested(QStringLiteral("Guardado ✓"));return true;
 }
-void CanvasWidget::saveAutosave() const {
+void CanvasWidget::saveAutosave() const { m_autosaveTimer->start(); }
+void CanvasWidget::flushAutosave() { if(m_autosaveTimer->isActive()){m_autosaveTimer->stop();writeAutosaveNow();} }
+void CanvasWidget::writeAutosaveNow() const {
     DocumentSnapshot document=currentSnapshot();
     if(m_mode==InteractionMode::Erase)document=m_snapshotBeforeErase;
     if(m_mode==InteractionMode::ShapeDragHandle||m_mode==InteractionMode::ShapeMove)document=m_snapshotBeforeShapeEdit;
@@ -606,10 +634,20 @@ void CanvasWidget::saveAutosave() const {
     const auto path=autosavePath();if(!QDir().mkpath(QFileInfo(path).absolutePath()))return;
     auto* self=const_cast<CanvasWidget*>(this);
     syncWorkingPage(self->m_pages,self->m_currentPageIndex,document,m_viewport);
-    serializeDocumentToFile(path,m_pages,m_currentPageIndex,documentSettings(m_shapeKind,m_holdToShapeEnabled,m_smartGuidesEnabled,m_swapPenButtons,m_pressureProfile,m_themeId,m_template,m_viewport));
+    auto settings=documentSettings(m_shapeKind,m_holdToShapeEnabled,m_smartGuidesEnabled,m_swapPenButtons,m_pressureProfile,m_themeId,m_template,m_viewport);
+    // Datos de sesión: al reabrir la app se recupera el cuaderno asociado y si
+    // tenía cambios sin guardar (los .finily del usuario nunca los llevan).
+    settings.insert("sessionFilePath",m_currentFilePath);settings.insert("sessionDirty",m_dirty);
+    serializeDocumentToFile(path,m_pages,m_currentPageIndex,settings);
 }
 void CanvasWidget::loadAutosave() {
-    const auto current=m_currentFilePath;loadFromFile(autosavePath());m_currentFilePath=current;
+    const auto previousPath=m_currentFilePath;const bool previousDirty=m_dirty;
+    if(!loadFromFile(autosavePath())){m_currentFilePath=previousPath;m_dirty=previousDirty;return;}
+    // loadFromFile ya restauró la sesión; un autoguardado antiguo (sin datos de
+    // sesión) deja la ruta apuntando al propio autosave.json.
+    if(m_currentFilePath==autosavePath()){m_currentFilePath.clear();m_dirty=true;}
+    if(!m_currentFilePath.isEmpty()&&!QFileInfo::exists(m_currentFilePath)){m_currentFilePath.clear();m_dirty=true;}
+    m_autosaveTimer->stop();emit stateChanged();
 }
 bool CanvasWidget::loadFromFile(const QString& path) {
     if(m_mode!=InteractionMode::None)return false;
@@ -636,7 +674,9 @@ bool CanvasWidget::loadFromFile(const QString& path) {
     if(theme>=0&&theme<=int(ThemeId::PaperCream))m_themeId=ThemeId(theme);
     if(tpl>=0&&tpl<=int(BackgroundTemplate::Ruled))m_template=BackgroundTemplate(tpl);
     m_color=getThemeConfig(m_themeId).defaultInk;
-    m_currentFilePath=path;invalidateStaticCache();saveAutosave();emit stateChanged();emit viewportChanged(m_viewport.zoom);return true;
+    m_currentFilePath=path;m_dirty=false;
+    if(root.contains("sessionFilePath")){m_currentFilePath=root.value("sessionFilePath").toString();m_dirty=root.value("sessionDirty").toBool(false);}
+    invalidateStaticCache();saveAutosave();emit stateChanged();emit viewportChanged(m_viewport.zoom);return true;
 }
 void CanvasWidget::invalidateStaticCache() { m_staticCacheDirty=true;update(); }
 void CanvasWidget::rebuildStaticCache() {

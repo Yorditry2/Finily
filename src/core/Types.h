@@ -174,6 +174,10 @@ struct PageData {
     QVector<ImageItem> images;
     QVector<TextItem> texts;
     Viewport viewport;
+    // Historial propio de cada página (no se serializa): cambiar de página ya
+    // no borra el Deshacer/Rehacer.
+    QVector<DocumentSnapshot> undoStack;
+    QVector<DocumentSnapshot> redoStack;
 };
 
 struct PenPreset {
