@@ -118,6 +118,125 @@ void drawMeasurement(QPainter& painter, const ShapeItem& shape, const ShapeMeasu
     painter.drawText(label.bounds, Qt::AlignCenter, label.text);
 }
 
+struct Solid3DGeometry {
+    QPainterPath vis;
+    QPainterPath hid;
+    QVector<QPointF> vertices;
+};
+
+Solid3DGeometry buildSolid3D(const ShapeItem& shape) {
+    Solid3DGeometry g;
+    if (shape.vertices.size() < 2) return g;
+    const QRectF r = QRectF(shape.vertices[0], shape.vertices[1]).normalized();
+    if (r.width() <= 1e-4 || r.height() <= 1e-4) return g;
+    auto seg = [](QPainterPath& p, QPointF a, QPointF b) { p.moveTo(a); p.lineTo(b); };
+    const double x = r.left(), y = r.top(), w = r.width(), h = r.height();
+    auto P = [&](double fx, double fy) { return QPointF(x + w * fx, y + h * fy); };
+    switch (shape.solidKind) {
+    case 0: { // Cubo / Hexaedro
+        const QPointF f0=P(0.0,0.28),f1=P(0.72,0.28),f2=P(0.72,1.0),f3=P(0.0,1.0);
+        const QPointF b0=P(0.28,0.0),b1=P(1.0,0.0),b2=P(1.0,0.72),b3=P(0.28,0.72);
+        seg(g.vis,f0,f1);seg(g.vis,f1,f2);seg(g.vis,f2,f3);seg(g.vis,f3,f0);
+        seg(g.vis,f0,b0);seg(g.vis,f1,b1);seg(g.vis,f2,b2);seg(g.vis,b0,b1);seg(g.vis,b1,b2);
+        seg(g.hid,f3,b3);seg(g.hid,b3,b0);seg(g.hid,b3,b2);
+        g.vertices = {f0,f1,f2,f3,b0,b1,b2,b3,r.center()};
+        break;
+    }
+    case 1: { // Prisma triangular
+        const QPointF t0=P(0.5,0.0),t1=P(0.08,0.28),t2=P(0.92,0.28);
+        const QPointF b0=P(0.5,0.72),b1=P(0.08,1.0),b2=P(0.92,1.0);
+        seg(g.vis,t0,t1);seg(g.vis,t1,t2);seg(g.vis,t2,t0);
+        seg(g.vis,t1,b1);seg(g.vis,t2,b2);seg(g.vis,b1,b2);
+        seg(g.hid,t0,b0);seg(g.hid,b0,b1);seg(g.hid,b0,b2);
+        g.vertices = {t0,t1,t2,b0,b1,b2};
+        break;
+    }
+    case 2: { // Cilindro
+        const double ry=std::min(h*0.16,w*0.24);
+        const QRectF topR(x,y,w,ry*2.0), botR(x,y+h-ry*2.0,w,ry*2.0);
+        g.vis.addEllipse(topR);
+        seg(g.vis,QPointF(x,y+ry),QPointF(x,y+h-ry));
+        seg(g.vis,QPointF(x+w,y+ry),QPointF(x+w,y+h-ry));
+        g.vis.arcMoveTo(botR,180); g.vis.arcTo(botR,180,180);
+        g.hid.arcMoveTo(botR,0); g.hid.arcTo(botR,0,180);
+        g.vertices = {topR.center(), botR.center(), QPointF(x,y+ry), QPointF(x+w,y+ry), QPointF(x,y+h-ry), QPointF(x+w,y+h-ry)};
+        break;
+    }
+    case 3: { // Cono
+        const double ry=std::min(h*0.16,w*0.24);
+        const QRectF botR(x,y+h-ry*2.0,w,ry*2.0);
+        const QPointF apex=P(0.5,0.0);
+        seg(g.vis,apex,QPointF(x,y+h-ry));
+        seg(g.vis,apex,QPointF(x+w,y+h-ry));
+        g.vis.arcMoveTo(botR,180); g.vis.arcTo(botR,180,180);
+        g.hid.arcMoveTo(botR,0); g.hid.arcTo(botR,0,180);
+        g.vertices = {apex, botR.center(), QPointF(x,y+h-ry), QPointF(x+w,y+h-ry)};
+        break;
+    }
+    case 4: { // Esfera
+        const double d=std::min(w,h);
+        const QRectF sph(r.center().x()-d/2.0,r.center().y()-d/2.0,d,d);
+        const QRectF eq(sph.left(),sph.center().y()-d*0.18,d,d*0.36);
+        g.vis.addEllipse(sph);
+        g.vis.arcMoveTo(eq,180); g.vis.arcTo(eq,180,180);
+        g.hid.arcMoveTo(eq,0); g.hid.arcTo(eq,0,180);
+        g.vertices = {sph.center(), QPointF(sph.center().x(), sph.top()), QPointF(sph.center().x(), sph.bottom()),
+                      QPointF(sph.left(), sph.center().y()), QPointF(sph.right(), sph.center().y())};
+        break;
+    }
+    case 5: { // Pirámide cuadrangular
+        const QPointF apex=P(0.5,0.0);
+        const QPointF b0=P(0.0,0.82),b1=P(0.68,1.0),b2=P(1.0,0.72),b3=P(0.32,0.58);
+        seg(g.vis,apex,b0);seg(g.vis,apex,b1);seg(g.vis,apex,b2);
+        seg(g.vis,b0,b1);seg(g.vis,b1,b2);
+        seg(g.hid,apex,b3);seg(g.hid,b0,b3);seg(g.hid,b2,b3);
+        g.vertices = {apex,b0,b1,b2,b3,(b0+b1+b2+b3)*0.25};
+        break;
+    }
+    case 6: { // Tetraedro
+        const QPointF apex=P(0.46,0.0),b0=P(0.0,0.86),b1=P(0.66,1.0),b2=P(1.0,0.68);
+        seg(g.vis,apex,b0);seg(g.vis,apex,b1);seg(g.vis,apex,b2);
+        seg(g.vis,b0,b1);seg(g.vis,b1,b2);
+        seg(g.hid,b0,b2);
+        g.vertices = {apex,b0,b1,b2,(b0+b1+b2)/3.0};
+        break;
+    }
+    case 7: { // Octaedro
+        const QPointF top=P(0.5,0.0),bot=P(0.5,1.0);
+        const QPointF m0=P(0.0,0.52),m1=P(0.44,0.64),m2=P(1.0,0.48),m3=P(0.56,0.36);
+        seg(g.vis,top,m0);seg(g.vis,top,m1);seg(g.vis,top,m2);
+        seg(g.vis,bot,m0);seg(g.vis,bot,m1);seg(g.vis,bot,m2);
+        seg(g.vis,m0,m1);seg(g.vis,m1,m2);
+        seg(g.hid,top,m3);seg(g.hid,bot,m3);seg(g.hid,m0,m3);seg(g.hid,m2,m3);
+        g.vertices = {top,bot,m0,m1,m2,m3,r.center()};
+        break;
+    }
+    case 8: { // Tronco de cono
+        const double ryB=std::min(h*0.15,w*0.22), ryT=ryB*0.62;
+        const double tw=w*0.56, tx=x+(w-tw)*0.5;
+        const QRectF topR(tx,y,tw,ryT*2.0), botR(x,y+h-ryB*2.0,w,ryB*2.0);
+        g.vis.addEllipse(topR);
+        seg(g.vis,QPointF(tx,y+ryT),QPointF(x,y+h-ryB));
+        seg(g.vis,QPointF(tx+tw,y+ryT),QPointF(x+w,y+h-ryB));
+        g.vis.arcMoveTo(botR,180); g.vis.arcTo(botR,180,180);
+        g.hid.arcMoveTo(botR,0); g.hid.arcTo(botR,0,180);
+        g.vertices = {topR.center(), botR.center(), QPointF(tx,y+ryT), QPointF(tx+tw,y+ryT), QPointF(x,y+h-ryB), QPointF(x+w,y+h-ryB)};
+        break;
+    }
+    default: { // 9: Tronco de pirámide
+        const QPointF t0=P(0.20,0.14),t1=P(0.62,0.24),t2=P(0.80,0.08),t3=P(0.38,0.0);
+        const QPointF b0=P(0.0,0.82),b1=P(0.68,1.0),b2=P(1.0,0.72),b3=P(0.32,0.58);
+        seg(g.vis,t0,t1);seg(g.vis,t1,t2);seg(g.vis,t2,t3);seg(g.vis,t3,t0);
+        seg(g.vis,t0,b0);seg(g.vis,t1,b1);seg(g.vis,t2,b2);
+        seg(g.vis,b0,b1);seg(g.vis,b1,b2);
+        seg(g.hid,t3,b3);seg(g.hid,b0,b3);seg(g.hid,b2,b3);
+        g.vertices = {t0,t1,t2,t3,b0,b1,b2,b3};
+        break;
+    }
+    }
+    return g;
+}
+
 QPainterPath shapePath(const ShapeItem& shape) {
     QPainterPath path;const auto& v=shape.vertices;
     if(v.isEmpty())return path;
@@ -197,9 +316,9 @@ QPainterPath shapePath(const ShapeItem& shape) {
         return path;
     }
     if(shape.kind==ShapeKind::Solid3D&&v.size()>=2) {
-        const QRectF r=QRectF(v[0],v[1]).normalized();
-        if(r.width()<1e-4||r.height()<1e-4)return path;
-        path.addRect(r);
+        const auto g = buildSolid3D(shape);
+        path.addPath(g.vis);
+        path.addPath(g.hid);
         return path;
     }
     if(shape.kind==ShapeKind::Curve&&v.size()>=3) {
@@ -313,6 +432,7 @@ QVector<QPointF> snapTargets(const ShapeItem& shape) {
         corners.append(QRectF(v[0], v[1]).center());
         return corners;
     }
+    case ShapeKind::Solid3D: return buildSolid3D(shape).vertices;
     case ShapeKind::Triangle:
     case ShapeKind::Polyline:
     case ShapeKind::Curve:
@@ -607,106 +727,12 @@ void drawShape(QPainter& painter,const ShapeItem& shape) {
     if(shape.kind==ShapeKind::Solid3D&&shape.vertices.size()>=2) {
         const QRectF r=QRectF(shape.vertices[0],shape.vertices[1]).normalized();
         if(r.width()>1.0&&r.height()>1.0) {
-            QPainterPath vis, hid;
-            auto seg=[](QPainterPath& p, QPointF a, QPointF b){ p.moveTo(a); p.lineTo(b); };
-            const double x=r.left(), y=r.top(), w=r.width(), h=r.height();
-            auto P=[&](double fx,double fy){ return QPointF(x+w*fx, y+h*fy); };
-            switch(shape.solidKind) {
-            case 0: { // Cubo / Hexaedro
-                const QPointF f0=P(0.0,0.28),f1=P(0.72,0.28),f2=P(0.72,1.0),f3=P(0.0,1.0);
-                const QPointF b0=P(0.28,0.0),b1=P(1.0,0.0),b2=P(1.0,0.72),b3=P(0.28,0.72);
-                seg(vis,f0,f1);seg(vis,f1,f2);seg(vis,f2,f3);seg(vis,f3,f0);
-                seg(vis,f0,b0);seg(vis,f1,b1);seg(vis,f2,b2);seg(vis,b0,b1);seg(vis,b1,b2);
-                seg(hid,f3,b3);seg(hid,b3,b0);seg(hid,b3,b2);
-                break;
-            }
-            case 1: { // Prisma triangular
-                const QPointF t0=P(0.5,0.0),t1=P(0.08,0.28),t2=P(0.92,0.28);
-                const QPointF b0=P(0.5,0.72),b1=P(0.08,1.0),b2=P(0.92,1.0);
-                seg(vis,t0,t1);seg(vis,t1,t2);seg(vis,t2,t0);
-                seg(vis,t1,b1);seg(vis,t2,b2);seg(vis,b1,b2);
-                seg(hid,t0,b0);seg(hid,b0,b1);seg(hid,b0,b2);
-                break;
-            }
-            case 2: { // Cilindro
-                const double ry=std::min(h*0.16,w*0.24);
-                const QRectF topR(x,y,w,ry*2.0), botR(x,y+h-ry*2.0,w,ry*2.0);
-                vis.addEllipse(topR);
-                seg(vis,QPointF(x,y+ry),QPointF(x,y+h-ry));
-                seg(vis,QPointF(x+w,y+ry),QPointF(x+w,y+h-ry));
-                vis.arcMoveTo(botR,180); vis.arcTo(botR,180,180);
-                hid.arcMoveTo(botR,0); hid.arcTo(botR,0,180);
-                break;
-            }
-            case 3: { // Cono
-                const double ry=std::min(h*0.16,w*0.24);
-                const QRectF botR(x,y+h-ry*2.0,w,ry*2.0);
-                const QPointF apex=P(0.5,0.0);
-                seg(vis,apex,QPointF(x,y+h-ry));
-                seg(vis,apex,QPointF(x+w,y+h-ry));
-                vis.arcMoveTo(botR,180); vis.arcTo(botR,180,180);
-                hid.arcMoveTo(botR,0); hid.arcTo(botR,0,180);
-                break;
-            }
-            case 4: { // Esfera
-                const double d=std::min(w,h);
-                const QRectF sph(r.center().x()-d/2.0,r.center().y()-d/2.0,d,d);
-                const QRectF eq(sph.left(),sph.center().y()-d*0.18,d,d*0.36);
-                vis.addEllipse(sph);
-                vis.arcMoveTo(eq,180); vis.arcTo(eq,180,180);
-                hid.arcMoveTo(eq,0); hid.arcTo(eq,0,180);
-                break;
-            }
-            case 5: { // Pirámide cuadrangular
-                const QPointF apex=P(0.5,0.0);
-                const QPointF b0=P(0.0,0.82),b1=P(0.68,1.0),b2=P(1.0,0.72),b3=P(0.32,0.58);
-                seg(vis,apex,b0);seg(vis,apex,b1);seg(vis,apex,b2);
-                seg(vis,b0,b1);seg(vis,b1,b2);
-                seg(hid,apex,b3);seg(hid,b0,b3);seg(hid,b2,b3);
-                break;
-            }
-            case 6: { // Tetraedro
-                const QPointF apex=P(0.46,0.0),b0=P(0.0,0.86),b1=P(0.66,1.0),b2=P(1.0,0.68);
-                seg(vis,apex,b0);seg(vis,apex,b1);seg(vis,apex,b2);
-                seg(vis,b0,b1);seg(vis,b1,b2);
-                seg(hid,b0,b2);
-                break;
-            }
-            case 7: { // Octaedro
-                const QPointF top=P(0.5,0.0),bot=P(0.5,1.0);
-                const QPointF m0=P(0.0,0.52),m1=P(0.44,0.64),m2=P(1.0,0.48),m3=P(0.56,0.36);
-                seg(vis,top,m0);seg(vis,top,m1);seg(vis,top,m2);
-                seg(vis,bot,m0);seg(vis,bot,m1);seg(vis,bot,m2);
-                seg(vis,m0,m1);seg(vis,m1,m2);
-                seg(hid,top,m3);seg(hid,bot,m3);seg(hid,m0,m3);seg(hid,m2,m3);
-                break;
-            }
-            case 8: { // Tronco de cono
-                const double ryB=std::min(h*0.15,w*0.22), ryT=ryB*0.62;
-                const double tw=w*0.56, tx=x+(w-tw)*0.5;
-                const QRectF topR(tx,y,tw,ryT*2.0), botR(x,y+h-ryB*2.0,w,ryB*2.0);
-                vis.addEllipse(topR);
-                seg(vis,QPointF(tx,y+ryT),QPointF(x,y+h-ryB));
-                seg(vis,QPointF(tx+tw,y+ryT),QPointF(x+w,y+h-ryB));
-                vis.arcMoveTo(botR,180); vis.arcTo(botR,180,180);
-                hid.arcMoveTo(botR,0); hid.arcTo(botR,0,180);
-                break;
-            }
-            default: { // 9: Tronco de pirámide
-                const QPointF t0=P(0.20,0.14),t1=P(0.62,0.24),t2=P(0.80,0.08),t3=P(0.38,0.0);
-                const QPointF b0=P(0.0,0.82),b1=P(0.68,1.0),b2=P(1.0,0.72),b3=P(0.32,0.58);
-                seg(vis,t0,t1);seg(vis,t1,t2);seg(vis,t2,t3);seg(vis,t3,t0);
-                seg(vis,t0,b0);seg(vis,t1,b1);seg(vis,t2,b2);
-                seg(vis,b0,b1);seg(vis,b1,b2);
-                seg(hid,t3,b3);seg(hid,b0,b3);seg(hid,b2,b3);
-                break;
-            }
-            }
-            painter.setPen(pen);painter.setBrush(Qt::NoBrush);painter.drawPath(vis);
+            const auto g = buildSolid3D(shape);
+            painter.setPen(pen);painter.setBrush(Qt::NoBrush);painter.drawPath(g.vis);
             QColor hidCol=shape.color; hidCol.setAlphaF(hidCol.alphaF()*0.58);
             QPen hidPen(hidCol,std::max(1.0,shape.size*0.85),Qt::CustomDashLine,Qt::RoundCap,Qt::RoundJoin);
             hidPen.setDashPattern({4.0,3.5});
-            painter.setPen(hidPen);painter.drawPath(hid);
+            painter.setPen(hidPen);painter.drawPath(g.hid);
         }
         painter.restore();
         return;
