@@ -17,7 +17,7 @@ template<class Map> void transform(QVector<Stroke>& strokes,QVector<ShapeItem>& 
         for(auto& p:s.points){const auto q=map(QPointF(p.x,p.y));p.x=q.x();p.y=q.y();}
         s.size=std::clamp(s.size*widthScale,.1,200.0);s.bounds=computeBounds(s.points,s.size*.7);
     }
-    for(auto& s:shapes)if(shapeIds.contains(s.id)) {
+    for(auto& s:shapes)if(!s.locked&&shapeIds.contains(s.id)) {
         for(auto& p:s.vertices)p=map(p);
         s.size=std::clamp(s.size*widthScale,.1,200.0);s.bounds=computeShapeBounds(s);
     }
@@ -48,7 +48,7 @@ void selectByLasso(const QPolygonF& poly,const QVector<Stroke>& strokes,const QV
         if(double(inside)/s.points.size()>=.40||poly.containsPoint(center,Qt::OddEvenFill))strokeIds.insert(s.id);
     }
     for(const auto& s:shapes) {
-        if(s.vertices.isEmpty())continue;
+        if(s.vertices.isEmpty()||!s.shadeVisible)continue;
         bool selected=poly.containsPoint(computeShapeBounds(s).center(),Qt::OddEvenFill);
         for(auto p:getShapeHandles(s))selected=selected||poly.containsPoint(p,Qt::OddEvenFill);
         if(selected)shapeIds.insert(s.id);
@@ -57,7 +57,7 @@ void selectByLasso(const QPolygonF& poly,const QVector<Stroke>& strokes,const QV
 QRectF computeSelectionBounds(const QVector<Stroke>& strokes,const QVector<ShapeItem>& shapes,const QSet<QString>& strokeIds,const QSet<QString>& shapeIds) {
     QRectF bounds;bool first=true;auto add=[&](QRectF r){if(first){bounds=r;first=false;}else bounds=bounds.united(r);};
     for(const auto& s:strokes)if(strokeIds.contains(s.id)&&!s.points.isEmpty())add(computeBounds(s.points,s.size*.7));
-    for(const auto& s:shapes)if(shapeIds.contains(s.id)&&!s.vertices.isEmpty())add(computeShapeBounds(s));
+    for(const auto& s:shapes)if(shapeIds.contains(s.id)&&!s.vertices.isEmpty()&&s.shadeVisible)add(computeShapeBounds(s));
     return bounds;
 }
 void translateSelection(QVector<Stroke>& strokes,QVector<ShapeItem>& shapes,const QSet<QString>& strokeIds,const QSet<QString>& shapeIds,const QPointF& delta) {
@@ -65,15 +65,17 @@ void translateSelection(QVector<Stroke>& strokes,QVector<ShapeItem>& shapes,cons
 }
 void scaleSelection(QVector<Stroke>& strokes,QVector<ShapeItem>& shapes,const QSet<QString>& strokeIds,const QSet<QString>& shapeIds,const QPointF& anchor,double sx,double sy) {
     if(!std::isfinite(sx)||!std::isfinite(sy)||sx<=0||sy<=0)return;
-    for(auto& s:shapes)if(shapeIds.contains(s.id)&&s.kind==ShapeKind::Circle&&s.vertices.size()==2&&std::abs(sx-sy)>1e-8) {
-        const auto c=s.vertices[0];const double r=length(s.vertices[1]-c);s.vertices={c-QPointF(r,r),c+QPointF(r,r)};s.kind=ShapeKind::Ellipse;
+    const double widthScale=std::sqrt(sx*sy);
+    transform(strokes,shapes,strokeIds,{},[&](QPointF p){return anchor+QPointF((p.x()-anchor.x())*sx,(p.y()-anchor.y())*sy);},widthScale);
+    for(auto& s:shapes)if(!s.locked&&shapeIds.contains(s.id)) {
+        s.size=std::clamp(s.size*widthScale,.1,200.0);
+        scaleShape(s, anchor, sx, sy);
     }
-    transform(strokes,shapes,strokeIds,shapeIds,[&](QPointF p){return anchor+QPointF((p.x()-anchor.x())*sx,(p.y()-anchor.y())*sy);},std::sqrt(sx*sy));
 }
 void rotateSelection(QVector<Stroke>& strokes,QVector<ShapeItem>& shapes,const QSet<QString>& strokeIds,const QSet<QString>& shapeIds,const QPointF& center,double angle) {
     if(!std::isfinite(angle))return;
     if(std::abs(angle)<1e-12)return;
-    for(auto& s:shapes)if(shapeIds.contains(s.id))makeRotatable(s);
+    for(auto& s:shapes)if(!s.locked&&shapeIds.contains(s.id))makeRotatable(s);
     const double c=std::cos(angle),s=std::sin(angle);
     transform(strokes,shapes,strokeIds,shapeIds,[&](QPointF p){const auto d=p-center;return center+QPointF(d.x()*c-d.y()*s,d.x()*s+d.y()*c);});
 }
@@ -212,10 +214,11 @@ void drawLassoPath(QPainter& p,const QPolygonF& poly,const ThemeConfig& theme,do
     QPen pen(theme.accent,1.4/zoom,Qt::DashLine);pen.setDashOffset(double(timer.elapsed()%1200)/120);p.setPen(pen);
     QColor fill=theme.accent;fill.setAlpha(25);p.setBrush(fill);p.drawPolygon(poly);p.restore();
 }
-void drawLassoSelectionBox(QPainter& p,const QRectF& bounds,const ThemeConfig& theme,double zoom) {
+void drawLassoSelectionBox(QPainter& p,const QRectF& bounds,const ThemeConfig& theme,double zoom,bool showHandles) {
     if(bounds.isEmpty())return;
     zoom=std::max(.01,zoom);p.save();p.setRenderHint(QPainter::Antialiasing);
     p.setPen(QPen(theme.accent,1.2/zoom,Qt::DashLine));p.setBrush(Qt::NoBrush);p.drawRect(bounds);
+    if(!showHandles){p.restore();return;}
     const auto points=handles(bounds,zoom);p.setPen(QPen(theme.accent,1.5/zoom));p.drawLine(QPointF(bounds.center().x(),bounds.top()),points[4]);
     p.setBrush(theme.isDark?theme.background:QColor(Qt::white));for(auto point:points)p.drawEllipse(point,5.5/zoom,5.5/zoom);p.restore();
 }

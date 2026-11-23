@@ -90,7 +90,19 @@ void drawLiquidInk(QPainter& painter,const Stroke& stroke) {
         const auto& sample=samples[i];
         const double fast=sample.speed/(sample.speed+0.7);
         double factor=0.85;
-        if (stroke.tool==ToolType::Ballpoint) {
+        if (stroke.tipStyle == 2) {
+            // Plumón / marcador: trazo firme, uniforme y ligeramente más grueso.
+            factor = 1.38;
+        } else if (stroke.tipStyle == 3) {
+            // Pincel: mayor rango expresivo de presión y suavidad en extremos.
+            const double p = stroke.hasHardwarePressure ? std::clamp(sample.point.pressure, 0.0, 1.0) : 0.65;
+            factor = 0.35 + 1.35 * std::pow(p, 0.72);
+            factor *= 1.0 - 0.10 * fast;
+            if (taperLength > 1e-6) {
+                const double t = std::clamp(std::min(distances[i], total - distances[i]) / (taperLength * 1.6), 0.0, 1.0);
+                factor *= 0.25 + 0.75 * t * t * (3 - 2 * t);
+            }
+        } else if (stroke.tool==ToolType::Ballpoint || stroke.tipStyle == 0) {
             const double pressure=stroke.hasHardwarePressure?std::clamp(sample.point.pressure,0.0,1.0):0.5;
             factor=0.94+0.08*pressure-0.04*fast;
             if (taperLength>1e-6) {
@@ -228,16 +240,21 @@ void drawStroke(QPainter& painter,const Stroke& stroke) {
     if (stroke.points.isEmpty() || stroke.tool==ToolType::Eraser || stroke.tool==ToolType::Hand) return;
     painter.save();painter.setRenderHint(QPainter::Antialiasing,true);
     painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    painter.setOpacity(std::clamp(stroke.opacity,0.0,1.0)*(stroke.tool==ToolType::Highlighter?0.35:1.0));
+    const double baseOp = (stroke.tool==ToolType::Highlighter ? 0.35 : (stroke.tipStyle == 3 ? 0.88 : 1.0));
+    painter.setOpacity(std::clamp(stroke.opacity,0.0,1.0)*baseOp);
     const double size=std::max(0.01,stroke.size);
     if ((stroke.tool==ToolType::Pen || stroke.tool==ToolType::Ballpoint) && stroke.linePattern==LinePattern::Solid) {
         drawLiquidInk(painter,stroke);
     } else {
-        QPen pen(stroke.color,size,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin);
+        const Qt::PenCapStyle cap = (stroke.tool == ToolType::Highlighter && stroke.tipStyle == 0)
+            ? Qt::FlatCap : Qt::RoundCap;
+        QPen pen(stroke.color,size,Qt::SolidLine,cap,Qt::RoundJoin);
         if (stroke.linePattern==LinePattern::Dashed) pen.setDashPattern({4.0,2.5});
         if (stroke.linePattern==LinePattern::Dotted) pen.setDashPattern({0.01,2.2});
         painter.setPen(pen);painter.setBrush(Qt::NoBrush);
         if (stroke.points.size()==1) painter.drawPoint(pos(stroke.points.front()));
+        else if (stroke.tool == ToolType::Highlighter && stroke.tipStyle == 2)
+            painter.drawLine(pos(stroke.points.front()), pos(stroke.points.back()));
         else painter.drawPath(curve(stroke.points));
         if (stroke.linePattern==LinePattern::Arrow || stroke.linePattern==LinePattern::DoubleArrow) {
             const auto& p=stroke.points;

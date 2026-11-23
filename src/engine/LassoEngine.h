@@ -12,6 +12,6 @@ void scaleSelection(QVector<Stroke>& strokes,QVector<ShapeItem>& shapes,const QS
 void rotateSelection(QVector<Stroke>& strokes,QVector<ShapeItem>& shapes,const QSet<QString>& strokeIds,const QSet<QString>& shapeIds,const QPointF& center,double angleRad);
 bool straightenSelectedStrokes(QVector<Stroke>& strokes,const QSet<QString>& strokeIds);
 void drawLassoPath(QPainter& painter,const QPolygonF& poly,const ThemeConfig& theme,double zoom);
-void drawLassoSelectionBox(QPainter& painter,const QRectF& bounds,const ThemeConfig& theme,double zoom);
+void drawLassoSelectionBox(QPainter& painter,const QRectF& bounds,const ThemeConfig& theme,double zoom,bool showHandles = true);
 int hitTestLassoHandle(const QRectF& bounds,const QPointF& worldPos,double zoom);
 } // namespace finily

@@ -9,6 +9,7 @@
 #include <QWidget>
 
 class QButtonGroup;
+class QComboBox;
 class QFrame;
 class QLabel;
 class QPropertyAnimation;
@@ -19,7 +20,9 @@ class QTimer;
 class QToolButton;
 
 class QLabel;
-class QScrollArea;
+class QLineEdit;
+class QListWidget;
+class QHBoxLayout;
 class QVBoxLayout;
 namespace finily {
 
@@ -82,6 +85,7 @@ public:
 signals:
     // Botón 'Inicio' de la pill: volver a la biblioteca de cuadernos.
     void homeRequested();
+    void renameRequested(const QString& newName);
 
 public slots:
     void setDocumentTitle(const QString& title, bool unsaved);
@@ -99,6 +103,8 @@ private:
     void buildTopRight();
     void buildThumbPanel();
     void rebuildThumbs();
+    void refreshPageThumbnail();
+    void showPageMenu(const QPoint& globalPosition, int clickedRow = -1);
     void buildDock();
     void layoutDock();
     void buildZoomPill();
@@ -108,7 +114,11 @@ private:
     void buildPaperPopover();
     void buildShapesPopover();
     void buildFilePopover();
+    void rebuildRecentGallery();
+    void rememberRecentImage(const QString& path);
     void buildContextPill();
+    void showSelectionMenu(const QPoint& globalPosition);
+    void editSelectionProperties();
 
     void applyThemeStylesheet();
     QString buildStylesheet(const ThemeConfig& theme) const;
@@ -124,6 +134,8 @@ private:
     void refreshShadowColors();
     // Punto de vista previa en vivo del popover "Trazo".
     void updateStrokePreview();
+    void updateFillSwatches();
+    void updateTipIcons();
     // Posición acoplable del dock ("Posición de barra": Izquierda/Arriba/Abajo).
     void loadDockPosition();
     void setDockPosition(DockPos pos);
@@ -153,12 +165,13 @@ private:
     GlassCapsule* m_pill = nullptr;
     GlassCapsule* m_topRight = nullptr;
     GlassCapsule* m_thumbPanel = nullptr;
-    QScrollArea* m_thumbScroll = nullptr;
-    QWidget* m_thumbHost = nullptr;
-    QVBoxLayout* m_thumbLayout = nullptr;
+    QListWidget* m_thumbList = nullptr;
+    QToolButton* m_thumbActions = nullptr;
+    int m_thumbCurrent = -1;
     QTimer* m_thumbTimer = nullptr;
     QToolButton* m_pagesBtn = nullptr;
     QLabel* m_titleLabel = nullptr;
+    QLineEdit* m_titleEdit = nullptr;
     QLabel* m_titleDot = nullptr;
     QToolButton* m_homeBtn = nullptr;
     QToolButton* m_undoBtn = nullptr;
@@ -190,19 +203,18 @@ private:
     QToolButton* m_shapeBtn = nullptr;
     QVector<QToolButton*> m_shapeKindBtns;
     QVector<ShapeKind> m_shapeKindSpecs;
+    QVector<int> m_shapeSidesSpecs;   // 0 no aplica, o nº de lados del polígono
+    QVector<int> m_shapeTriSpecs;     // -1 no aplica, o variante de triángulo
+    QVector<int> m_shapeQuadSpecs;    // -1 no aplica, o variante de cuadrilátero
+    QVector<int> m_shapeSolidSpecs;   // -1 no aplica, o tipo de sólido 3D (0..9)
+    QVector<bool> m_shapeDimensionSpecs;
+    QComboBox* m_shapeEndings = nullptr;
     QToolButton* m_holdToShapeBtn = nullptr;
     QToolButton* m_smartGuidesBtn = nullptr;
     GlassCapsule* m_contextPill = nullptr;
     QToolButton* m_finishPolylineBtn = nullptr;
     QToolButton* m_closePolylineBtn = nullptr;
-    QToolButton* m_straightenBtn = nullptr;
-    QToolButton* m_toTextBtn = nullptr;
-    QToolButton* m_saveTemplateBtn = nullptr;
-    QToolButton* m_duplicateBtn = nullptr;
-    QToolButton* m_deleteLassoBtn = nullptr;
-    QToolButton* m_deleteShapeBtn = nullptr;
-    QToolButton* m_deleteImageBtn = nullptr;
-    QToolButton* m_deleteTextBtn = nullptr;
+    QToolButton* m_selectionActions = nullptr;
 
     // Popover "Archivo / Cuaderno / PDF"
     GlassCapsule* m_filePopover = nullptr;
@@ -214,6 +226,8 @@ private:
     QToolButton* m_importPdfBtn = nullptr;
     QToolButton* m_importImageBtn = nullptr;
     QToolButton* m_pasteBtn = nullptr;
+    QWidget* m_recentGalleryWrap = nullptr;
+    QHBoxLayout* m_recentGalleryRow = nullptr;
     QToolButton* m_exportBtn = nullptr;
     QLabel* m_pdfInfoLabel = nullptr;
 
@@ -228,8 +242,6 @@ private:
     QToolButton* m_pagePrevBtn = nullptr;
     QLabel* m_pageLabel = nullptr;
     QToolButton* m_pageNextBtn = nullptr;
-    QToolButton* m_pageAddBtn = nullptr;
-    QToolButton* m_pageDeleteBtn = nullptr;
 
     // Botón diminuto de restauración (modo interfaz limpia)
     QToolButton* m_restoreBtn = nullptr;
@@ -237,6 +249,16 @@ private:
     // Popover "Trazo"
     GlassCapsule* m_strokePopover = nullptr;
     QWidget* m_strokeStyleSection = nullptr;
+    QWidget* m_penTipSection = nullptr;
+    QVector<QToolButton*> m_penTipBtns;
+    QWidget* m_hlTipSection = nullptr;
+    QVector<QToolButton*> m_hlTipBtns;
+    QWidget* m_lassoModeSection = nullptr;
+    QToolButton* m_lassoFreeBtn = nullptr;
+    QToolButton* m_lassoRectBtn = nullptr;
+    QWidget* m_strokeGeometrySection = nullptr;
+    QWidget* m_fillStyleSection = nullptr;
+    QVector<QPair<QToolButton*, ShadePattern>> m_fillStyles;
     QWidget* m_stabilizerRow = nullptr;
     QWidget* m_eraserSection = nullptr;
     QVector<ColorDotButton*> m_swatches;
@@ -244,6 +266,7 @@ private:
     QLabel* m_sizeLabel = nullptr;
     QSlider* m_sizeSlider = nullptr;
     QVector<QToolButton*> m_patternBtns;
+    QLabel* m_stabilizerIcon = nullptr;
     QLabel* m_stabilizerLabel = nullptr;
     QSlider* m_stabilizerSlider = nullptr;
     QVector<QToolButton*> m_pressureBtns;
@@ -251,6 +274,7 @@ private:
     QToolButton* m_mathBeautifyBtn = nullptr;
     QToolButton* m_autoColorOpsBtn = nullptr;
     ColorDotButton* m_opColorBtn = nullptr;
+    QVector<QToolButton*> m_cursorBtns; // 0 = Lapicito, 1 = Aro, 2 = Cruz
     QToolButton* m_eraserStrokeBtn = nullptr;
     QToolButton* m_eraserPartialBtn = nullptr;
     QLabel* m_eraserSizeLabel = nullptr;
@@ -294,6 +318,7 @@ private:
     // Iconos (re)pintados con el color de texto del tema activo
     QVector<QPair<QToolButton*, QString>> m_studioUtilSpecs;
     QVector<QPair<QToolButton*, QString>> m_iconSpecs;
+    QVector<QPair<QToolButton*, QString>> m_ctxIconSpecs;
     QVector<QPair<QToolButton*, LinePattern>> m_patternSpecs;
 };
 

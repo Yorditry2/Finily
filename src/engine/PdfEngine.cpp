@@ -27,9 +27,15 @@ QVector<ImageItem> importPdfPages(const QString& path,double startY) {
         const double pixelBudget=256.0*1024*1024/(4.0*std::max(1,document.pageCount()));
         const double rasterScale=std::min({2*worldScale,2200.0/std::max(points.width(),points.height()),std::sqrt(pixelBudget/(points.width()*points.height()))});
         const QSize raster(std::max(1,int(std::ceil(points.width()*rasterScale))),std::max(1,int(std::ceil(points.height()*rasterScale))));
-        QImage image=document.render(i,raster);if(image.isNull())continue;
-        ImageItem page;page.id=QUuid::createUuid().toString(QUuid::WithoutBraces);page.rect=QRectF(-world.width()/2,y,world.width(),world.height());
-        page.image=image;page.isPdfPage=true;page.pdfPageIndex=i;page.pdfSourcePath=QFileInfo(path).absoluteFilePath();pages.append(page);y+=world.height()+40;
+        QImage rendered=document.render(i,raster);if(rendered.isNull())continue;
+        // Componer sobre fondo blanco opaco para que PDFs con transparencia no se vean oscuros en DarkBoard.
+        QImage image(rendered.size(),QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        { QPainter bg(&image); bg.drawImage(0,0,rendered); }
+        ImageItem page;page.id=QUuid::createUuid().toString(QUuid::WithoutBraces);
+        // Cada hoja del PDF vive centrada en su propia página del cuaderno (estilo PPT/GoodNotes).
+        page.rect=QRectF(-world.width()/2.0,-world.height()/2.0,world.width(),world.height());
+        page.image=image;page.isPdfPage=true;page.pdfPageIndex=i;page.pdfSourcePath=QFileInfo(path).absoluteFilePath();pages.append(page);
     }
     return pages;
 }
@@ -96,7 +102,7 @@ QVector<QRectF> pdfPageBounds(const PageData& document,PageFormat pageFormat) {
 }
 } // namespace
 bool exportDocumentToPdf(const QString& path,const QVector<Stroke>& strokes,const QVector<ShapeItem>& shapes,const QVector<ImageItem>& images,const ThemeConfig& theme,BackgroundTemplate tpl,const QVector<TextItem>& texts) {
-    return exportPagesToPdf(path,{PageData{strokes,shapes,images,texts,{},{},{}}},theme,tpl);
+    return exportPagesToPdf(path,{PageData{strokes,shapes,images,texts,{},{}}},theme,tpl);
 }
 bool exportPagesToPdf(const QString& path,const QVector<PageData>& notebook,const ThemeConfig& theme,BackgroundTemplate tpl,PageFormat pageFormat) {
     // Keep the logical page attached to every PDF sheet: equal world coordinates
@@ -119,21 +125,23 @@ bool exportPagesToPdf(const QString& path,const QVector<PageData>& notebook,cons
         for(qsizetype page=0;page<pages.size();++page) {
             const auto rect=pages[page].rect;const auto& document=documents[pages[page].document];
             const auto& strokes=document.strokes;const auto& shapes=document.shapes;const auto& images=document.images;const auto& texts=document.texts;
+            const auto pageTemplate = document.background.value_or(tpl);
             if(page>0){if(!layout(rect)||!writer.newPage()){success=false;break;}}
             painter.save();painter.setRenderHint(QPainter::Antialiasing);painter.setRenderHint(QPainter::SmoothPixmapTransform);
             painter.scale(double(writer.width())/rect.width(),double(writer.height())/rect.height());painter.translate(-rect.left(),-rect.top());painter.setClipRect(rect);
             const bool imported=std::any_of(images.cbegin(),images.cend(),[](const ImageItem& image){return image.isPdfPage&&!image.rect.isEmpty();});
             const auto sheet=imported?QRectF():sheetRectForPageFormat(pageFormat);
             if(sheet.isEmpty()) {
-                painter.fillRect(rect,theme.background);drawBackgroundTemplate(painter,tpl,theme,Viewport{},rect);
+                painter.fillRect(rect,theme.background);drawBackgroundTemplate(painter,pageTemplate,theme,Viewport{},rect);
             } else {
                 painter.fillRect(rect,theme.isDark?QColor("#0c0e13"):QColor("#e6e7ec"));
                 painter.save();painter.setClipRect(sheet,Qt::IntersectClip);
-                painter.fillRect(sheet,theme.background);drawBackgroundTemplate(painter,tpl,theme,Viewport{},sheet);painter.restore();
+                painter.fillRect(sheet,theme.background);drawBackgroundTemplate(painter,pageTemplate,theme,Viewport{},sheet);painter.restore();
             }
             for(int pass=0;pass<2;++pass)for(const auto& image:images)if(image.isPdfPage==(pass==0)&&image.rect.intersects(rect)&&!image.image.isNull())painter.drawImage(image.rect,image.image);
+            for(const auto& s:shapes)if(s.kind==ShapeKind::ShadedRegion&&computeShapeBounds(s).intersects(rect))drawShape(painter,s);
             for(const auto& s:strokes)if(s.tool==ToolType::Highlighter&&strokeBounds(s).intersects(rect))drawStroke(painter,s);
-            for(const auto& s:shapes)if(computeShapeBounds(s).intersects(rect))drawShape(painter,s);
+            for(const auto& s:shapes)if(s.kind!=ShapeKind::ShadedRegion&&computeShapeBounds(s).intersects(rect))drawShape(painter,s);
             for(const auto& s:strokes)if(s.tool!=ToolType::Highlighter&&strokeBounds(s).intersects(rect))drawStroke(painter,s);
             painter.setRenderHint(QPainter::TextAntialiasing);
             for(const auto& item:texts)if(textBounds(item).intersects(rect)){painter.setFont(fontFor(item.fontSize));painter.setPen(item.color);painter.drawText(item.pos+QPointF(0,QFontMetricsF(painter.font()).ascent()),item.text);}

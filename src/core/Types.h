@@ -1,12 +1,14 @@
 #pragma once
 
 #include <QColor>
+#include <QHash>
 #include <QImage>
 #include <QPointF>
 #include <QRectF>
 #include <QString>
 #include <QVector>
 #include <cstdint>
+#include <optional>
 
 namespace finily {
 
@@ -35,7 +37,9 @@ enum class ToolType {
     Text,
     Laser,
     Eraser,
-    Hand
+    Hand,
+    Fill,
+    Select
 };
 
 enum class ShapeKind {
@@ -49,7 +53,21 @@ enum class ShapeKind {
     Curve,
     RightAngle,
     Brace,
-    Axes
+    Axes,
+    ShadedRegion,
+    Solid3D,
+    Arc,
+    Sector,
+    AngleMarker
+};
+
+enum class ShadePattern {
+    Soft,
+    Diagonal,
+    Dotted,
+    Solid,
+    Crosshatch,
+    Grid
 };
 
 enum class EraserMode {
@@ -62,8 +80,11 @@ enum class LinePattern {
     Dashed,
     Dotted,
     Arrow,
-    DoubleArrow
+    DoubleArrow,
+    Dimension // Cota de medida: |——   ——| con topes en extremos y hueco central
 };
+
+enum class LineEnding { None, Arrow, DoubleArrow };
 
 enum class BackgroundTemplate {
     Blank,
@@ -108,8 +129,17 @@ struct Stroke {
     LinePattern linePattern = LinePattern::Solid;
     PressureProfile pressureProfile = PressureProfile::Light;
     bool hasHardwarePressure = false;
+    int tipStyle = 0; // Lápiz: 0=Bolígrafo, 1=Pluma, 2=Plumón, 3=Pincel | Resaltador: 0=Biselado, 1=Redondo, 2=Recto
     QVector<StrokePoint> points;
     QRectF bounds;
+    QString groupId;
+};
+
+struct ShapeAttachment {
+    int vertex = 0;
+    QString targetId;
+    int edge = 0;
+    double position = 0;
 };
 
 struct ShapeItem {
@@ -119,6 +149,8 @@ struct ShapeItem {
     double size = 2.6;
     double opacity = 1.0;
     LinePattern linePattern = LinePattern::Solid;
+    LineEnding lineEnding = LineEnding::None;
+    QString label;
     /**
      * Control vertices in world space:
      * - Line:      [start, end]
@@ -130,10 +162,22 @@ struct ShapeItem {
      *              (baseLeft = bottom-left of check hook, roofLeft = top-left corner of roof,
      *               roofRight = right end of horizontal roof — drag roofRight to extend!)
      * - Polyline:  [v0, v1, ..., vN]
+     * - Arc / Sector / AngleMarker: [center, first ray end, second ray end]
+     * - ShadedRegion: start point followed by triples [control1, control2, end].
      */
     QVector<QPointF> vertices;
     bool closed = false;
     QRectF bounds;
+    ShadePattern shadePattern = ShadePattern::Soft;
+    QVector<int> shadeContourStarts; // Offsets of additional subpaths in vertices.
+    QString groupId;
+    QVector<ShapeAttachment> attachments;
+    bool attachmentsKnown = false;
+    QHash<QString, int> shadeBoundary;
+    QPointF shadeProbe;
+    bool shadeVisible = true;
+    bool locked = false;
+    int solidKind = 0; // Para ShapeKind::Solid3D: 0=Cubo,1=Prisma,2=Cilindro,3=Cono,4=Esfera,5=Pirámide,6=Tetraedro,7=Octaedro,8=TroncoCono,9=TroncoPirámide
 };
 
 struct SmartGuide {
@@ -150,6 +194,8 @@ struct ImageItem {
     bool isPdfPage = false;  // PDF pages stay anchored on background layer below ink
     int pdfPageIndex = -1;
     QString pdfSourcePath;
+    QString groupId;
+    bool locked = false;
 };
 
 struct TextItem {
@@ -159,6 +205,8 @@ struct TextItem {
     QColor color = QColor("#f8fafc");
     double fontSize = 22.0;   // World pixels
     QRectF bounds;
+    QString groupId;
+    bool locked = false;
 };
 
 struct DocumentSnapshot {
@@ -180,10 +228,7 @@ struct PageData {
     QVector<ImageItem> images;
     QVector<TextItem> texts;
     Viewport viewport;
-    // Historial propio de cada página (no se serializa): cambiar de página ya
-    // no borra el Deshacer/Rehacer.
-    QVector<DocumentSnapshot> undoStack;
-    QVector<DocumentSnapshot> redoStack;
+    std::optional<BackgroundTemplate> background;
 };
 
 struct PenPreset {

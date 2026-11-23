@@ -157,7 +157,27 @@ QString svgSourceFor(const QString& name,
             .arg(bodyOutline);
     }
 
+    if (name == QLatin1String("paint-bucket")) {
+        return QStringLiteral(R"SVG(
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <path d="M4.5 16.5 13.5 7.5 22.5 16.5 15.1 23.9a2.3 2.3 0 0 1-3.2 0z"
+        fill="%2" fill-opacity=".36" stroke="%1" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M4.7 16.5h17.8M12 13V6.5a3 3 0 0 1 5.1-2.1l1.4 1.4"
+        fill="none" stroke="%1" stroke-width="2" stroke-linecap="round"/>
+  <path d="M25.9 18.5c1.1 1.5 3.2 4 3.2 5.7a3.2 3.2 0 0 1-6.4 0c0-1.7 2.1-4.2 3.2-5.7z"
+        fill="%2" stroke="%1" stroke-width="1.5" stroke-linejoin="round"/>
+</svg>)SVG").arg(st, duoFill);
+    }
+
     // ================= 2. HERRAMIENTAS DUOTONO 100% HOMOLOGADAS =================
+
+    if (name == QLatin1String("select-pointer")) {
+        return QStringLiteral(R"SVG(
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <path d="M8 5.2v21l5.3-5.5 4.2 7.4 3.7-2.1-4.2-7.3 7.7-1.1z"
+        fill="%2" fill-opacity=".32" stroke="%1" stroke-width="2.2" stroke-linejoin="round"/>
+</svg>)SVG").arg(st, duoFill);
+    }
 
     if (name == QLatin1String("shapes")) {
         return QStringLiteral(R"SVG(

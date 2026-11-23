@@ -120,9 +120,9 @@ NotebookMeta readNotebookMeta(const QFileInfo& info) {
     // un `"strokes":[` (imposible dentro del base64 de las imágenes, que no
     // contiene comillas ni dos puntos); en v1..v4 solo existe el array raíz.
     // En el mismo barrado se detecta si el cuaderno tiene páginas de PDF
-    // ("pdfSourcePath") para la pestaña 'Con PDF'.
+    // ("isPdfPage":true) para la pestaña 'Con PDF'.
     static const QByteArray strokesNeedle = "\"strokes\":[";
-    static const QByteArray pdfNeedle = "\"pdfSourcePath\"";
+    static const QByteArray pdfNeedle = "\"isPdfPage\":true";
     static const int carrySize = std::max(strokesNeedle.size(), pdfNeedle.size()) - 1;
     qint64 pages = 0;
     qint64 pdfPages = 0;

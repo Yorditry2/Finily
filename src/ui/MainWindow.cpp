@@ -11,9 +11,12 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QKeySequence>
+#include <QMessageBox>
+#include <QRegularExpression>
 #include <QShortcut>
 #include <QSocketNotifier>
 #include <QStackedWidget>
+#include <QStandardPaths>
 #include <QWidget>
 
 #include <fcntl.h>
@@ -64,7 +67,10 @@ MainWindow::MainWindow() {
                 m_canvas->setThemeId(theme);
                 m_canvas->setBackgroundTemplate(tpl);
                 m_canvas->setPageFormat(format);
-                m_canvas->saveToFile(path);
+                if (!m_canvas->saveToFile(path, true)) {
+                    QMessageBox::warning(this, tr("Crear cuaderno"), tr("No se pudo guardar el cuaderno nuevo."));
+                    return;
+                }
                 showEditorPage();
                 m_toolbar->refreshFromCanvas();
                 m_canvas->setFocus();
@@ -72,7 +78,10 @@ MainWindow::MainWindow() {
     connect(m_homeScreen, &HomeScreen::openNotebookRequested, this, [this](const QString& path) {
         if (!m_canvas)
             return;
-        m_canvas->loadFromFile(path);
+        if (!m_canvas->loadFromFile(path)) {
+            QMessageBox::warning(this, tr("Abrir cuaderno"), tr("No se pudo abrir el cuaderno."));
+            return;
+        }
         showEditorPage();
         m_toolbar->refreshFromCanvas();
         m_canvas->setFocus();
@@ -85,10 +94,12 @@ MainWindow::MainWindow() {
                                                              QStringLiteral("Archivos PDF (*.pdf)"));
         if (pdfPath.isEmpty())
             return;
-        m_canvas->newDocument();
-        m_canvas->importPdfFile(pdfPath);
+        if (!m_canvas->importPdfFile(pdfPath, true)) {
+            QMessageBox::warning(this, tr("Importar PDF"), tr("No se pudo importar el PDF."));
+            return;
+        }
         showEditorPage();
-        m_toolbar->refreshFromCanvas();
+        m_canvas->resetViewport();
         m_canvas->setFocus();
     });
     connect(m_homeScreen, &HomeScreen::openExternalFileRequested, this, [this] {
@@ -99,7 +110,10 @@ MainWindow::MainWindow() {
                                          QStringLiteral("Cuaderno Finily (*.finily)"));
         if (path.isEmpty())
             return;
-        m_canvas->loadFromFile(path);
+        if (!m_canvas->loadFromFile(path)) {
+            QMessageBox::warning(this, tr("Abrir cuaderno"), tr("No se pudo abrir el cuaderno."));
+            return;
+        }
         showEditorPage();
         m_toolbar->refreshFromCanvas();
         m_canvas->setFocus();
@@ -117,14 +131,52 @@ MainWindow::MainWindow() {
     connect(m_toolbar, &FloatingToolbar::homeRequested, this, [this] {
         if (!m_canvas)
             return;
-        if (!m_canvas->currentFilePath().isEmpty())
-            m_canvas->saveToFile(m_canvas->currentFilePath());
-        else {
+        if (!m_canvas->currentFilePath().isEmpty()) {
+            if (!m_canvas->saveToFile(m_canvas->currentFilePath()))
+                return;
+        } else {
             m_canvas->saveAutosave();   // programa el autoguardado
             m_canvas->flushAutosave();  // y lo escribe ya antes de salir
         }
         m_homeScreen->refreshLibrary();
         showHomePage();
+    });
+    connect(m_toolbar, &FloatingToolbar::renameRequested, this, [this](const QString& rawName) {
+        if (!m_canvas)
+            return;
+        QString clean = rawName.trimmed();
+        clean.remove(QRegularExpression(QStringLiteral(R"([\\/:*?"<>|])")));
+        if (clean.isEmpty())
+            return;
+        const QString oldPath = m_canvas->currentFilePath();
+        QDir directory(oldPath.isEmpty()
+            ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + QStringLiteral("/Finily")
+            : QFileInfo(oldPath).absolutePath());
+        const QString target = directory.filePath(clean + QStringLiteral(".finily"));
+        if (target == oldPath)
+            return;
+        if (QFile::exists(target)) {
+            m_toolbar->showToast(tr("Ya existe un cuaderno con ese nombre"));
+            updateWindowTitle();
+            return;
+        }
+        if (oldPath.isEmpty()) {
+            if (!directory.mkpath(QStringLiteral(".")) || !m_canvas->saveToFile(target, true)) {
+                m_toolbar->showToast(tr("No se pudo guardar el cuaderno"));
+                updateWindowTitle();
+                return;
+            }
+        } else {
+            if (!m_canvas->saveToFile(oldPath) || !QFile::rename(oldPath, target)) {
+                m_toolbar->showToast(tr("No se pudo renombrar el cuaderno"));
+                updateWindowTitle();
+                return;
+            }
+            m_canvas->setCurrentFilePath(target);
+            m_canvas->saveAutosave();
+        }
+        updateWindowTitle();
+        m_toolbar->showToast(QStringLiteral("Cuaderno: ") + clean);
     });
 
     installShortcuts();
@@ -154,13 +206,18 @@ void MainWindow::openInitialFile(const QString& path) {
         return; // sin archivo válido: arranca limpio en la pantalla de inicio
     const QString suffix = info.suffix().toLower();
     if (suffix == QLatin1String("pdf")) {
-        m_canvas->newDocument();
-        m_canvas->importPdfFile(info.absoluteFilePath());
+        if (!m_canvas->importPdfFile(info.absoluteFilePath(), true)) {
+            QMessageBox::warning(this, tr("Importar PDF"), tr("No se pudo importar el PDF."));
+            return;
+        }
         showEditorPage();
-        m_toolbar->refreshFromCanvas();
+        m_canvas->resetViewport();
         m_canvas->setFocus();
     } else if (suffix == QLatin1String("finily")) {
-        m_canvas->loadFromFile(info.absoluteFilePath());
+        if (!m_canvas->loadFromFile(info.absoluteFilePath())) {
+            QMessageBox::warning(this, tr("Abrir cuaderno"), tr("No se pudo abrir el cuaderno."));
+            return;
+        }
         showEditorPage();
         m_toolbar->refreshFromCanvas();
         m_canvas->setFocus();
@@ -312,6 +369,12 @@ void MainWindow::installShortcuts() {
         m_toolbar->refreshFromCanvas();
     });
     addShortcut(QKeySequence("Tab"), [this] { m_toolbar->toggleCleanUi(); });
+    addShortcut(QKeySequence("F11"), [this] {
+        if (isFullScreen())
+            showNormal();
+        else
+            showFullScreen();
+    });
 
     addShortcut(QKeySequence("1"), [this] { m_toolbar->selectPreset(0); });
     addShortcut(QKeySequence("2"), [this] { m_toolbar->selectPreset(1); });
@@ -319,12 +382,14 @@ void MainWindow::installShortcuts() {
     addShortcut(QKeySequence("4"), [this] { m_toolbar->selectPreset(3); });
     addShortcut(QKeySequence("5"), [this] { m_toolbar->selectPreset(4); });
 
-    addShortcut(QKeySequence("P"), [this] { m_toolbar->selectTool(ToolType::Pen); });
+    // 'P' lo maneja CanvasWidget directamente (toque rápido = Lápiz, mantener = Menú radial).
     addShortcut(QKeySequence("B"), [this] { m_toolbar->selectTool(ToolType::Ballpoint); });
     addShortcut(QKeySequence("H"), [this] { m_toolbar->selectTool(ToolType::Highlighter); });
     addShortcut(QKeySequence("T"), [this] { m_toolbar->selectTool(ToolType::Text); });
     addShortcut(QKeySequence("K"), [this] { m_toolbar->selectTool(ToolType::Laser); });
     addShortcut(QKeySequence("E"), [this] { m_toolbar->selectTool(ToolType::Eraser); });
+    addShortcut(QKeySequence("F"), [this] { m_toolbar->selectTool(ToolType::Fill); });
+    addShortcut(QKeySequence("U"), [this] { m_toolbar->selectTool(ToolType::Select); });
 
     // Figuras y polilínea
     addShortcut(QKeySequence("S"), [this] { m_toolbar->selectTool(ToolType::Shape); });
@@ -341,13 +406,7 @@ void MainWindow::installShortcuts() {
     };
     addShortcut(QKeySequence("Return"), finishPolyline);
     addShortcut(QKeySequence("Enter"), finishPolyline);
-    addShortcut(QKeySequence("Escape"), [this] {
-        if (m_canvas->isDrawingPolyline())
-            m_canvas->cancelActivePolyline();
-        else
-            m_canvas->clearSelection();
-        m_toolbar->refreshFromCanvas();
-    });
+    addShortcut(QKeySequence("Escape"), [this] { m_canvas->cancelInteraction(); });
     // Lazo, portapapeles, línea auxiliar y PDF
     addShortcut(QKeySequence("A"), [this] { m_toolbar->selectTool(ToolType::Lasso); });
     addShortcut(QKeySequence("M"), [this] {
@@ -355,6 +414,8 @@ void MainWindow::installShortcuts() {
         m_toolbar->refreshFromCanvas();
     });
     addShortcut(QKeySequence("D"), [this] {
+        if (m_canvas->linePattern() == LinePattern::Dimension)
+            return;
         const LinePattern next =
             (m_canvas->linePattern() == LinePattern::Solid) ? LinePattern::Dashed : LinePattern::Solid;
         m_canvas->setLinePattern(next);
@@ -370,6 +431,8 @@ void MainWindow::installShortcuts() {
         m_canvas->duplicateSelection();
         m_toolbar->refreshFromCanvas();
     });
+    addShortcut(QKeySequence("Ctrl+G"), [this] { m_canvas->groupSelection(); });
+    addShortcut(QKeySequence("Ctrl+Shift+G"), [this] { m_canvas->ungroupSelection(); });
     addShortcut(QKeySequence("Ctrl+O"), [this] { m_toolbar->importPdfDialog(); });
     addShortcut(QKeySequence("Ctrl+E"), [this] { m_toolbar->exportPdfDialog(); });
 

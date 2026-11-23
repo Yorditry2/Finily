@@ -14,6 +14,8 @@ add_executable(finily
     src/engine/InkEngine.cpp
     src/engine/GeometryEngine.h
     src/engine/GeometryEngine.cpp
+    src/engine/RegionGeometry.h
+    src/engine/RegionGeometry.cpp
     src/engine/HandwritingEngine.h
     src/engine/HandwritingEngine.cpp
     src/engine/LassoEngine.h
