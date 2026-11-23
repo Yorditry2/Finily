@@ -170,6 +170,7 @@ public:
     void redo();
     void clearBoard();
     void newDocument();
+    bool createNotebook(const QString& path, ThemeId theme, BackgroundTemplate background, PageFormat format);
     bool saveToFile(const QString& filePath, bool newFile = false);
     bool loadFromFile(const QString& filePath);
     void saveAutosave() const;   // programa un autoguardado diferido (1.5 s)

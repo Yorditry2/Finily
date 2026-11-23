@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(finily VERSION 0.1.0 LANGUAGES CXX)
+project(finily VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,9 +37,11 @@ add_executable(finily
 )
 
 target_include_directories(finily PRIVATE src)
+target_compile_definitions(finily PRIVATE FINILY_VERSION="${PROJECT_VERSION}")
 target_link_libraries(finily PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Pdf Qt6::Svg)
 
 if(WIN32)
     set_target_properties(finily PROPERTIES WIN32_EXECUTABLE TRUE)
     install(TARGETS finily RUNTIME DESTINATION .)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/finily-version.txt" "${PROJECT_VERSION}\n")
 endif()

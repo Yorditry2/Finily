@@ -3,6 +3,7 @@
 #include "core/Types.h"
 
 #include <QDateTime>
+#include <QStringList>
 #include <QWidget>
 
 class QLabel;
@@ -29,14 +30,15 @@ class HomeScreen : public QWidget {
 public:
     explicit HomeScreen(QWidget* parent = nullptr);
 
-    // Carpeta de la biblioteca: ~/Documentos/Finily (se crea si falta).
-    static QString libraryDir();
+    static QStringList libraryDirectories();
+    static QString notebookBaseName(QString name);
+    static QString uniqueNotebookPath(const QString& directory, const QString& baseName);
 
     // Reescanea la biblioteca (se llama al volver desde el editor).
     void refreshLibrary();
 
 signals:
-    void createNotebookRequested(const QString& filePath, finily::ThemeId theme,
+    void createNotebookRequested(const QString& name, finily::ThemeId theme,
                                  finily::BackgroundTemplate tpl, finily::PageFormat format);
     void openNotebookRequested(const QString& filePath);
     void importPdfFromHomeRequested();

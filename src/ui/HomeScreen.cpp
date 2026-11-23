@@ -40,29 +40,6 @@
 namespace finily {
 namespace {
 
-// Nombre de archivo seguro (sin separadores ni caracteres prohibidos).
-QString sanitizedBaseName(QString name) {
-    name = name.trimmed();
-    static const QRegularExpression invalid(QStringLiteral(R"([\\/:*?"<>|])"));
-    name.remove(invalid);
-    static const QRegularExpression spaces(QStringLiteral("\\s+"));
-    name.replace(spaces, QStringLiteral(" "));
-    if (name.isEmpty())
-        name = QStringLiteral("Cuaderno sin título");
-    return name;
-}
-
-// Ruta única en la biblioteca: "Nombre.finily", "Nombre (2).finily", ...
-QString uniqueNotebookPath(const QString& baseName) {
-    const QString dir = HomeScreen::libraryDir();
-    QString candidate = dir + QStringLiteral("/") + baseName + QStringLiteral(".finily");
-    int n = 2;
-    while (QFileInfo::exists(candidate))
-        candidate = dir + QStringLiteral("/") + baseName + QStringLiteral(" (%1)").arg(n++)
-                    + QStringLiteral(".finily");
-    return candidate;
-}
-
 // Fecha relativa estilo StarNote: 'Hoy 23:10', 'Ayer', '21 nov', '21 nov 2025'.
 QString relativeDate(const QDateTime& when) {
     const QDate date = when.date();
@@ -744,11 +721,42 @@ HomeScreen::HomeScreen(QWidget* parent)
     refreshLibrary();
 }
 
-QString HomeScreen::libraryDir() {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
-                        + QStringLiteral("/Finily");
-    QDir().mkpath(dir);
-    return dir;
+QStringList HomeScreen::libraryDirectories() {
+    QStringList directories;
+    const auto documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (!documents.isEmpty())
+        directories.append(QDir(documents).filePath(QStringLiteral("Finily")));
+#ifdef Q_OS_WIN
+    const auto localData = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (!localData.isEmpty())
+        directories.append(QDir(localData).filePath(QStringLiteral("Cuadernos")));
+#endif
+    return directories;
+}
+
+QString HomeScreen::notebookBaseName(QString name) {
+    static const QRegularExpression invalid(QStringLiteral(R"([\\/:*?"<>|\x00-\x1f])"));
+    name.remove(invalid);
+    name = name.simplified();
+#ifdef Q_OS_WIN
+    static const QRegularExpression trailing(QStringLiteral(R"([. ]+$)"));
+    static const QRegularExpression reserved(
+        QStringLiteral(R"(^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|(?:COM|LPT)[1-9¹²³])$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    name.remove(trailing);
+    if (reserved.match(name.section(QLatin1Char('.'), 0, 0).trimmed()).hasMatch())
+        name.prepend(QLatin1Char('_'));
+#endif
+    return name;
+}
+
+QString HomeScreen::uniqueNotebookPath(const QString& directory, const QString& baseName) {
+    const QDir dir(directory);
+    QString path = dir.filePath(baseName + QStringLiteral(".finily"));
+    int suffix = 2;
+    while (QFileInfo::exists(path))
+        path = dir.filePath(baseName + QStringLiteral(" (%1).finily").arg(suffix++));
+    return path;
 }
 
 // Cabecera: marca a la izquierda; buscador, acciones y modo a la derecha.
@@ -978,8 +986,12 @@ void HomeScreen::refreshLibrary() {
             card->deleteLater();
     m_cards.clear();
 
-    const QDir dir(libraryDir());
-    const QFileInfoList entries = dir.entryInfoList({QStringLiteral("*.finily")}, QDir::Files, QDir::Time);
+    QFileInfoList entries;
+    for (const QString& directory : libraryDirectories())
+        entries.append(QDir(directory).entryInfoList({QStringLiteral("*.finily")}, QDir::Files));
+    std::stable_sort(entries.begin(), entries.end(), [](const QFileInfo& first, const QFileInfo& second) {
+        return first.lastModified() > second.lastModified();
+    });
     const HomePalette pal = paletteFor(m_dark);
     for (const QFileInfo& info : entries) {
         const NotebookMeta meta = readNotebookMeta(info);
@@ -1286,8 +1298,8 @@ QPushButton#finilyCreatePrimary:hover { background: %6; border: 1.5px solid %3; 
     const ThemeId theme = themes.at(themeGroup->checkedId());
     const BackgroundTemplate tpl = templates.at(templateGroup->checkedId()).second;
     const PageFormat format = formats.at(formatGroup->checkedId()).second;
-    const QString path = uniqueNotebookPath(sanitizedBaseName(nameEdit->text()));
-    emit createNotebookRequested(path, theme, tpl, format);
+    const QString name = notebookBaseName(nameEdit->text());
+    emit createNotebookRequested(name.isEmpty() ? tr("Cuaderno sin título") : name, theme, tpl, format);
 }
 
 void HomeScreen::renameNotebook(NotebookCard* card) {
@@ -1299,16 +1311,14 @@ void HomeScreen::renameNotebook(NotebookCard* card) {
                                                card->title(), &ok);
     if (!ok)
         return;
-    const QString clean = sanitizedBaseName(name);
-    const QString dir = libraryDir();
-    const QString target = dir + QStringLiteral("/") + clean + QStringLiteral(".finily");
+    QString clean = notebookBaseName(name);
+    if (clean.isEmpty())
+        clean = tr("Cuaderno sin título");
+    const QString dir = QFileInfo(card->filePath()).absolutePath();
+    const QString target = QDir(dir).filePath(clean + QStringLiteral(".finily"));
     if (target == card->filePath())
         return; // sin cambios
-    QString newPath = target;
-    int n = 2;
-    while (QFileInfo::exists(newPath))
-        newPath = dir + QStringLiteral("/") + clean + QStringLiteral(" (%1)").arg(n++)
-                  + QStringLiteral(".finily");
+    const QString newPath = uniqueNotebookPath(dir, clean);
     if (!QFile::rename(card->filePath(), newPath)) {
         QMessageBox::warning(this, QStringLiteral("Renombrar cuaderno"),
                              QStringLiteral("No se pudo renombrar el cuaderno."));
@@ -1335,7 +1345,11 @@ void HomeScreen::deleteNotebook(NotebookCard* card) {
     box.addButton(QStringLiteral("Cancelar"), QMessageBox::RejectRole);
     box.exec();
     if (box.clickedButton() == removeButton) {
-        QFile::remove(card->filePath());
+        if (!QFile::remove(card->filePath())) {
+            QMessageBox::warning(this, tr("Eliminar cuaderno"),
+                                 tr("No se pudo eliminar el archivo. Revisa los permisos de la carpeta."));
+            return;
+        }
         QSettings("Finily", "Finily").remove(coverKey(card->filePath()));
         refreshLibrary();
     }

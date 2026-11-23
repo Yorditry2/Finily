@@ -43,6 +43,8 @@ install -m 755 build/finily "$HOME/.local/bin/finily"
 
 Descarga `Finily-Setup-x64.exe` desde [Releases](../../releases). El instalador incluye Qt y añade Finily al menú Inicio. La integración directa de los botones físicos del pad Wacom usa el controlador de Linux.
 
+En Windows, los cuadernos nuevos se guardan en `Documentos\Finily`. Si esa carpeta no admite escritura, Finily guarda los nuevos cuadernos en la biblioteca local de tu perfil. Las dos ubicaciones aparecen en la misma biblioteca de la aplicación.
+
 Para compilar el instalador desde el código fuente, instala las dependencias en la terminal de [MSYS2 UCRT64](https://www.msys2.org/docs/environments/):
 
 ```bash

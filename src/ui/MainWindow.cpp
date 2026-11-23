@@ -12,10 +12,8 @@
 #include <QFileInfo>
 #include <QKeySequence>
 #include <QMessageBox>
-#include <QRegularExpression>
 #include <QShortcut>
 #include <QStackedWidget>
-#include <QStandardPaths>
 #include <QWidget>
 
 #include <functional>
@@ -65,20 +63,22 @@ MainWindow::MainWindow() {
 
     // --- Conexiones HomeScreen -> editor / biblioteca ---
     connect(m_homeScreen, &HomeScreen::createNotebookRequested, this,
-            [this](const QString& path, ThemeId theme, BackgroundTemplate tpl, PageFormat format) {
+            [this](const QString& name, ThemeId theme, BackgroundTemplate tpl, PageFormat format) {
                 if (!m_canvas)
                     return;
-                m_canvas->newDocument();
-                m_canvas->setThemeId(theme);
-                m_canvas->setBackgroundTemplate(tpl);
-                m_canvas->setPageFormat(format);
-                if (!m_canvas->saveToFile(path, true)) {
-                    QMessageBox::warning(this, tr("Crear cuaderno"), tr("No se pudo guardar el cuaderno nuevo."));
-                    return;
+                for (const QString& directory : HomeScreen::libraryDirectories()) {
+                    if (!QDir().mkpath(directory))
+                        continue;
+                    const QString path = HomeScreen::uniqueNotebookPath(directory, name);
+                    if (m_canvas->createNotebook(path, theme, tpl, format)) {
+                        showEditorPage();
+                        m_canvas->setFocus();
+                        return;
+                    }
                 }
-                showEditorPage();
-                m_toolbar->refreshFromCanvas();
-                m_canvas->setFocus();
+                QMessageBox::warning(this, tr("Crear cuaderno"),
+                                     tr("No se pudo guardar el cuaderno nuevo. Revisa el nombre, "
+                                        "el espacio libre y los permisos de la carpeta."));
             });
     connect(m_homeScreen, &HomeScreen::openNotebookRequested, this, [this](const QString& path) {
         if (!m_canvas)
@@ -149,39 +149,37 @@ MainWindow::MainWindow() {
     connect(m_toolbar, &FloatingToolbar::renameRequested, this, [this](const QString& rawName) {
         if (!m_canvas)
             return;
-        QString clean = rawName.trimmed();
-        clean.remove(QRegularExpression(QStringLiteral(R"([\\/:*?"<>|])")));
+        const QString clean = HomeScreen::notebookBaseName(rawName);
         if (clean.isEmpty())
             return;
         const QString oldPath = m_canvas->currentFilePath();
-        QDir directory(oldPath.isEmpty()
-            ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + QStringLiteral("/Finily")
-            : QFileInfo(oldPath).absolutePath());
-        const QString target = directory.filePath(clean + QStringLiteral(".finily"));
-        if (target == oldPath)
-            return;
-        if (QFile::exists(target)) {
-            m_toolbar->showToast(tr("Ya existe un cuaderno con ese nombre"));
+        const QStringList directories = oldPath.isEmpty() ? HomeScreen::libraryDirectories()
+            : QStringList{QFileInfo(oldPath).absolutePath()};
+        for (const QString& directory : directories) {
+            const QString target = QDir(directory).filePath(clean + QStringLiteral(".finily"));
+            if (target == oldPath)
+                return;
+            if (QFile::exists(target)) {
+                m_toolbar->showToast(tr("Ya existe un cuaderno con ese nombre"));
+                updateWindowTitle();
+                return;
+            }
+            if (oldPath.isEmpty()) {
+                if (!QDir().mkpath(directory) || !m_canvas->saveToFile(target, true))
+                    continue;
+            } else {
+                if (!m_canvas->saveToFile(oldPath) || !QFile::rename(oldPath, target))
+                    break;
+                m_canvas->setCurrentFilePath(target);
+                m_canvas->saveAutosave();
+            }
             updateWindowTitle();
+            m_toolbar->showToast(tr("Cuaderno %1").arg(clean));
             return;
         }
-        if (oldPath.isEmpty()) {
-            if (!directory.mkpath(QStringLiteral(".")) || !m_canvas->saveToFile(target, true)) {
-                m_toolbar->showToast(tr("No se pudo guardar el cuaderno"));
-                updateWindowTitle();
-                return;
-            }
-        } else {
-            if (!m_canvas->saveToFile(oldPath) || !QFile::rename(oldPath, target)) {
-                m_toolbar->showToast(tr("No se pudo renombrar el cuaderno"));
-                updateWindowTitle();
-                return;
-            }
-            m_canvas->setCurrentFilePath(target);
-            m_canvas->saveAutosave();
-        }
+        m_toolbar->showToast(oldPath.isEmpty() ? tr("No se pudo guardar el cuaderno")
+                                              : tr("No se pudo renombrar el cuaderno"));
         updateWindowTitle();
-        m_toolbar->showToast(QStringLiteral("Cuaderno: ") + clean);
     });
 
     installShortcuts();

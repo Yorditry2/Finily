@@ -213,15 +213,25 @@ QJsonObject serializePage(const PageData& document,bool& valid) {
         page.insert("pageBackground", int(*document.background));
     return page;
 }
-bool serializeDocumentToFile(const QString& path,const QVector<PageData>& pages,int currentPage,QJsonObject root) {
+bool serializeDocumentToFile(const QString& path, const QVector<PageData>& pages, int currentPage,
+                             QJsonObject root, bool newFile = false) {
     QJsonArray serialized;bool valid=true;pngCache().next.clear();
     for(const auto& page:pages){serialized.append(serializePage(page,valid));if(!valid)return false;}
     if(serialized.isEmpty())serialized.append(serializePage(PageData{},valid));
     // Conserva solo las imágenes que siguen en el documento.
     pngCache().previous=std::move(pngCache().next);pngCache().next.clear();
     root.remove("viewport");root.insert("version",5);root.insert("pages",serialized);root.insert("currentPageIndex",currentPage);
-    QSaveFile file(path);if(!file.open(QIODevice::WriteOnly))return false;
     const auto data=QJsonDocument(root).toJson(QJsonDocument::Compact);
+    if (newFile) {
+        // Escribir en el temporal y publicarlo en la misma carpeta sin reemplazar otro cuaderno.
+        QTemporaryFile pending(QFileInfo(path).absolutePath() + QStringLiteral("/.finily-XXXXXX"));
+        if (!pending.open() || pending.write(data) != data.size() || !pending.flush()
+            || !pending.rename(path))
+            return false;
+        pending.setAutoRemove(false);
+        return true;
+    }
+    QSaveFile file(path);if(!file.open(QIODevice::WriteOnly))return false;
     if(file.write(data)!=data.size()){file.cancelWriting();return false;}
     return file.commit();
 }
@@ -1517,25 +1527,26 @@ void CanvasWidget::newDocument() {
     m_pages={PageData{}};m_currentPageIndex=0;m_dirty=false;
     m_undoStack.clear();m_redoStack.clear();m_showEraserCursor=false;clearSelection();m_viewport=fittedSheetViewport(m_pageFormat,size());emit viewportChanged(m_viewport.zoom);updateCursorShape();saveAutosave();emit pageStructureChanged();emit stateChanged();
 }
+
+bool CanvasWidget::createNotebook(const QString& path, ThemeId theme, BackgroundTemplate background,
+                                  PageFormat format) {
+    if (m_mode != InteractionMode::None || path.isEmpty())
+        return false;
+    PageData page;
+    page.viewport = fittedSheetViewport(format, size());
+    const auto settings = documentSettings(m_shapeKind, m_holdToShapeEnabled, m_smartGuidesEnabled,
+        m_swapPenButtons, m_pressureProfile, theme, background, page.viewport, format);
+    // El borrador anterior sigue abierto si falla la creación del archivo.
+    return serializeDocumentToFile(path, {page}, 0, settings, true) && loadFromFile(path);
+}
+
 bool CanvasWidget::saveToFile(const QString& path, bool newFile) {
     if (!preparePageChange() || path.isEmpty())
         return false;
     syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
     const auto settings = documentSettings(m_shapeKind, m_holdToShapeEnabled, m_smartGuidesEnabled,
         m_swapPenButtons, m_pressureProfile, m_themeId, m_template, m_viewport, m_pageFormat);
-    bool saved;
-    if (newFile) {
-        QTemporaryFile pending(QFileInfo(path).absolutePath() + QStringLiteral("/.finily-XXXXXX"));
-        saved = pending.open();
-        if (saved) {
-            pending.close();
-            saved = serializeDocumentToFile(pending.fileName(), m_pages, m_currentPageIndex, settings)
-                && QFile::rename(pending.fileName(), path);
-        }
-    } else {
-        saved = serializeDocumentToFile(path, m_pages, m_currentPageIndex, settings);
-    }
-    if (!saved) {
+    if (!serializeDocumentToFile(path, m_pages, m_currentPageIndex, settings, newFile)) {
         emit toastRequested(tr("No se pudo guardar el cuaderno"));
         return false;
     }

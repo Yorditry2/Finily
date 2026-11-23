@@ -21,7 +21,7 @@ int main(int argc, char* argv[]) {
     QApplication::setApplicationDisplayName("Finily");
     QApplication::setOrganizationName("Finily");
     QApplication::setOrganizationDomain("finily.app");
-    QApplication::setApplicationVersion("0.1.0");
+    QApplication::setApplicationVersion(QStringLiteral(FINILY_VERSION));
 
     // Inter si está instalada, con respaldo de la tipografía del sistema.
     QFont uiFont = QApplication::font();

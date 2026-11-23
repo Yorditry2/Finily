@@ -3528,12 +3528,24 @@ void FloatingToolbar::saveNotebookAsDialog() {
         return;
     closePopovers();
     QString path = QFileDialog::getSaveFileName(window(), "Guardar cuaderno", "cuaderno.finily",
-                                                "Cuaderno Finily (*.finily)");
+                                                "Cuaderno Finily (*.finily)", nullptr,
+                                                QFileDialog::DontConfirmOverwrite);
     if (path.isEmpty())
         return;
     if (!path.endsWith(".finily", Qt::CaseInsensitive))
         path += ".finily"; // auto-anexa la extensión del cuaderno
-    m_canvas->saveToFile(path);
+    const bool exists = QFileInfo::exists(path);
+    if (exists) {
+        QMessageBox confirmation(QMessageBox::Question, tr("Reemplazar cuaderno"),
+                                 tr("¿Quieres reemplazar «%1»?").arg(QFileInfo(path).fileName()),
+                                 QMessageBox::Save | QMessageBox::Cancel, window());
+        confirmation.button(QMessageBox::Save)->setText(tr("Reemplazar"));
+        confirmation.button(QMessageBox::Cancel)->setText(tr("Cancelar"));
+        confirmation.setDefaultButton(QMessageBox::Cancel);
+        if (confirmation.exec() != QMessageBox::Save)
+            return;
+    }
+    m_canvas->saveToFile(path, !exists);
     refreshFromCanvas();
 }
 
