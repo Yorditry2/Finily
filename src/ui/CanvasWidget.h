@@ -1,6 +1,8 @@
 #pragma once
 
 #include "core/Types.h"
+#include "engine/InkEngine.h"
+#include "engine/LiveStroke.h"
 #include <QElapsedTimer>
 #include <QImage>
 #include <QPolygonF>
@@ -38,7 +40,7 @@ public:
     ShapeKind shapeKind() const { return m_shapeKind; }
     int polygonSides() const { return m_polygonSides; }
     int triangleVariant() const { return m_triangleVariant; }
-    void setTriangleVariant(int variant) { m_triangleVariant = std::clamp(variant, 0, 3); }
+    void setTriangleVariant(int variant) { m_triangleVariant = std::clamp(variant, 0, 3); emit stateChanged(); }
     void setPolygonSides(int sides);
     int quadVariant() const { return m_quadVariant; }
     void setQuadVariant(int variant) { m_quadVariant = std::clamp(variant, 0, 4); emit stateChanged(); }
@@ -192,6 +194,7 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
     void leaveEvent(QEvent* event) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
@@ -407,6 +410,9 @@ private:
 
     // Dual-layer backing cache for <0.5ms live drawing latency
     QImage m_staticCache;
+    LiveInkRenderer m_liveInk;
+    InkSmoother m_inkSmoother;
+    QImage m_liveInkLayer;
     bool m_staticCacheDirty = true;
 };
 

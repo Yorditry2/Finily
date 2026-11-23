@@ -588,6 +588,7 @@ QPixmap fillSwatchPixmap(ShadePattern pattern, const QColor& color, bool isDark)
     p.setPen(QPen(isDark ? QColor(255, 255, 255, 55) : QColor(15, 23, 42, 50), 1.0));
     p.setBrush(Qt::NoBrush);
     p.drawRoundedRect(r, 6.0, 6.0);
+    p.end();
     return pm;
 }
 
@@ -639,6 +640,7 @@ QPixmap penTipPixmap(int tip, const QColor& ink, bool isDark) {
         p.setBrush(ink); p.drawPath(bristle);
     }
     p.restore();
+    p.end();
     return pm;
 }
 
@@ -669,6 +671,7 @@ QPixmap hlTipPixmap(int tip, const QColor& ink, bool isDark) {
         p.setPen(QPen(isDark ? QColor(255, 255, 255, 160) : QColor(15, 23, 42, 150), 1.1, Qt::DashLine));
         p.drawLine(QPointF(12.0, 17.0), QPointF(60.0, 17.0));
     }
+    p.end();
     return pm;
 }
 
@@ -1732,7 +1735,7 @@ void FloatingToolbar::buildTopRight() {
     };
     m_cleanBtn = mk("Presentar · oculta la interfaz (Tab)", "present");
     connect(m_cleanBtn, &QToolButton::clicked, this, &FloatingToolbar::toggleCleanUi);
-    m_paperBtn = mk("Papel y plantilla", "grid");
+    m_paperBtn = mk("Papel y plantilla", "paper");
     connect(m_paperBtn, &QToolButton::clicked, this, [this] { openPopover(m_paperPopover, m_paperBtn); });
     m_pagesBtn = mk("Páginas", "pages");
     m_pagesBtn->setCheckable(true);
@@ -2054,7 +2057,9 @@ void FloatingToolbar::buildDock() {
         connect(button, &QToolButton::clicked, this, [this, tool, button] {
             if (!m_canvas)
                 return;
-            if (m_canvas->tool() == tool) {
+            const ToolType active = m_canvas->tool();
+            const bool sameTool = (active == tool) || (tool == ToolType::Pen && active == ToolType::Ballpoint);
+            if (sameTool) {
                 // Segundo clic sobre la herramienta ya activa: abrir/cerrar "Trazo"
                 if (m_openPopover == m_strokePopover)
                     closePopovers();
@@ -2062,7 +2067,7 @@ void FloatingToolbar::buildDock() {
                     openPopover(m_strokePopover, button);
             } else {
                 closePopovers();
-                selectTool(tool);
+                selectTool(tool == ToolType::Pen && m_canvas->penTip() == 0 ? ToolType::Ballpoint : tool);
             }
         });
         m_writingKinds.append(tool);
@@ -2888,8 +2893,15 @@ void FloatingToolbar::buildShapesPopover() {
                                             i == index ? QSizePolicy::Preferred : QSizePolicy::Ignored);
         stack->setCurrentIndex(index);
         stack->updateGeometry();
-        if (m_shapesPopover)
+        if (m_shapesPopover) {
+            if (m_shapesPopover->layout())
+                m_shapesPopover->layout()->activate();
             m_shapesPopover->adjustSize();
+            if (m_openPopover == m_shapesPopover) {
+                positionOpenPopover();
+                updateOverlayMask();
+            }
+        }
     };
     connect(tabGroup, &QButtonGroup::idClicked, this, fitStack);
     fitStack(0);
@@ -4034,6 +4046,7 @@ void FloatingToolbar::toggleCleanUi() {
         QObject::disconnect(m_pillAnim, &QPropertyAnimation::finished, this, nullptr);
         m_pillAnim->stop();
         m_pillAnim->deleteLater();
+        m_pillAnim = nullptr;
     }
     if (m_cleanUi) {
         closePopovers();
@@ -4190,12 +4203,14 @@ void FloatingToolbar::updateStationery() {
     }
     for (int i = 0; i < m_trayDots.size(); ++i) {
         ColorDotButton* dot = m_trayDots.at(i);
-        dot->hide();
-        if (i >= m_palette.size())
+        if (i >= m_palette.size()) {
+            dot->hide();
             continue;
+        }
         dot->setDotColor(m_palette.at(i));
         dot->setAccentColor(theme.accent);
         dot->setRimColor(rim);
+        dot->show();
     }
 }
 
@@ -4291,7 +4306,7 @@ void FloatingToolbar::refreshFromCanvas() {
 
     // Huella de estado: evita reflashear la UI en cada punto de un trazo a 200 Hz.
     const int pdfPageCount = m_canvas->documentPdfPageCount();
-    const QString signature = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15|%16|%17|%18|%19|%20|%21|%22|%23|%24|%25|%26|%27|%28|%29")
+    const QString signature = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15|%16|%17|%18|%19|%20|%21|%22|%23|%24|%25|%26|%27|%28|%29|%30")
                                   .arg(int(m_canvas->tool()))
                                   .arg(m_canvas->inkColor().name(QColor::HexArgb))
                                   .arg(m_canvas->strokeSize())
@@ -4321,7 +4336,9 @@ void FloatingToolbar::refreshFromCanvas() {
                                   .arg(m_canvas->triangleVariant())
                                   .arg(m_canvas->quadVariant())
                                   .arg(m_canvas->solidKind())
-                                  .arg(m_canvas->isActivelyDragging());
+                                  .arg(m_canvas->isActivelyDragging())
+                                  .arg(m_canvas->penTip() * 64 + m_canvas->highlighterTip() * 16
+                                       + int(m_canvas->lassoRectMode()) * 8 + int(m_canvas->shadePattern()));
     if (signature == m_lastStateSig)
         return;
     m_lastStateSig = signature;
@@ -4335,7 +4352,7 @@ void FloatingToolbar::refreshFromCanvas() {
     // Herramientas (10 exclusivas: 4 útiles ilustrados + 6 duotono)
     const ToolType tool = m_canvas->tool();
     for (int i = 0; i < m_writingBtns.size() && i < m_writingKinds.size(); ++i)
-        if (m_writingKinds.at(i) == tool)
+        if (m_writingKinds.at(i) == tool || (m_writingKinds.at(i) == ToolType::Pen && tool == ToolType::Ballpoint))
             m_writingBtns.at(i)->setChecked(true);
     for (int i = 0; i < m_secondaryBtns.size() && i < m_secondaryKinds.size(); ++i)
         if (m_secondaryKinds.at(i) == tool)
@@ -4466,9 +4483,10 @@ void FloatingToolbar::refreshFromCanvas() {
     m_selectionActions->setVisible(!drawingPolyline && m_canvas->hasSelection());
     const bool contextDesired = !m_cleanUi && !m_canvas->isActivelyDragging()
         && (drawingPolyline || m_canvas->hasSelection());
-    if (m_contextPill->isVisible() != contextDesired)
+    const bool contextChanged = (m_contextPill->isVisible() != contextDesired);
+    if (contextChanged)
         m_contextPill->setVisible(contextDesired);
-    if (contextDesired)
+    if (contextChanged || contextDesired)
         positionChildren(); // recalcula posición y máscara con el contenido actual
 
     // Etiqueta informativa del PDF cargado

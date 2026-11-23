@@ -40,7 +40,7 @@ QVector<ImageItem> importPdfPages(const QString& path,double startY) {
     return pages;
 }
 namespace {
-QFont fontFor(double size) {QFont font(QStringLiteral("Sans Serif"));font.setPixelSize(qRound(size));return font;}
+QFont fontFor(double size) {QFont font(QStringLiteral("Sans Serif"));font.setPixelSize(std::max(1,qRound(size)));return font;}
 QRectF textBounds(const TextItem& item) {
     const QFontMetricsF metrics(fontFor(item.fontSize));
     return metrics.boundingRect(item.text).translated(item.pos+QPointF(0,metrics.ascent())).united(QRectF(item.pos,QSizeF(metrics.horizontalAdvance(item.text),metrics.height())));

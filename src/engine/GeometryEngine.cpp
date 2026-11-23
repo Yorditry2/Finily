@@ -759,6 +759,7 @@ SnapResult snapShapeVertex(const ShapeItem& shape, int index, const SnapResult& 
                           QPointF raw, double zoom) {
     if (external.contact)
         return external;
+    zoom = std::max(.01, zoom);
     const auto handles = getShapeHandles(shape);
     if (index < 0 || index >= handles.size())
         return external;
@@ -781,7 +782,7 @@ SnapResult snapShapeVertex(const ShapeItem& shape, int index, const SnapResult& 
     const auto y = findAxis([](QPointF p) { return p.y(); });
     if (!x && !y)
         return external;
-    SnapResult result{raw, {}};
+    SnapResult result = external;
     if (x) result.point.setX(x->x());
     if (y) result.point.setY(y->y());
     if (x) result.guides.append({*x, result.point, {}, false});
@@ -1163,7 +1164,6 @@ bool updateShapeLinks(QVector<ShapeItem>& shapes, const QVector<ShapeItem>& orig
 
 SnapResult snapPointWithGuides(const QPointF& raw,const std::optional<QPointF>& anchor,const QVector<ShapeItem>& shapes,const QString& excluded,double zoom,bool align) {
     zoom=std::max(.01,zoom);SnapResult result{raw,{}};
-    if (!align) return result; // respetar cuando el usuario apaga "Líneas guía / Imantado"
     QVector<QPointF> targets;
     for(const auto& shape:shapes)
         if((excluded.isEmpty()||shape.id!=excluded) && shape.vertices.size()>=2)targets+=snapTargets(shape);

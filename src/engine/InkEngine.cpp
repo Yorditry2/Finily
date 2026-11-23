@@ -36,6 +36,7 @@ QPainterPath curve(const QVector<StrokePoint>& points) {
 struct InkSample {
     StrokePoint point;
     double speed = 0.0; // World pixels per millisecond, independent of subdivision.
+    qsizetype seg = 0;  // Index of the source point this sample starts from.
 };
 QVector<InkSample> sampledCurve(const QVector<StrokePoint>& points) {
     QVector<InkSample> samples;
@@ -51,12 +52,13 @@ QVector<InkSample> sampledCurve(const QVector<StrokePoint>& points) {
             speeds[i]=distance/elapsed;
         }
     }
-    samples.append({points.front(),speeds.front()});
+    samples.append({points.front(),speeds.front(),0});
     for (qsizetype i=0;i+1<points.size();++i) {
         const QPointF a=pos(points[std::max<qsizetype>(0,i-1)]),b=pos(points[i]);
         const QPointF c=pos(points[i+1]),d=pos(points[std::min(i+2,points.size()-1)]);
         const QPointF c1=b+(c-a)/6.0,c2=c-(d-b)/6.0;
-        const int count=std::max(1,int(std::ceil((length(c1-b)+length(c2-c1)+length(c-c2))/1.5)));
+        const double segLen = length(c1-b)+length(c2-c1)+length(c-c2);
+        const int count = std::isfinite(segLen) ? std::clamp(int(std::ceil(segLen/1.5)), 1, 2048) : 1;
         for (int j=1;j<=count;++j) {
             const double t=double(j)/count,u=1-t;
             const QPointF p=u*u*u*b+3*u*u*t*c1+3*u*t*t*c2+t*t*t*c;
@@ -64,7 +66,7 @@ QVector<InkSample> sampledCurve(const QVector<StrokePoint>& points) {
             const double blend=t*t*(3-2*t);
             point.pressure=points[i].pressure+(points[i+1].pressure-points[i].pressure)*blend;
             point.x=p.x();point.y=p.y();
-            samples.append({point,speeds[i]+(speeds[i+1]-speeds[i])*blend});
+            samples.append({point,speeds[i]+(speeds[i+1]-speeds[i])*blend,i});
         }
     }
     return samples;
@@ -80,8 +82,10 @@ double pressureFactor(double pressure,PressureProfile profile) {
     }
     return 0.85;
 }
-void drawLiquidInk(QPainter& painter,const Stroke& stroke) {
+struct LiquidShape { QVector<InkSample> samples; QVector<double> distances,radii; };
+LiquidShape liquidShape(const Stroke& stroke,double minRadius) {
     const auto samples=sampledCurve(stroke.points);
+    if (samples.isEmpty()) return {};
     QVector<double> distances(samples.size(),0.0),radii(samples.size(),0.0);
     for (qsizetype i=1;i<samples.size();++i)
         distances[i]=distances[i-1]+length(pos(samples[i].point)-pos(samples[i-1].point));
@@ -90,28 +94,30 @@ void drawLiquidInk(QPainter& painter,const Stroke& stroke) {
         const auto& sample=samples[i];
         const double fast=sample.speed/(sample.speed+0.7);
         double factor=0.85;
-        if (stroke.tipStyle == 2) {
-            // Plumón / marcador: trazo firme, uniforme y ligeramente más grueso.
-            factor = 1.38;
-        } else if (stroke.tipStyle == 3) {
-            // Pincel: mayor rango expresivo de presión y suavidad en extremos.
-            const double p = stroke.hasHardwarePressure ? std::clamp(sample.point.pressure, 0.0, 1.0) : 0.65;
-            factor = 0.35 + 1.35 * std::pow(p, 0.72);
-            factor *= 1.0 - 0.10 * fast;
-            if (taperLength > 1e-6) {
-                const double t = std::clamp(std::min(distances[i], total - distances[i]) / (taperLength * 1.6), 0.0, 1.0);
-                factor *= 0.25 + 0.75 * t * t * (3 - 2 * t);
-            }
-        } else if (stroke.tool==ToolType::Ballpoint || stroke.tipStyle == 0) {
+        if (stroke.tool==ToolType::Ballpoint || stroke.tipStyle == 0) {
+            // Bolígrafo: línea nítida, fina y pareja con mínima variación.
             const double pressure=stroke.hasHardwarePressure?std::clamp(sample.point.pressure,0.0,1.0):0.5;
-            factor=0.94+0.08*pressure-0.04*fast;
+            factor=0.78+0.08*pressure-0.03*fast;
             if (taperLength>1e-6) {
                 const double t=std::clamp(std::min(distances[i],total-distances[i])/taperLength,0.0,1.0);
-                factor*=0.22+0.78*t*t*(3-2*t);
+                factor*=0.30+0.70*t*t*(3-2*t);
+            }
+        } else if (stroke.tipStyle == 2) {
+            // Plumón / marcador: trazo ancho, firme y uniforme (sin afinarse en extremos).
+            factor = 1.68;
+        } else if (stroke.tipStyle == 3) {
+            // Pincel: gran contraste expresivo por presión y puntas largas y suaves.
+            const double p = stroke.hasHardwarePressure ? std::clamp(sample.point.pressure, 0.0, 1.0) : 0.65;
+            factor = 0.22 + 1.65 * std::pow(p, 0.72);
+            factor *= 1.0 - 0.14 * fast;
+            if (taperLength > 1e-6) {
+                const double t = std::clamp(std::min(distances[i], total - distances[i]) / (taperLength * 2.0), 0.0, 1.0);
+                factor *= 0.16 + 0.84 * t * t * (3 - 2 * t);
             }
         } else {
+            // Pluma fuente: caligráfica, sensible a presión, velocidad y ángulo del trazo.
             if (stroke.hasHardwarePressure) factor=pressureFactor(sample.point.pressure,stroke.pressureProfile);
-            factor*=1.0-0.14*fast;
+            factor*=1.0-0.16*fast;
             const qsizetype before=std::max<qsizetype>(0,i-1),after=std::min(i+1,samples.size()-1);
             const QPointF direction=pos(samples[after].point)-pos(samples[before].point);
             if (length(direction)>1e-8) {
@@ -119,18 +125,35 @@ void drawLiquidInk(QPainter& painter,const Stroke& stroke) {
                 const double tilt=std::hypot(sample.point.tiltX,sample.point.tiltY);
                 double nib=std::numbers::pi/4;
                 if (tilt>1e-6) nib+=std::min(1.0,tilt/45.0)*std::remainder(std::atan2(sample.point.tiltY,sample.point.tiltX)-nib,std::numbers::pi);
-                // At most +/-10%; vertical downstrokes get a gentle extra body.
-                factor*=1.0-0.06*std::cos(2*(heading-nib))+0.04*std::sin(heading);
+                factor*=1.0-0.12*std::cos(2*(heading-nib))+0.06*std::sin(heading);
             }
         }
         radii[i]=std::max(0.0005,stroke.size*factor/2);
     }
+    // Pasadas [1 2 1]/4: quitan el temblor de la presión sin mover la forma (efecto local, ~2 unidades).
+    for (int pass=0;pass<3&&radii.size()>2;++pass) {
+        double prev=radii[0];
+        for (qsizetype i=1;i+1<radii.size();++i) {
+            const double current=radii[i];
+            radii[i]=0.25*prev+0.5*current+0.25*radii[i+1];
+            prev=current;
+        }
+    }
+    // Una línea más fina que ~0.8 px de pantalla se ve gris y sucia: se limita el radio mínimo.
+    for (auto& r:radii) r=std::max(r,minRadius);
+    return {samples,distances,radii};
+}
+// Envelope of samples first..last. With diskAtFirst the disk at `first` is included;
+// otherwise only the pieces that connect first->first+1 ... last (no repeated disk).
+QPainterPath liquidEnvelope(const LiquidShape& shape,qsizetype first,qsizetype last,bool diskAtFirst) {
+    const auto& samples=shape.samples;const auto& radii=shape.radii;
     QPainterPath envelope;
     envelope.setFillRule(Qt::WindingFill);
-    for (qsizetype i=0;i<samples.size();++i) {
+    first=std::max<qsizetype>(0,first);last=std::min(last,samples.size()-1);
+    for (qsizetype i=first;i<=last;++i) {
         const QPointF center=pos(samples[i].point);
-        envelope.addEllipse(center,radii[i],radii[i]);
-        if (i==0) continue;
+        if (i>first||diskAtFirst) envelope.addEllipse(center,radii[i],radii[i]);
+        if (i==0||i==first) continue;
         const QPointF previous=pos(samples[i-1].point),delta=center-previous;
         const double d=length(delta),r0=radii[i-1],r1=radii[i];
         // A contained/coincident disk already has its complete outer envelope.
@@ -146,8 +169,72 @@ void drawLiquidInk(QPainter& painter,const Stroke& stroke) {
         envelope.lineTo(previous+n1*r0);
         envelope.closeSubpath();
     }
+    return envelope;
+}
+// Misma silueta que liquidEnvelope, pero como "cinta": un solo contorno por tramo suave
+// (borde izquierdo hacia delante, derecho de vuelta) en vez de un disco + trapecio por
+// muestra. Rellenar cientos de figuras superpuestas es lo caro; una cinta tiene ~2 bordes
+// por línea de barrido. Donde la cinta no es fiable (giro brusco, borde interior que se
+// pliega, disco contenido en otro) se corta y se ponen discos/trapecios como antes.
+QPainterPath liquidRibbon(const LiquidShape& shape,double pixelScale) {
+    const auto& samples=shape.samples;const auto& radii=shape.radii;
+    QPainterPath out;out.setFillRule(Qt::WindingFill);
+    const qsizetype n=samples.size();
+    if (n==0) return out;
+    auto disk=[&](qsizetype i){ out.addEllipse(pos(samples[i].point),radii[i],radii[i]); };
+    if (n==1) { disk(0); return out; }
+    struct Seg { QPointF a0,a1,b0,b1,n0,n1; bool ok=false; };
+    QVector<Seg> seg(n); // seg[i]: muestra i-1 -> i
+    for (qsizetype i=1;i<n;++i) {
+        const QPointF c0=pos(samples[i-1].point),c1=pos(samples[i].point),delta=c1-c0;
+        const double d=length(delta),r0=radii[i-1],r1=radii[i];
+        if (d<=std::abs(r1-r0)+1e-9) continue;
+        const QPointF axis=delta/d,normal(-axis.y(),axis.x());
+        const double cosine=std::clamp((r0-r1)/d,-1.0,1.0),sine=std::sqrt(std::max(0.0,1-cosine*cosine));
+        Seg sg;sg.n0=axis*cosine-normal*sine;sg.n1=axis*cosine+normal*sine;
+        sg.a0=c0+sg.n0*r0;sg.a1=c1+sg.n0*r1;sg.b0=c0+sg.n1*r0;sg.b1=c1+sg.n1*r1;
+        // Bordes que avanzan con el trazo; si uno retrocede, el borde se pliega.
+        sg.ok=dot(sg.a1-sg.a0,axis)>1e-9&&dot(sg.b1-sg.b0,axis)>1e-9;
+        seg[i]=sg;
+    }
+    const double scale=std::max(pixelScale,1e-6);
+    // Unir dos tramos con una recta en vez del arco del disco se desvía ~gap²/(8r):
+    // se corta la cinta solo si esa desviación pasaría de 0.08 px de pantalla.
+    auto smoothJoint=[&](qsizetype i){ // unión en la muestra i entre seg[i] y seg[i+1]
+        const Seg& p=seg[i];const Seg& q=seg[i+1];
+        const double gap=std::max(length(p.a1-q.a0),length(p.b1-q.b0))*scale,r=std::max(radii[i]*scale,1e-6);
+        // En curvas más cerradas que el grosor el borde interior retrocede (se pliega) y la
+        // cinta dejaría huecos: ahí también se corta.
+        const QPointF axis=pos(samples[i+1].point)-pos(samples[i].point);
+        const bool forward=dot(q.a1-p.a1,axis)>1e-12&&dot(q.b1-p.b1,axis)>1e-12;
+        return forward&&gap*gap/(8*r)<=0.08&&gap<=2.0*r;
+    };
+    auto trapezoid=[&](const Seg& sg){ out.moveTo(sg.a0);out.lineTo(sg.a1);out.lineTo(sg.b1);out.lineTo(sg.b0);out.closeSubpath(); };
+    qsizetype i=1;
+    while (i<n) {
+        if (!seg[i].ok) {
+            const QPointF c0=pos(samples[i-1].point),c1=pos(samples[i].point);
+            if (length(c1-c0)>std::abs(radii[i]-radii[i-1])+1e-9) trapezoid(seg[i]);
+            disk(i-1);disk(i);++i;continue;
+        }
+        qsizetype e=i; // tramo seg[i]..seg[e]
+        while (e+1<n&&seg[e+1].ok&&smoothJoint(e)) ++e;
+        disk(i-1);disk(e);
+        if (e==i) { trapezoid(seg[i]); ++i; continue; }
+        out.moveTo(seg[i].a0);
+        for (qsizetype k=i;k<=e;++k) { if (k>i) out.lineTo(seg[k].a0); out.lineTo(seg[k].a1); }
+        for (qsizetype k=e;k>=i;--k) { out.lineTo(seg[k].b1); out.lineTo(seg[k].b0); }
+        out.closeSubpath();
+        i=e+1;
+    }
+    return out;
+}
+double screenMinRadius(double zoom) { return zoom>1e-6?0.4/zoom:0.0005; }
+void drawLiquidInk(QPainter& painter,const Stroke& stroke) {
+    const auto shape=liquidShape(stroke,screenMinRadius(painter.worldTransform().m11()));
     // One fill composites opacity exactly once, including tight cursive crossings.
-    painter.setPen(Qt::NoPen);painter.setBrush(stroke.color);painter.drawPath(envelope);
+    painter.setPen(Qt::NoPen);painter.setBrush(stroke.color);
+    painter.drawPath(liquidRibbon(shape,painter.worldTransform().m11()));
 }
 void arrowHead(QPainter& painter, QPointF tip, QPointF previous, double size, QColor color) {
     QPointF v=tip-previous; const double n=length(v); if (n<1e-8) return;
@@ -157,11 +244,54 @@ void arrowHead(QPainter& painter, QPointF tip, QPointF previous, double size, QC
     painter.drawPolygon(QPolygonF{tip,tip-v*h+normal*w,tip-v*(h*0.70),tip-v*h-normal*w});
 }
 }
+bool LiveInkRenderer::eligible(const Stroke& s) {
+    return (s.tool==ToolType::Pen||s.tool==ToolType::Ballpoint)&&s.linePattern==LinePattern::Solid
+        &&s.tipStyle!=3&&s.opacity>=0.999&&s.color.alpha()==255&&s.points.size()>=2;
+}
+void LiveInkRenderer::reset() { m_frozen=-1;m_vp={};m_pixels={};m_dpr=1; }
+bool LiveInkRenderer::usable(const Viewport& vp,const QSize& pixels) const {
+    return m_frozen>=0&&vp.x==m_vp.x&&vp.y==m_vp.y&&vp.zoom==m_vp.zoom&&pixels==m_pixels;
+}
+void LiveInkRenderer::advance(const Stroke& stroke,QImage& layer,const Viewport& vp,const QSize& pixels,double dpr) {
+    constexpr double kTail=30.0,kChunk=40.0;
+    if (!eligible(stroke)) return;
+    const auto shape=liquidShape(stroke,screenMinRadius(vp.zoom));
+    const auto n=shape.samples.size();
+    if (n<2) return;
+    const double total=shape.distances.back();
+    if (total<kTail+kChunk) return;
+    qsizetype target=-1;
+    for (qsizetype i=n-1;i>=0;--i)
+        if (shape.distances[i]<=total-kTail&&shape.samples[i].seg<=stroke.points.size()-9) { target=i;break; }
+    if (target<0) return;
+    if (pixels.isEmpty()) return;
+    const bool stale=m_frozen>=0&&(m_frozen>=n||layer.size()!=pixels||vp.x!=m_vp.x||vp.y!=m_vp.y||vp.zoom!=m_vp.zoom||layer.devicePixelRatio()!=dpr);
+    if (m_frozen>=0&&!stale&&shape.distances[target]-shape.distances[m_frozen]<kChunk) return;
+    if (m_frozen<0||stale) {
+        layer=QImage(pixels,QImage::Format_ARGB32_Premultiplied);layer.setDevicePixelRatio(dpr);layer.fill(Qt::transparent);
+        m_vp=vp;m_pixels=pixels;m_dpr=dpr;
+    }
+    const qsizetype from=(m_frozen<0||stale)?0:m_frozen;
+    QPainter lp(&layer);lp.setRenderHint(QPainter::Antialiasing,true);
+    lp.translate(vp.x,vp.y);lp.scale(vp.zoom,vp.zoom);
+    lp.setPen(Qt::NoPen);lp.setBrush(stroke.color);
+    lp.drawPath(liquidEnvelope(shape,from,target,from==0));
+    m_frozen=target;
+}
+void LiveInkRenderer::drawTail(QPainter& painter,const Stroke& stroke) const {
+    const auto shape=liquidShape(stroke,screenMinRadius(painter.worldTransform().m11()));
+    if (shape.samples.isEmpty()) return;
+    painter.save();painter.setRenderHint(QPainter::Antialiasing,true);
+    painter.setPen(Qt::NoPen);painter.setBrush(stroke.color);
+    const qsizetype first=std::min(std::max<qsizetype>(m_frozen,0),shape.samples.size()-1);
+    painter.drawPath(liquidEnvelope(shape,first,shape.samples.size()-1,true));
+    painter.restore();
+}
 void VelocityGaussianStabilizer::reset() { m_recent.clear();m_smoothedPressure.reset(); }
 void VelocityGaussianStabilizer::setStrength(double s) { m_strength=std::isfinite(s)?std::clamp(s,0.0,1.0):0.0; reset(); }
 StrokePoint VelocityGaussianStabilizer::filter(const StrokePoint& point) {
     StrokePoint out=point;
-    const double pressure=std::clamp(point.pressure,0.0,1.0);
+    const double pressure=std::isfinite(point.pressure)?std::clamp(point.pressure,0.0,1.0):0.5;
     m_smoothedPressure=m_smoothedPressure?0.55*pressure+0.45*(*m_smoothedPressure):pressure;
     out.pressure=*m_smoothedPressure;
     if (m_strength==0.0) return out;
@@ -190,9 +320,14 @@ QRectF computeBounds(const QVector<StrokePoint>& points,double padding) {
     padding=std::max(0.0,padding);
     return QRectF(QPointF(l-padding,t-padding),QPointF(r+padding,b+padding));
 }
+static double strokeHitPad(const Stroke& stroke) {
+    if (stroke.tool == ToolType::Pen && stroke.tipStyle == 2) return 0.85;
+    if (stroke.tool == ToolType::Pen && stroke.tipStyle == 3) return 0.95;
+    return 0.7;
+}
 bool hitTestStroke(const Stroke& stroke,const QPointF& p,double radius) {
     if (stroke.points.isEmpty()) return false;
-    radius=std::max(0.0,radius)+std::max(0.0,stroke.size)*0.7;
+    radius=std::max(0.0,radius)+std::max(0.0,stroke.size)*strokeHitPad(stroke);
     const QRectF bounds=stroke.bounds.isEmpty()?computeBounds(stroke.points):stroke.bounds;
     if (!bounds.adjusted(-radius,-radius,radius,radius).contains(p)) return false;
     if (stroke.points.size()==1) return distanceSquared(p,pos(stroke.points[0]),pos(stroke.points[0]))<=radius*radius;
@@ -204,12 +339,13 @@ std::optional<QVector<Stroke>> eraseStrokePartially(const Stroke& stroke,const Q
     if (!hitTestStroke(stroke,center,radius)) return std::nullopt;
     QVector<Stroke> result;
     if (stroke.points.size()==1) return result;
-    const double r=std::max(0.0,radius)+std::max(0.0,stroke.size)*0.7;
+    const double pad=strokeHitPad(stroke);
+    const double r=std::max(0.0,radius)+std::max(0.0,stroke.size)*pad;
     QVector<StrokePoint> current; bool touched=false;
     auto flush=[&] {
         if (current.isEmpty()) return;
         Stroke s=stroke;s.id=QUuid::createUuid().toString(QUuid::WithoutBraces);
-        s.points=current;s.bounds=computeBounds(s.points,s.size*0.7);result.append(s);current.clear();
+        s.points=current;s.bounds=computeBounds(s.points,s.size*pad);result.append(s);current.clear();
     };
     auto append=[&](const StrokePoint& p) {
         if (current.isEmpty() || length(pos(p)-pos(current.back()))>1e-8) current.append(p);
@@ -240,13 +376,13 @@ void drawStroke(QPainter& painter,const Stroke& stroke) {
     if (stroke.points.isEmpty() || stroke.tool==ToolType::Eraser || stroke.tool==ToolType::Hand) return;
     painter.save();painter.setRenderHint(QPainter::Antialiasing,true);
     painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    const double baseOp = (stroke.tool==ToolType::Highlighter ? 0.35 : (stroke.tipStyle == 3 ? 0.88 : 1.0));
+    const double baseOp = (stroke.tool==ToolType::Highlighter ? 0.35 : (stroke.tipStyle == 3 ? 0.80 : 1.0));
     painter.setOpacity(std::clamp(stroke.opacity,0.0,1.0)*baseOp);
     const double size=std::max(0.01,stroke.size);
     if ((stroke.tool==ToolType::Pen || stroke.tool==ToolType::Ballpoint) && stroke.linePattern==LinePattern::Solid) {
         drawLiquidInk(painter,stroke);
     } else {
-        const Qt::PenCapStyle cap = (stroke.tool == ToolType::Highlighter && stroke.tipStyle == 0)
+        const Qt::PenCapStyle cap = (stroke.tool == ToolType::Highlighter && (stroke.tipStyle == 0 || stroke.tipStyle == 2))
             ? Qt::FlatCap : Qt::RoundCap;
         QPen pen(stroke.color,size,Qt::SolidLine,cap,Qt::RoundJoin);
         if (stroke.linePattern==LinePattern::Dashed) pen.setDashPattern({4.0,2.5});
@@ -270,7 +406,7 @@ void drawStroke(QPainter& painter,const Stroke& stroke) {
     painter.restore();
 }
 void drawBackgroundTemplate(QPainter& painter,BackgroundTemplate tpl,const ThemeConfig& theme,const Viewport& vp,const QRectF& rect) {
-    if (tpl==BackgroundTemplate::Blank || vp.zoom<=0 || rect.isEmpty()) return;
+    if (tpl==BackgroundTemplate::Blank || !(vp.zoom>0) || rect.isEmpty()) return;
     painter.save();painter.setRenderHint(QPainter::Antialiasing,false);
     double step=32;while (step*vp.zoom<16) step*=2;
     QColor color=theme.patternColor;
@@ -288,4 +424,5 @@ void drawBackgroundTemplate(QPainter& painter,BackgroundTemplate tpl,const Theme
     }
     painter.restore();
 }
+double inkPressureFactor(double pressure,PressureProfile profile) { return pressureFactor(pressure,profile); }
 } // namespace finily

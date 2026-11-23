@@ -152,7 +152,11 @@ bool straightenSelectedStrokes(QVector<Stroke>& strokes,const QSet<QString>& ids
                 // Merge only if strokes genuinely overlap horizontally (same character/symbol)
                 if (overlapX > minW * 0.25 || centerInside) {
                     letter.indices.append(item.index);
-                    letter.bounds = letter.bounds.united(item.bounds);
+                    const double minL = std::min(letter.bounds.left(), item.bounds.left());
+                    const double minT = std::min(letter.bounds.top(), item.bounds.top());
+                    const double maxR = std::max(letter.bounds.right(), item.bounds.right());
+                    const double maxB = std::max(letter.bounds.bottom(), item.bounds.bottom());
+                    letter.bounds = QRectF(QPointF(minL, minT), QPointF(maxR, maxB));
                     merged = true;
                     break;
                 }

@@ -307,8 +307,8 @@ private:
     QVector<GlassCapsule*> m_capsules;
 
     // Animaciones suaves de popovers (140 ms) y pill (150 ms), OutCubic.
-    QPropertyAnimation* m_popoverAnim = nullptr;
-    QPropertyAnimation* m_pillAnim = nullptr;
+    QPointer<QPropertyAnimation> m_popoverAnim;
+    QPointer<QPropertyAnimation> m_pillAnim;
 
     // Vista previa en vivo del color/grosor de tinta (popover "Trazo").
     StrokePreviewWidget* m_strokePreview = nullptr;

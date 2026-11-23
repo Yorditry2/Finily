@@ -123,14 +123,26 @@ NotebookMeta readNotebookMeta(const QFileInfo& info) {
     // ("isPdfPage":true) para la pestaña 'Con PDF'.
     static const QByteArray strokesNeedle = "\"strokes\":[";
     static const QByteArray pdfNeedle = "\"isPdfPage\":true";
-    static const int carrySize = std::max(strokesNeedle.size(), pdfNeedle.size()) - 1;
+    static const qsizetype carrySize = std::max(strokesNeedle.size(), pdfNeedle.size()) - 1;
     qint64 pages = 0;
     qint64 pdfPages = 0;
     QByteArray carry;
+    auto countNonOverlapping = [](const QByteArray& buf, const QByteArray& needle, qsizetype start) -> qint64 {
+        qint64 n = 0;
+        qsizetype pos = start;
+        while ((pos = buf.indexOf(needle, pos)) != -1) {
+            ++n;
+            pos += needle.size();
+        }
+        return n;
+    };
     while (!file.atEnd()) {
+        const qsizetype prevCarry = carry.size();
         const QByteArray window = carry + file.read(1 << 20);
-        pages += window.count(strokesNeedle);
-        pdfPages += window.count(pdfNeedle);
+        const qsizetype strokesStart = std::max<qsizetype>(0, prevCarry - strokesNeedle.size() + 1);
+        const qsizetype pdfStart = std::max<qsizetype>(0, prevCarry - pdfNeedle.size() + 1);
+        pages += countNonOverlapping(window, strokesNeedle, strokesStart);
+        pdfPages += countNonOverlapping(window, pdfNeedle, pdfStart);
         carry = window.right(carrySize);
     }
     meta.pages = std::max(1, int(pages));

@@ -19,6 +19,7 @@
 #include <QStandardPaths>
 #include <QWidget>
 
+#include <cerrno>
 #include <fcntl.h>
 #include <functional>
 #include <linux/joystick.h>
@@ -272,7 +273,34 @@ void MainWindow::onWacomPadReadable() {
         return;
 
     struct js_event ev {};
-    while (::read(m_padFd, &ev, sizeof(ev)) == static_cast<ssize_t>(sizeof(ev))) {
+    while (true) {
+        const ssize_t n = ::read(m_padFd, &ev, sizeof(ev));
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                break;
+            if (m_padNotifier) {
+                m_padNotifier->setEnabled(false);
+                m_padNotifier->deleteLater();
+                m_padNotifier = nullptr;
+            }
+            ::close(m_padFd);
+            m_padFd = -1;
+            return;
+        }
+        if (n == 0) {
+            if (m_padNotifier) {
+                m_padNotifier->setEnabled(false);
+                m_padNotifier->deleteLater();
+                m_padNotifier = nullptr;
+            }
+            ::close(m_padFd);
+            m_padFd = -1;
+            return;
+        }
+        if (n != static_cast<ssize_t>(sizeof(ev)))
+            break;
         // Ignorar eventos sintéticos iniciales (JS_EVENT_INIT) y soltar botón (value == 0)
         if ((ev.type & JS_EVENT_INIT) != 0)
             continue;

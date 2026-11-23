@@ -155,6 +155,18 @@ public:
         done=true;const auto value=text();hide();if(accept&&commit)commit(value);deleteLater();
     }
 protected:
+    bool event(QEvent* event) override {
+        if(event->type()==QEvent::ShortcutOverride) {
+            const auto* ke=static_cast<QKeyEvent*>(event);
+            const auto k=ke->key();
+            if(k==Qt::Key_Escape||k==Qt::Key_Return||k==Qt::Key_Enter||k==Qt::Key_Tab
+               ||k==Qt::Key_Backspace||k==Qt::Key_Delete
+               ||(!ke->modifiers().testFlag(Qt::ControlModifier)&&!ke->modifiers().testFlag(Qt::AltModifier))) {
+                event->accept();return true;
+            }
+        }
+        return QLineEdit::event(event);
+    }
     void keyPressEvent(QKeyEvent* event) override {
         if(event->key()==Qt::Key_Escape){finish(false);event->accept();return;}
         if(event->key()==Qt::Key_Return||event->key()==Qt::Key_Enter){finish(true);event->accept();return;}
@@ -481,6 +493,8 @@ CanvasWidget::CanvasWidget(QWidget* parent):QWidget(parent),m_stabilizerFilter(s
         const QColor savedOp(settings.value("ink/operatorColor","#ef4444").toString());
         if(savedOp.isValid())m_operatorColor=savedOp;
         m_cursorStyle=std::clamp(settings.value("ink/cursorStyle",0).toInt(),0,2);
+        m_penTip=std::clamp(settings.value("ink/penTip",1).toInt(),0,3);
+        m_highlighterTip=std::clamp(settings.value("ink/highlighterTip",0).toInt(),0,2);
     }
     m_pages.append(PageData{});loadAutosave();updateCursorShape();
 }
@@ -490,6 +504,7 @@ CanvasWidget::~CanvasWidget() {
 }
 void CanvasWidget::setTool(ToolType tool) {
     clearPenCursor();
+    m_radialOpen=false;
     finishTextEditor(this,true);
     if(m_tool==ToolType::Select&&tool!=m_tool&&m_mode!=InteractionMode::None)cancelInteraction();
     if(m_polylineActive&&tool!=m_tool)finishActivePolyline();
@@ -542,9 +557,10 @@ void CanvasWidget::setCursorStyle(int style) {
 void CanvasWidget::setPenTip(int tip) {
     tip=std::clamp(tip,0,3);
     m_penTip=tip;
-    if(tip==0) m_tool=ToolType::Ballpoint;
-    else if(m_tool==ToolType::Ballpoint||m_tool==ToolType::Pen) m_tool=ToolType::Pen;
-    m_lastWriteTool=m_tool;
+    if(m_tool==ToolType::Pen||m_tool==ToolType::Ballpoint) {
+        m_tool=(tip==0)?ToolType::Ballpoint:ToolType::Pen;
+        m_lastWriteTool=m_tool;
+    }
     QSettings("Finily","Finily").setValue("ink/penTip",tip);
     emit stateChanged();
 }
@@ -634,6 +650,8 @@ void CanvasWidget::cancelInteraction() {
         m_strokes=snapshot->strokes;m_shapes=snapshot->shapes;m_images=snapshot->images;m_texts=snapshot->texts;
     }
     m_holdTimer->stop();
+    m_radialOpen=false;
+    m_liveInk.reset();m_liveInkLayer=QImage();
     m_hasActiveStroke=false;m_hasActiveShape=false;m_holdSnappedToShape=false;
     m_mode=InteractionMode::None;m_erasedAnything=false;m_activeGuides.clear();
     clearSelection();updateCursorShape();
@@ -732,15 +750,21 @@ void CanvasWidget::deleteSelection() {
     for(const auto& im:m_images) if(ids.contains(im.id)&&im.locked) skippedLocked=true;
     for(const auto& t:m_texts) if(ids.contains(t.id)&&t.locked) skippedLocked=true;
     const auto original=currentSnapshot();
-    pushUndoSnapshot(original);
+    const auto strokesBefore=m_strokes.size(), shapesBefore=m_shapes.size(), imagesBefore=m_images.size(), textsBefore=m_texts.size();
     auto selected = [&](const auto& item) { return ids.contains(item.id); };
     m_strokes.removeIf(selected);
     m_shapes.removeIf([&](const ShapeItem& s){ return !s.locked && selected(s); });
     m_images.removeIf([&](const ImageItem& image){return !image.isPdfPage && !image.locked && selected(image);});
     m_texts.removeIf([&](const TextItem& t){ return !t.locked && selected(t); });
-    updateShapeLinks(m_shapes,original.shapes,{});
+    const bool removedAnything = (m_strokes.size()!=strokesBefore || m_shapes.size()!=shapesBefore
+                                  || m_images.size()!=imagesBefore || m_texts.size()!=textsBefore);
+    if(removedAnything) {
+        pushUndoSnapshot(original);
+        updateShapeLinks(m_shapes,original.shapes,{});
+        saveAutosave();
+    }
     if(skippedLocked) emit toastRequested(QStringLiteral("Objeto bloqueado · desbloquéalo con el candado"));
-    clearSelection();saveAutosave();emit stateChanged();
+    clearSelection();emit stateChanged();
 }
 bool CanvasWidget::isSelectionLocked() const {
     if(const auto* s=findShapeById(m_selectedShapeId)) return s->locked;
@@ -1451,7 +1475,8 @@ void CanvasWidget::undo() {
         cancelActivePolyline();
         return;
     }
-    flushPendingBeautify();
+    if (m_beautifyTimer) m_beautifyTimer->stop();
+    m_pendingBeautifyStart = -1; m_pendingBeautifyBox = QRectF();
     restoreHistoryEntry(m_undoStack, m_redoStack);
 }
 
@@ -1459,7 +1484,8 @@ void CanvasWidget::redo() {
     if (m_mode != InteractionMode::None || m_polylineActive)
         return;
     finishTextEditor(this, true);
-    flushPendingBeautify();
+    if (m_beautifyTimer) m_beautifyTimer->stop();
+    m_pendingBeautifyStart = -1; m_pendingBeautifyBox = QRectF();
     restoreHistoryEntry(m_redoStack, m_undoStack);
 }
 
@@ -1562,6 +1588,8 @@ bool CanvasWidget::loadFromFile(const QString& path) {
     QVector<PageData> pages;QHash<QString,QVector<ImageItem>> pdfSources;
     if(root.value("version").toInt()==5)for(const auto& value:root.value("pages").toArray())pages.append(deserializePage(value.toObject(),pdfSources));
     else pages.append(deserializePage(root,pdfSources));
+    if(pages.isEmpty())pages.append(PageData{});
+    m_liveInk.reset();m_liveInkLayer=QImage();m_radialOpen=false;
     m_pages=std::move(pages);m_currentPageIndex=std::clamp(root.value("currentPageIndex").toInt(),0,int(m_pages.size())-1);
     const auto page=m_pages[m_currentPageIndex];
     m_strokes=page.strokes;m_shapes=page.shapes;m_images=page.images;m_texts=page.texts;m_viewport=page.viewport;
@@ -1670,7 +1698,13 @@ void CanvasWidget::paintEvent(QPaintEvent*) {
     for(const auto& image:m_images)if(image.id==m_selectedImageId){p.setRenderHint(QPainter::SmoothPixmapTransform);p.drawImage(image.rect,image.image);}
     for(const auto& shape:m_shapes)if(shape.kind==ShapeKind::ShadedRegion&&(m_selectedShapeIds.contains(shape.id)||shape.id==m_selectedShapeId))drawShape(p,shape);
     for(const auto& stroke:m_strokes)if(m_selectedStrokeIds.contains(stroke.id)&&stroke.tool==ToolType::Highlighter)drawStroke(p,stroke);
-    if(m_hasActiveStroke)drawStroke(p,m_activeStroke);
+    if(m_hasActiveStroke) {
+        const Stroke live=withPredictedTip(m_activeStroke,m_viewport.zoom);
+        if(LiveInkRenderer::eligible(live)&&m_liveInk.usable(m_viewport,m_liveInkLayer.size())) {
+            p.save();p.resetTransform();p.drawImage(QPointF(0,0),m_liveInkLayer);p.restore();
+            m_liveInk.drawTail(p,live);
+        } else drawStroke(p,live);
+    }
     if(liveHighlight) {
         p.save();p.resetTransform();p.drawImage(QPointF(0,0),highlighterLayers(this).ink);p.restore();
     }
@@ -2007,16 +2041,23 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
         for(qsizetype i=m_texts.size();i-->0;)if(m_texts[i].bounds.adjusted(-4,-4,4,4).contains(world)){hit=m_texts[i].id;break;}
         const bool edit=property("_finily_edit_text").toBool();setProperty("_finily_edit_text",false);
         if(!hit.isEmpty()&&!edit) {
+            bool locked=false;
+            for(const auto& item:std::as_const(m_texts))if(item.id==hit)locked=item.locked;
             if(m_tool==ToolType::Select||m_tool==ToolType::Lasso) {
                 for(const auto& item:std::as_const(m_texts))if(item.id==hit&&!item.groupId.isEmpty()) {
                     selectTogether(hit);return;
                 }
             }
-            clearSelection();m_selectedTextId=hit;m_snapshotBeforeTextEdit=currentSnapshot();
+            clearSelection();m_selectedTextId=hit;
+            if(locked){invalidateStaticCache();emit stateChanged();return;}
+            m_snapshotBeforeTextEdit=currentSnapshot();
             for(const auto& item:std::as_const(m_texts))if(item.id==hit)m_textOriginalPos=item.pos;
             m_textDragStartWorld=world;m_mode=InteractionMode::TextMove;invalidateStaticCache();emit stateChanged();return;
         }
         if(m_tool==ToolType::Text||(!hit.isEmpty()&&edit)) {
+            if(!hit.isEmpty()) {
+                for(const auto& item:std::as_const(m_texts))if(item.id==hit&&item.locked){clearSelection();m_selectedTextId=hit;invalidateStaticCache();emit stateChanged();return;}
+            }
             clearSelection();TextItem draft;draft.id=freshId();draft.pos=world;draft.fontSize=std::clamp(m_size*7.5,16.0,56.0);draft.color=m_color;
             for(const auto& item:std::as_const(m_texts))if(item.id==hit)draft=item;
             m_selectedTextId=hit;
@@ -2178,11 +2219,11 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
         createShapeVertices(m_activeShape,snap.point,snap.point,m_polygonSides,m_quadVariant);m_hasActiveShape=true;m_selectedShapeId=m_activeShape.id;update();return;
     }
     if(m_beautifyTimer)m_beautifyTimer->stop();
-    clearSelection();m_mode=InteractionMode::Draw;m_holdSnappedToShape=false;m_stabilizerFilter->reset();m_activeStroke={};
+    clearSelection();m_mode=InteractionMode::Draw;m_holdSnappedToShape=false;m_stabilizerFilter->reset();m_stabilizerFilter->setStrength(0.0);m_liveInk.reset();m_liveInkLayer=QImage();m_inkSmoother.reset(m_stabilizer>0?(1.5+7.0*m_stabilizer)/m_viewport.zoom:0.0);m_activeStroke={};
     m_activeStroke.id=freshId();m_activeStroke.tool=m_tool;m_activeStroke.color=m_color;m_activeStroke.size=m_size;
     m_activeStroke.linePattern=LinePattern::Solid;m_activeStroke.pressureProfile=m_pressureProfile;m_activeStroke.hasHardwarePressure=hardware;
     m_activeStroke.tipStyle=(m_tool==ToolType::Highlighter)?m_highlighterTip:m_penTip;
-    m_rawStartPoint=inputPoint(world,pressure,tiltX,tiltY);m_activeStroke.points.append(m_stabilizerFilter->filter(m_rawStartPoint));
+    m_rawStartPoint=inputPoint(world,pressure,tiltX,tiltY);m_activeStroke.points.append(m_stabilizerFilter->filter(m_rawStartPoint));m_inkSmoother.push(m_activeStroke);
     m_activeStroke.bounds=computeBounds(m_activeStroke.points,m_size*.7);m_hasActiveStroke=true;m_showEraserCursor=false;
     m_holdAnchorWorld=world;m_holdLastWorld=world;
     if(m_holdToShapeEnabled&&(m_tool==ToolType::Pen||m_tool==ToolType::Ballpoint))m_holdTimer->start();
@@ -2284,6 +2325,7 @@ void CanvasWidget::moveInput(const QPointF& screen,double pressure,double tiltX,
                     ? QPointF(towardStart?box.right():box.left(),box.center().y())
                     : QPointF(box.center().x(),towardStart?box.bottom():box.top());
                 const double oldSize=horizontal?box.width():box.height();
+                if(oldSize<1e-6)return;
                 const double change=(towardStart?-1:1)*(horizontal?delta.x():delta.y());
                 const double scale=std::clamp(1+change/oldSize,.05,20.0);
                 scaleShape(*shape,anchor,horizontal?scale:1,horizontal?1:scale);
@@ -2361,13 +2403,15 @@ void CanvasWidget::moveInput(const QPointF& screen,double pressure,double tiltX,
     if(m_mode==InteractionMode::Draw&&m_hasActiveStroke) {
         m_holdLastWorld=world;
         auto point=m_stabilizerFilter->filter(inputPoint(world,pressure,tiltX,tiltY));
-        if(mods.testFlag(Qt::ShiftModifier)){point=snappedPoint(m_rawStartPoint,point);m_activeStroke.points={m_rawStartPoint,point};}
+        bool fullRepaint=false;
+        if(mods.testFlag(Qt::ShiftModifier)){fullRepaint=true;m_liveInk.reset();point=snappedPoint(m_rawStartPoint,point);m_activeStroke.points={m_rawStartPoint,point};}
         else {
             const auto& last=m_activeStroke.points.back();
-            if(distance(QPointF(point.x,point.y),QPointF(last.x,last.y))>.001||std::abs(point.pressure-last.pressure)>.001||std::abs(point.tiltX-last.tiltX)>.01||std::abs(point.tiltY-last.tiltY)>.01)m_activeStroke.points.append(point);
+            if(distance(QPointF(point.x,point.y),QPointF(last.x,last.y))>.001||std::abs(point.pressure-last.pressure)>.001||std::abs(point.tiltX-last.tiltX)>.01||std::abs(point.tiltY-last.tiltY)>.01){m_activeStroke.points.append(point);m_inkSmoother.push(m_activeStroke);}
         }
         m_activeStroke.bounds=computeBounds(m_activeStroke.points,m_activeStroke.size*.7);
         if(m_holdToShapeEnabled&&(m_activeStroke.tool==ToolType::Pen||m_activeStroke.tool==ToolType::Ballpoint)&&distance(world,m_holdAnchorWorld)*m_viewport.zoom>4){m_holdAnchorWorld=world;m_holdTimer->start();}
+        if(!fullRepaint)m_liveInk.advance(m_activeStroke,m_liveInkLayer,m_viewport,QSize(qCeil(width()*devicePixelRatioF()),qCeil(height()*devicePixelRatioF())),devicePixelRatioF());
         update();return;
     }
     if(m_polylineActive) {
@@ -2441,6 +2485,7 @@ void CanvasWidget::triggerHoldToShape() {
 }
 void CanvasWidget::endInput(const QPointF& screen,Qt::KeyboardModifiers mods) {
     m_holdTimer->stop();
+    if(m_mode==InteractionMode::None)return;
     if(m_mode==InteractionMode::LaserTrail) {m_mode=InteractionMode::None;update();return;}
     if(m_mode==InteractionMode::TextMove) {
         moveInput(screen,0,0,0,false,false,mods);
@@ -2469,7 +2514,14 @@ void CanvasWidget::endInput(const QPointF& screen,Qt::KeyboardModifiers mods) {
     } else if(m_mode==InteractionMode::Draw&&m_hasActiveStroke) {
         const auto& last=m_activeStroke.points.back();auto end=inputPoint(screenToWorld(screen),last.pressure,last.tiltX,last.tiltY);
         if(mods.testFlag(Qt::ShiftModifier))m_activeStroke.points={m_rawStartPoint,snappedPoint(m_rawStartPoint,end)};
-        else if(distance({last.x,last.y},{end.x,end.y})>.001)m_activeStroke.points.append(end);
+        else if(distance({last.x,last.y},{end.x,end.y})>.001){m_activeStroke.points.append(end);m_inkSmoother.push(m_activeStroke);}
+        if(!mods.testFlag(Qt::ShiftModifier)&&(m_activeStroke.tool==ToolType::Pen||m_activeStroke.tool==ToolType::Ballpoint))
+            trimPenHooks(m_activeStroke,m_viewport.zoom);
+        if(m_activeStroke.tool==ToolType::Pen&&m_activeStroke.tipStyle==1&&!(mods&Qt::ShiftModifier))
+            taperPenFlick(m_activeStroke,m_viewport.zoom);
+        if(m_activeStroke.tool==ToolType::Highlighter&&m_activeStroke.tipStyle==2&&m_activeStroke.points.size()>=2)
+            m_activeStroke.points={m_activeStroke.points.front(),m_activeStroke.points.back()};
+        m_liveInk.reset();m_liveInkLayer=QImage();
         pushUndoSnapshot(currentSnapshot());m_activeStroke.bounds=computeBounds(m_activeStroke.points,m_activeStroke.size*.7);
         m_strokes.append(m_activeStroke);m_hasActiveStroke=false;
         if(m_mathBeautifyEnabled&&!mods.testFlag(Qt::ShiftModifier)
@@ -2606,38 +2658,41 @@ void CanvasWidget::tabletEvent(QTabletEvent* event) {
     const bool newlyPressedWrite = ((btns & writeBtn) && !(m_lastTabletButtons & writeBtn));
     m_lastTabletButtons = btns;
 
-    if (newlyPressedErase && event->pressure() <= 0.01) {
-        if (m_radialOpen) { m_radialOpen = false; updateCursorShape(); update(); }
-        switchTabletTool(ToolType::Eraser);
-        return;
-    }
-    if (newlyPressedWrite && event->pressure() <= 0.01) {
-        const qint64 now = nowMs();
-        if (m_radialOpen) {
-            m_radialOpen = false;
-            updateCursorShape();
-            update();
+    if (event->type() != QEvent::TabletRelease) {
+        if (newlyPressedErase && event->pressure() <= 0.01) {
+            if (m_radialOpen) { m_radialOpen = false; updateCursorShape(); update(); }
+            switchTabletTool(ToolType::Eraser);
             return;
         }
-        // 1 toque: SIEMPRE vuelve al lápiz inmediatamente (con debounce 70ms para evitar doble evento Wayland).
-        // 2 toques seguidos (70..420 ms) en el aire: abre la rueda de colores con puntero visible!
-        const qint64 dt = now - m_lastPenTriggerMs;
-        if (m_mode == InteractionMode::None && m_lastPenTriggerMs > 0 && dt >= 70 && dt <= 420) {
-            m_lastPenTriggerMs = 0;
-            m_radialOpen = true;
-            m_radialHoveredColor = -1;
-            QPointF c = event->position();
-            c.setX(std::clamp(c.x(), 90.0, std::max(90.0, width() - 90.0)));
-            c.setY(std::clamp(c.y(), 90.0, std::max(90.0, height() - 90.0)));
-            m_radialCenter = c;
-            m_radialCursorPos = c;
-            updateCursorShape();
-            update();
-        } else {
-            m_lastPenTriggerMs = now;
-            switchTabletTool(m_lastWriteTool);
+        if (newlyPressedWrite && event->pressure() <= 0.01) {
+            const qint64 now = nowMs();
+            if (m_radialOpen) {
+                m_radialOpen = false;
+                updateCursorShape();
+                update();
+                return;
+            }
+            // 1 toque: SIEMPRE vuelve al lápiz inmediatamente (con debounce 70ms para evitar doble evento Wayland).
+            // 2 toques seguidos (70..420 ms) en el aire: abre la rueda de colores con puntero visible!
+            const qint64 dt = now - m_lastPenTriggerMs;
+            if (m_mode == InteractionMode::None && m_lastPenTriggerMs > 0 && dt >= 70 && dt <= 420) {
+                m_lastPenTriggerMs = 0;
+                clearPenCursor();
+                m_radialOpen = true;
+                m_radialHoveredColor = -1;
+                QPointF c = event->position();
+                c.setX(std::clamp(c.x(), 90.0, std::max(90.0, width() - 90.0)));
+                c.setY(std::clamp(c.y(), 90.0, std::max(90.0, height() - 90.0)));
+                m_radialCenter = c;
+                m_radialCursorPos = c;
+                updateCursorShape();
+                update();
+            } else {
+                m_lastPenTriggerMs = now;
+                switchTabletTool(m_lastWriteTool);
+            }
+            return;
         }
-        return;
     }
     if (m_radialOpen && event->pressure() <= 0.01) {
         updateRadialHover(event->position());
@@ -2784,6 +2839,12 @@ void CanvasWidget::keyPressEvent(QKeyEvent* event) {
 void CanvasWidget::keyReleaseEvent(QKeyEvent* event) {
     if(event->key()==Qt::Key_Space&&!event->isAutoRepeat()){m_spaceHeld=false;updateCursorShape();event->accept();return;}
     QWidget::keyReleaseEvent(event);
+}
+void CanvasWidget::focusOutEvent(QFocusEvent* event) {
+    m_spaceHeld=false;
+    if(m_radialOpen){m_radialOpen=false;update();}
+    updateCursorShape();
+    QWidget::focusOutEvent(event);
 }
 void CanvasWidget::updateRadialHover(const QPointF& screenPos) {
     m_radialCursorPos=screenPos;

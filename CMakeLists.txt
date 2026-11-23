@@ -12,6 +12,8 @@ add_executable(finily
     src/core/Types.h
     src/engine/InkEngine.h
     src/engine/InkEngine.cpp
+    src/engine/LiveStroke.h
+    src/engine/LiveStroke.cpp
     src/engine/GeometryEngine.h
     src/engine/GeometryEngine.cpp
     src/engine/RegionGeometry.h

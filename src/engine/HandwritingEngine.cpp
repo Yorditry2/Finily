@@ -95,13 +95,23 @@ QRectF polylineBox(const QVector<QPointF>& pts) {
 }
 
 QRectF strokesBoundingBox(const QVector<QVector<QPointF>>& strokes) {
-    QRectF box;
+    double minX = std::numeric_limits<double>::max();
+    double minY = std::numeric_limits<double>::max();
+    double maxX = std::numeric_limits<double>::lowest();
+    double maxY = std::numeric_limits<double>::lowest();
+    bool hasPoint = false;
     for (const auto& s : strokes) {
-        const QRectF b = polylineBox(s);
-        if (!b.isNull())
-            box = box.isNull() ? b : box.united(b);
+        for (const QPointF& p : s) {
+            minX = std::min(minX, p.x());
+            maxX = std::max(maxX, p.x());
+            minY = std::min(minY, p.y());
+            maxY = std::max(maxY, p.y());
+            hasPoint = true;
+        }
     }
-    return box;
+    if (!hasPoint)
+        return {};
+    return QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
 }
 
 QVector<QPointF> extractRawPoints(const Stroke& s) {
@@ -526,8 +536,8 @@ QVector<QVector<QPointF>> HandwritingEngine::normalizeDirected(
     // Normalización anisotrópica suave: permite que un '2', '3', '5', '6', '9'
     // esbelto coincida con la plantilla igual que uno ancho (el aspectRatio se
     // valida por separado para no confundir '1' con '0').
-    const double scaleX = std::max(w, h * 0.28);
-    const double scaleY = std::max(h, w * 0.28);
+    const double scaleX = std::max({w, h * 0.28, 1e-4});
+    const double scaleY = std::max({h, w * 0.28, 1e-4});
     const QPointF center = box.center();
     QVector<QVector<QPointF>> out;
     out.reserve(strokes.size());
@@ -926,7 +936,8 @@ RecognitionResult HandwritingEngine::matchGeometric(const QVector<QVector<QPoint
                 res.canonicalInWorld = true;
                 const double xL = box.left(), xR = box.right();
                 const double cy = box.center().y();
-                const double halfGap = std::clamp(dy * 0.5, 3.8, wAvg * 0.30);
+                const double maxHalfGap = std::max(3.8, wAvg * 0.30);
+                const double halfGap = std::clamp(dy * 0.5, 3.8, maxHalfGap);
                 res.canonicalStrokes = {
                     linePolyline(xL, cy - halfGap, xR, cy - halfGap, 10),
                     linePolyline(xL, cy + halfGap, xR, cy + halfGap, 10),
@@ -1055,7 +1066,8 @@ RecognitionResult HandwritingEngine::matchGeometric(const QVector<QVector<QPoint
                 res.canonicalInWorld = true;
                 const double cy = bBar.center().y();
                 const double cx = bBar.center().x();
-                const double gap = std::clamp(0.5 * std::abs(d0.y() - d1.y()), 7.0, bBar.width() * 0.45);
+                const double maxGap = std::max(7.0, bBar.width() * 0.45);
+                const double gap = std::clamp(0.5 * std::abs(d0.y() - d1.y()), 7.0, maxGap);
                 res.canonicalStrokes = {
                     linePolyline(bBar.left(), cy, bBar.right(), cy, 10),
                     arcPolyline(cx, cy - gap, 2.1, 2.1, 0, 360, 10),
@@ -1537,12 +1549,22 @@ RecognitionResult HandwritingEngine::recognizeCluster(const QVector<QVector<QPoi
             return res;
     }
 
-    // 4. Fallback solo para letras en "Pasar a texto" (mathAndDigitsOnly == false)
-    if (!mathAndDigitsOnly && !inputDir.isEmpty()) {
+    // 4. Fallback para símbolos matemáticos no incluidos en la CNN (α, β, π, →)
+    // y letras en "Pasar a texto" (mathAndDigitsOnly == false).
+    if (!inputDir.isEmpty()) {
+        auto isExtraMathSymbol = [](const QString& lbl) {
+            return lbl == QLatin1String("α") || lbl == QLatin1String("β")
+                || lbl == QLatin1String("π") || lbl == QLatin1String("→");
+        };
         double bestDist = std::numeric_limits<double>::max();
         const GlyphTemplate* bestTpl = nullptr;
         for (const auto& tpl : m_templates) {
-            if (tpl.isMathOrDigit || tpl.strokeCount != rawStrokes.size())
+            if (tpl.isCustom || tpl.strokeCount != rawStrokes.size())
+                continue;
+            const bool extraMath = tpl.isMathOrDigit && isExtraMathSymbol(tpl.label);
+            if (mathAndDigitsOnly && !extraMath)
+                continue;
+            if (!mathAndDigitsOnly && tpl.isMathOrDigit && !extraMath)
                 continue;
             const double ratioDiff = std::abs(std::log(inputAspect / std::max(tpl.aspectRatio, 0.1)));
             if (ratioDiff > 0.95)
@@ -1553,7 +1575,8 @@ RecognitionResult HandwritingEngine::recognizeCluster(const QVector<QVector<QPoi
                 bestTpl = &tpl;
             }
         }
-        if (bestTpl && bestDist <= 0.22) {
+        const double limit = mathAndDigitsOnly ? 0.19 : 0.22;
+        if (bestTpl && bestDist <= limit) {
             RecognitionResult res;
             res.matched = true;
             res.label = bestTpl->label;
