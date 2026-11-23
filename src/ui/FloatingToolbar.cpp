@@ -2493,20 +2493,21 @@ void FloatingToolbar::buildStrokePopover() {
     geometryColumn->setSpacing(8);
     styleColumn->addWidget(m_strokeGeometrySection);
 
-    // Grosor dividido en 9 puntitos discretos sobre la línea (minimalista, sin números).
+    // Grosor dividido en 10 puntos sobre la línea.
     auto* sizeRow = new QHBoxLayout();
     sizeRow->setSpacing(10);
     m_sizeLabel = new QLabel("3 / 10", m_strokeStyleSection);
     m_sizeLabel->hide();
-    m_strokePreview = new StrokePreviewWidget(m_strokeStyleSection);
+    m_strokePreview = new StrokePreviewWidget(m_strokeGeometrySection);
     sizeRow->addWidget(m_strokePreview);
-    m_sizeSlider = new DotStepSlider(m_strokeStyleSection);
+    m_sizeSlider = new DotStepSlider(m_strokeGeometrySection);
     m_sizeSlider->setRange(1, 10);
     m_sizeSlider->setPageStep(1);
     m_sizeSlider->setSingleStep(1);
     m_sizeSlider->setToolTip("Grosor del trazo");
     sizeRow->addWidget(m_sizeSlider, 1);
     geometryColumn->addLayout(sizeRow);
+    column->addWidget(m_strokeStyleSection);
 
     connect(m_sizeSlider, &QSlider::valueChanged, this, [this](int level) {
         if (m_updatingUi || !m_canvas)
@@ -2543,7 +2544,7 @@ void FloatingToolbar::buildStrokePopover() {
     connect(m_stabilizerSlider, &QSlider::valueChanged, this, [this](int level) {
         if (m_updatingUi || !m_canvas)
             return;
-        m_canvas->setStabilizer(level / 9.0);
+        m_canvas->setStabilizer(double(level) / m_stabilizerSlider->maximum());
     });
     column->addWidget(m_stabilizerRow);
 
@@ -3797,6 +3798,7 @@ void FloatingToolbar::positionChildren() {
         const int y = m_dockPos == DockPos::Abajo ? 18 : height() - m_toastPill->height() - 64;
         m_toastPill->move(std::max(6, (width() - m_toastPill->width()) / 2), y);
     }
+    positionOpenPopover();
     updateOverlayMask();
 }
 
@@ -3828,24 +3830,7 @@ void FloatingToolbar::tabletEvent(QTabletEvent* event) {
     event->ignore();
 }
 
-// Abre el popover anclado a su botón de la pill (encima si la barra está
-// acoplada abajo, debajo si está arriba), en el espacio de coordenadas del
-// propio overlay (posicionamiento nativo, sin ventanas flotantes que
-// Wayland/Hyprland malposicione). Desliza 8 px hacia su lugar final con
-// 140 ms OutCubic; sin fundido: el QGraphicsDropShadowEffect ya ocupa el
-// único slot de efecto del widget y jamás se sobreescribe.
-void FloatingToolbar::openPopover(GlassCapsule* popover, QWidget* anchor) {
-    Q_UNUSED(anchor); // el anclaje lo decide la posición del dock (positionChildren)
-    if (!popover || !anchor)
-        return;
-    if (m_openPopover == popover) { // segundo clic: cerrar
-        closePopovers();
-        return;
-    }
-    closePopovers();
-    m_openPopover = popover;
-
-    popover->adjustSize();
+QPoint FloatingToolbar::popoverPosition(const GlassCapsule* popover, const QWidget* anchor) const {
     const int margin = 12;
     // Los popovers abren LIMPIOS junto al cromo: a la derecha del dock
     // vertical (bajo la pill de utilidades), debajo del dock acoplado arriba,
@@ -3874,21 +3859,48 @@ void FloatingToolbar::openPopover(GlassCapsule* popover, QWidget* anchor) {
         y = std::min(y, std::max(margin, m_dock->geometry().top() - popover->height() - 10));
     x = std::clamp(x, margin, std::max(margin, width() - popover->width() - margin));
     y = std::clamp(y, margin, std::max(margin, height() - popover->height() - margin));
-    const QPoint finalPos(x, y);
-    // Desliza 8 px hacia su lugar final (desde el cromo que lo ancla).
-    const QPoint startPos = (m_topRight && anchor->parentWidget() == m_topRight) ? QPoint(x, y - 8)
-                            : m_dockPos == DockPos::Izquierda ? QPoint(x - 8, y)
-                            : m_dockPos == DockPos::Abajo   ? QPoint(x, y - 8)
-                                                            : QPoint(x, y + 8);
-    popover->move(startPos);
+    return QPoint(x, y);
+}
+
+void FloatingToolbar::positionOpenPopover() {
+    if (!m_openPopover)
+        return;
+    m_openPopover->adjustSize();
+    const QPoint target = popoverPosition(m_openPopover, m_popoverAnchor);
+    if (m_popoverAnim && m_popoverAnim->state() == QAbstractAnimation::Running) {
+        if (m_popoverAnim->endValue().toPoint() == target)
+            return;
+        m_popoverAnim->stop();
+    }
+    m_openPopover->move(target);
+}
+
+// Abre el panel junto a su botón en las coordenadas del overlay.
+void FloatingToolbar::openPopover(GlassCapsule* popover, QWidget* anchor) {
+    if (!popover || !anchor)
+        return;
+    const bool wasOpen = m_openPopover == popover;
+    closePopovers();
+    if (wasOpen)
+        return;
+    m_openPopover = popover;
+    m_popoverAnchor = anchor;
+
+    // Al mostrar el panel, Qt vuelve a medir las secciones que cambiaron mientras estaba oculto.
     popover->show();
+    popover->adjustSize();
+    const QPoint finalPos = popoverPosition(popover, anchor);
+    // Desliza 8 px hacia su lugar final (desde el cromo que lo ancla).
+    QPoint offset(0, 8);
+    if ((m_topRight && anchor->parentWidget() == m_topRight) || m_dockPos == DockPos::Abajo)
+        offset = QPoint(0, -8);
+    else if (m_dockPos == DockPos::Izquierda)
+        offset = QPoint(-8, 0);
+    const QPoint startPos = finalPos + offset;
+    popover->move(startPos);
     popover->raise();
     updateOverlayMask();
 
-    if (m_popoverAnim) {
-        m_popoverAnim->stop();
-        m_popoverAnim->deleteLater();
-    }
     m_popoverAnim = new QPropertyAnimation(popover, "pos", this);
     m_popoverAnim->setDuration(140);
     m_popoverAnim->setEasingCurve(QEasingCurve::OutCubic);
@@ -3901,8 +3913,14 @@ void FloatingToolbar::openPopover(GlassCapsule* popover, QWidget* anchor) {
 
 void FloatingToolbar::closePopovers() {
     if (m_openPopover) {
+        if (m_popoverAnim) {
+            m_popoverAnim->stop();
+            m_popoverAnim->deleteLater();
+            m_popoverAnim = nullptr;
+        }
         m_openPopover->close();
         m_openPopover = nullptr;
+        m_popoverAnchor = nullptr;
         updateOverlayMask();
     }
 }
@@ -4000,19 +4018,12 @@ void FloatingToolbar::setDockPosition(DockPos pos) {
                                                                    : "bottom");
 
     GlassCapsule* open = m_openPopover;
+    QWidget* anchor = m_popoverAnchor;
     closePopovers();
     positionChildren();
     refreshFromCanvas(); // sincroniza los botones Izquierda/Arriba/Abajo
-    if (open == m_strokePopover && !m_writingBtns.isEmpty()) {
-        const auto index = m_canvas ? m_writingKinds.indexOf(m_canvas->tool()) : -1;
-        openPopover(m_strokePopover, m_writingBtns.at(std::max<qsizetype>(0, index)));
-    }
-    else if (open == m_paperPopover)
-        openPopover(m_paperPopover, m_paperBtn);
-    else if (open == m_shapesPopover)
-        openPopover(m_shapesPopover, m_shapeBtn);
-    else if (open == m_filePopover)
-        openPopover(m_filePopover, m_fileBtn);
+    if (open)
+        openPopover(open, anchor);
 }
 
 void FloatingToolbar::toggleCleanUi() {
@@ -4354,7 +4365,7 @@ void FloatingToolbar::refreshFromCanvas() {
         m_patternBtns.at(i)->setEnabled(pattern != LinePattern::Dimension);
     }
 
-    const int stabilizerLevel = std::clamp(qRound(m_canvas->stabilizer() * 10.0), 0, 10);
+    const int stabilizerLevel = qRound(m_canvas->stabilizer() * m_stabilizerSlider->maximum());
     if (m_stabilizerSlider->value() != stabilizerLevel)
         m_stabilizerSlider->setValue(stabilizerLevel);
     m_stabilizerLabel->setText(QString("%1 / 10").arg(stabilizerLevel));
@@ -4409,6 +4420,12 @@ void FloatingToolbar::refreshFromCanvas() {
     if (m_eraserSizeSlider->value() != eraserLevel)
         m_eraserSizeSlider->setValue(eraserLevel);
     m_eraserSizeLabel->setText(QString("%1 / 10").arg(eraserLevel));
+    if (m_openPopover == m_strokePopover) {
+        const QRect oldGeometry = m_strokePopover->geometry();
+        positionOpenPopover();
+        if (m_strokePopover->geometry() != oldGeometry)
+            updateOverlayMask();
+    }
 
     // Popover "Papel"
     const ThemeId activeTheme = m_canvas->themeId();

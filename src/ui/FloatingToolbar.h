@@ -125,6 +125,8 @@ private:
     void refreshIcons();
 
     void positionChildren();
+    QPoint popoverPosition(const GlassCapsule* popover, const QWidget* anchor) const;
+    void positionOpenPopover();
     void updateOverlayMask();
     void openPopover(GlassCapsule* popover, QWidget* anchor);
     void closePopovers();
@@ -293,6 +295,7 @@ private:
     QTimer* m_clearTimer = nullptr;
 
     GlassCapsule* m_openPopover = nullptr;
+    QWidget* m_popoverAnchor = nullptr;
 
     // Toast flotante estilo StarNote (cápsula centrada con fundido automático).
     GlassCapsule* m_toastPill = nullptr;
