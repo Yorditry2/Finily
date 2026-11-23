@@ -1,0 +1,9 @@
+Finily para Windows incluye bibliotecas compartidas de Qt, distribuidas por MSYS2.
+Los textos de las licencias están en esta carpeta. Las DLL se pueden reemplazar
+por versiones compatibles.
+
+Qt Base: https://packages.msys2.org/package/mingw-w64-ucrt-x86_64-qt6-base
+Qt SVG: https://packages.msys2.org/package/mingw-w64-ucrt-x86_64-qt6-svg
+Qt PDF: https://packages.msys2.org/package/mingw-w64-ucrt-x86_64-qt6-pdf
+Fuentes y recetas de compilación de MSYS2: https://github.com/msys2/MINGW-packages
+Avisos de terceros de Qt: https://doc.qt.io/qt-6.12/licenses-used-in-qt.html

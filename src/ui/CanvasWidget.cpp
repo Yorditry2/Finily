@@ -394,9 +394,9 @@ void syncWorkingPage(QVector<PageData>& pages,int& index,const DocumentSnapshot&
 // vértice apunta hacia donde arrastras (así se puede girar al crearlo).
 QVector<QPointF> regularPolygon(QPointF center,QPointF end,int sides) {
     const QPointF d=end-center;const double radius=std::hypot(d.x(),d.y());
-    const double start=radius<1e-6?-M_PI/2:std::atan2(d.y(),d.x());
+    const double start=radius<1e-6?-std::numbers::pi/2:std::atan2(d.y(),d.x());
     QVector<QPointF> out;out.reserve(sides);
-    for(int i=0;i<sides;++i){const double a=start+2.0*M_PI*i/sides;out.append(center+QPointF(std::cos(a),std::sin(a))*radius);}
+    for(int i=0;i<sides;++i){const double a=start+2.0*std::numbers::pi*i/sides;out.append(center+QPointF(std::cos(a),std::sin(a))*radius);}
     return out;
 }
 void createShapeVertices(ShapeItem& shape,QPointF origin,QPointF end,int polygonSides=6,int quadVariant=0) {
@@ -1688,7 +1688,10 @@ void CanvasWidget::rebuildStaticCache() {
     m_staticCacheDirty=false;
 }
 void CanvasWidget::paintEvent(QPaintEvent*) {
-    if(m_staticCacheDirty||m_staticCache.size()!=QSize(qCeil(width()*devicePixelRatioF()),qCeil(height()*devicePixelRatioF()))||m_staticCache.devicePixelRatio()!=devicePixelRatioF())rebuildStaticCache();
+    const double dpr = devicePixelRatioF();
+    const QSize pixels(qCeil(width() * dpr), qCeil(height() * dpr));
+    if (m_staticCacheDirty || m_staticCache.size() != pixels || m_staticCache.devicePixelRatio() != dpr)
+        rebuildStaticCache();
     const bool liveHighlight=(m_hasActiveStroke&&m_activeStroke.tool==ToolType::Highlighter)||!m_selectedImageId.isEmpty()
         ||std::any_of(m_strokes.cbegin(),m_strokes.cend(),[&](const Stroke& stroke){return m_selectedStrokeIds.contains(stroke.id)&&stroke.tool==ToolType::Highlighter;})
         ||std::any_of(m_shapes.cbegin(),m_shapes.cend(),[&](const ShapeItem& shape){return (m_selectedShapeIds.contains(shape.id)||shape.id==m_selectedShapeId)&&shape.kind==ShapeKind::ShadedRegion;});
@@ -1699,8 +1702,13 @@ void CanvasWidget::paintEvent(QPaintEvent*) {
     for(const auto& shape:m_shapes)if(shape.kind==ShapeKind::ShadedRegion&&(m_selectedShapeIds.contains(shape.id)||shape.id==m_selectedShapeId))drawShape(p,shape);
     for(const auto& stroke:m_strokes)if(m_selectedStrokeIds.contains(stroke.id)&&stroke.tool==ToolType::Highlighter)drawStroke(p,stroke);
     if(m_hasActiveStroke) {
+        if (m_liveInkPending) {
+            m_liveInk.advance(m_activeStroke, m_liveInkLayer, m_viewport, pixels, dpr);
+            m_liveInkPending = false;
+        }
         const Stroke live=withPredictedTip(m_activeStroke,m_viewport.zoom);
-        if(LiveInkRenderer::eligible(live)&&m_liveInk.usable(m_viewport,m_liveInkLayer.size())) {
+        if (LiveInkRenderer::eligible(live) && m_liveInk.usable(m_viewport, pixels)
+            && m_liveInkLayer.devicePixelRatio() == dpr) {
             p.save();p.resetTransform();p.drawImage(QPointF(0,0),m_liveInkLayer);p.restore();
             m_liveInk.drawTail(p,live);
         } else drawStroke(p,live);
@@ -2224,7 +2232,9 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
     m_activeStroke.linePattern=LinePattern::Solid;m_activeStroke.pressureProfile=m_pressureProfile;m_activeStroke.hasHardwarePressure=hardware;
     m_activeStroke.tipStyle=(m_tool==ToolType::Highlighter)?m_highlighterTip:m_penTip;
     m_rawStartPoint=inputPoint(world,pressure,tiltX,tiltY);m_activeStroke.points.append(m_stabilizerFilter->filter(m_rawStartPoint));m_inkSmoother.push(m_activeStroke);
-    m_activeStroke.bounds=computeBounds(m_activeStroke.points,m_size*.7);m_hasActiveStroke=true;m_showEraserCursor=false;
+    m_liveStrokeBounds = QRectF(m_activeStroke.points.front().x, m_activeStroke.points.front().y, 0, 0);
+    m_liveInkPending = false;
+    m_hasActiveStroke=true;m_showEraserCursor=false;
     m_holdAnchorWorld=world;m_holdLastWorld=world;
     if(m_holdToShapeEnabled&&(m_tool==ToolType::Pen||m_tool==ToolType::Ballpoint))m_holdTimer->start();
     Q_UNUSED(mods);if(m_activeStroke.tool==ToolType::Highlighter)invalidateStaticCache();else update();
@@ -2402,17 +2412,44 @@ void CanvasWidget::moveInput(const QPointF& screen,double pressure,double tiltX,
     }
     if(m_mode==InteractionMode::Draw&&m_hasActiveStroke) {
         m_holdLastWorld=world;
-        auto point=m_stabilizerFilter->filter(inputPoint(world,pressure,tiltX,tiltY));
-        bool fullRepaint=false;
-        if(mods.testFlag(Qt::ShiftModifier)){fullRepaint=true;m_liveInk.reset();point=snappedPoint(m_rawStartPoint,point);m_activeStroke.points={m_rawStartPoint,point};}
-        else {
-            const auto& last=m_activeStroke.points.back();
-            if(distance(QPointF(point.x,point.y),QPointF(last.x,last.y))>.001||std::abs(point.pressure-last.pressure)>.001||std::abs(point.tiltX-last.tiltX)>.01||std::abs(point.tiltY-last.tiltY)>.01){m_activeStroke.points.append(point);m_inkSmoother.push(m_activeStroke);}
+        if (m_holdToShapeEnabled && (m_activeStroke.tool == ToolType::Pen || m_activeStroke.tool == ToolType::Ballpoint)
+            && distance(world, m_holdAnchorWorld) * m_viewport.zoom > 4) {
+            m_holdAnchorWorld = world;
+            m_holdTimer->start();
         }
-        m_activeStroke.bounds=computeBounds(m_activeStroke.points,m_activeStroke.size*.7);
-        if(m_holdToShapeEnabled&&(m_activeStroke.tool==ToolType::Pen||m_activeStroke.tool==ToolType::Ballpoint)&&distance(world,m_holdAnchorWorld)*m_viewport.zoom>4){m_holdAnchorWorld=world;m_holdTimer->start();}
-        if(!fullRepaint)m_liveInk.advance(m_activeStroke,m_liveInkLayer,m_viewport,QSize(qCeil(width()*devicePixelRatioF()),qCeil(height()*devicePixelRatioF())),devicePixelRatioF());
-        update();return;
+        auto point = m_stabilizerFilter->filter(inputPoint(world, pressure, tiltX, tiltY));
+        if (mods.testFlag(Qt::ShiftModifier)) {
+            m_liveInk.reset();
+            m_liveInkPending = false;
+            point = snappedPoint(m_rawStartPoint, point);
+            m_activeStroke.points = {m_rawStartPoint, point};
+        } else {
+            const auto& last = m_activeStroke.points.back();
+            if (distance({point.x, point.y}, {last.x, last.y}) <= .001
+                && std::abs(point.pressure - last.pressure) <= .001
+                && std::abs(point.tiltX - last.tiltX) <= .01 && std::abs(point.tiltY - last.tiltY) <= .01)
+                return;
+            m_activeStroke.points.append(point);
+            m_inkSmoother.push(m_activeStroke);
+            // Qt agrupa los update(): prepara la capa de tinta una vez al pintar.
+            m_liveInkPending = true;
+        }
+        // Conservar también la zona del trazo anterior al alternar Shift.
+        m_liveStrokeBounds.setCoords(std::min(m_liveStrokeBounds.left(), point.x),
+                                    std::min(m_liveStrokeBounds.top(), point.y),
+                                    std::max(m_liveStrokeBounds.right(), point.x),
+                                    std::max(m_liveStrokeBounds.bottom(), point.y));
+        const double zoom = m_viewport.zoom;
+        const QPointF offset(m_viewport.x, m_viewport.y);
+        const QRectF screenBounds(m_liveStrokeBounds.topLeft() * zoom + offset,
+                                  m_liveStrokeBounds.bottomRight() * zoom + offset);
+        // Catmull-Rom puede exceder los puntos hasta 1/6 del rango de cada eje.
+        // El margen fijo cubre la punta predicha y el antialiasing.
+        const double pad = m_activeStroke.size * zoom + 20.0;
+        const double padX = screenBounds.width() / 6.0 + pad;
+        const double padY = screenBounds.height() / 6.0 + pad;
+        update(screenBounds.adjusted(-padX, -padY, padX, padY).toAlignedRect());
+        return;
     }
     if(m_polylineActive) {
         m_polylineSnapClose=m_polylineVertices.size()>=3&&distance(world,m_polylineVertices.front())*m_viewport.zoom<=14;

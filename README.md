@@ -1,6 +1,6 @@
 # Finily
 
-**Pizarra digital nativa y anotador de PDF para Linux** (C++20 + Qt 6), diseñada para clases, apuntes y resolución de ejercicios con **tableta gráfica** (Wacom, Huion, XP-Pen, etc.) o **mouse** — compatible con **Wayland** y **X11**.
+**Pizarra digital nativa y anotador de PDF para Linux y Windows x64** (C++20 + Qt 6), diseñada para clases, apuntes y resolución de ejercicios con **tableta gráfica** (Wacom, Huion, XP-Pen, etc.) o **mouse**. En Linux es compatible con **Wayland** y **X11**.
 
 ## Características principales
 
@@ -26,7 +26,7 @@
   sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtsvg-devel qt6-qtwebengine-devel
   ```
 
-## Compilar y ejecutar
+## Compilar y ejecutar en Linux
 
 ```bash
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -38,6 +38,24 @@ Instalación opcional para tu usuario:
 ```bash
 install -m 755 build/finily "$HOME/.local/bin/finily"
 ```
+
+## Instalador para Windows x64
+
+Descarga `Finily-Setup-x64.exe` desde [Releases](../../releases). El instalador incluye Qt y añade Finily al menú Inicio. La integración directa de los botones físicos del pad Wacom usa el controlador de Linux.
+
+Para compilar el instalador desde el código fuente, instala las dependencias en la terminal de [MSYS2 UCRT64](https://www.msys2.org/docs/environments/):
+
+```bash
+pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,nsis,qt6-base,qt6-svg,qt6-pdf}
+```
+
+Desde el símbolo del sistema de Windows, ejecuta en la raíz del proyecto:
+
+```bat
+windows\Build-Installer.cmd C:\msys64\ucrt64
+```
+
+El instalador se genera en `build-windows\Finily-Setup-x64.exe`.
 
 ## Atajos de teclado
 

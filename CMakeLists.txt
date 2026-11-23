@@ -38,3 +38,8 @@ add_executable(finily
 
 target_include_directories(finily PRIVATE src)
 target_link_libraries(finily PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Pdf Qt6::Svg)
+
+if(WIN32)
+    set_target_properties(finily PROPERTIES WIN32_EXECUTABLE TRUE)
+    install(TARGETS finily RUNTIME DESTINATION .)
+endif()

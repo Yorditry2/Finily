@@ -1425,7 +1425,7 @@ std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke) {
                         const double a0 = std::atan2(d0.y(), d0.x());
                         QVector<QPointF> poly;
                         for (int i = 0; i < n; ++i) {
-                            const double a = a0 + 2.0 * M_PI * i / n;
+                            const double a = a0 + 2.0 * std::numbers::pi * i / n;
                             poly.append(centroid + QPointF(std::cos(a), std::sin(a)) * meanR);
                         }
                         return finish(ShapeKind::Polyline, poly, true);

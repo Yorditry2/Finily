@@ -23,12 +23,15 @@ int main(int argc, char* argv[]) {
     QApplication::setOrganizationDomain("finily.app");
     QApplication::setApplicationVersion("0.1.0");
 
-    // Tipografía de interfaz: Inter si está instalada (aspecto limpio y
-    // premium); si no, la sans del sistema.
+    // Inter si está instalada, con respaldo de la tipografía del sistema.
     QFont uiFont = QApplication::font();
+#ifdef Q_OS_WIN
+    uiFont.setFamilies({QStringLiteral("Inter"), QStringLiteral("Segoe UI"), uiFont.family()});
+#else
     uiFont.setFamilies({QStringLiteral("Inter"), QStringLiteral("SF Pro Text"),
                         QStringLiteral("Noto Sans"), QStringLiteral("sans-serif")});
     uiFont.setHintingPreference(QFont::PreferNoHinting);
+#endif
     QApplication::setFont(uiFont);
 
     finily::MainWindow window;

@@ -7,6 +7,7 @@
 #include <QPropertyAnimation>
 #include <QtMath>
 #include <cmath>
+#include <numbers>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -254,7 +255,7 @@ QIcon homeGlyph(const QString& kind, const QColor& color) {
     } else if (kind == QLatin1String("sun")) {
         p.drawEllipse(QPointF(10, 10), 3.6, 3.6);
         for (int i = 0; i < 8; ++i) {
-            const qreal a = i * M_PI / 4.0;
+            const qreal a = i * std::numbers::pi / 4.0;
             p.drawLine(QPointF(10 + std::cos(a) * 6.2, 10 + std::sin(a) * 6.2),
                        QPointF(10 + std::cos(a) * 8.2, 10 + std::sin(a) * 8.2));
         }

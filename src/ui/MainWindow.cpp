@@ -14,16 +14,20 @@
 #include <QMessageBox>
 #include <QRegularExpression>
 #include <QShortcut>
-#include <QSocketNotifier>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QWidget>
 
+#include <functional>
+
+#ifdef Q_OS_LINUX
+#include <QSocketNotifier>
+
 #include <cerrno>
 #include <fcntl.h>
-#include <functional>
 #include <linux/joystick.h>
 #include <unistd.h>
+#endif
 
 namespace finily {
 
@@ -181,13 +185,16 @@ MainWindow::MainWindow() {
     });
 
     installShortcuts();
+#ifdef Q_OS_LINUX
     setupWacomPadListener();
+#endif
 
     // La sesión anterior ya la restauró el constructor de CanvasWidget.
     m_toolbar->refreshFromCanvas();
 }
 
 MainWindow::~MainWindow() {
+#ifdef Q_OS_LINUX
     if (m_padNotifier) {
         m_padNotifier->setEnabled(false);
         delete m_padNotifier;
@@ -197,6 +204,7 @@ MainWindow::~MainWindow() {
         ::close(m_padFd);
         m_padFd = -1;
     }
+#endif
 }
 
 void MainWindow::openInitialFile(const QString& path) {
@@ -242,6 +250,7 @@ void MainWindow::showHomePage() {
     setWindowTitle(tr("Finily — Biblioteca"));
 }
 
+#ifdef Q_OS_LINUX
 void MainWindow::setupWacomPadListener() {
     // Auto-detecta el dispositivo /dev/input/js* de "Wacom ... Pad" (plug-and-play sin root).
     QDir sysInput("/sys/class/input");
@@ -335,6 +344,8 @@ void MainWindow::onWacomPadReadable() {
         }
     }
 }
+
+#endif
 
 void MainWindow::layoutChildren() {
     if (!m_container)

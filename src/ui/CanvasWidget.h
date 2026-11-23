@@ -331,6 +331,8 @@ private:
     bool m_spaceHeld = false;
     bool m_hasActiveStroke = false;
     Stroke m_activeStroke;
+    QRectF m_liveStrokeBounds;
+    bool m_liveInkPending = false;
     StrokePoint m_rawStartPoint;
     std::unique_ptr<VelocityGaussianStabilizer> m_stabilizerFilter;
 

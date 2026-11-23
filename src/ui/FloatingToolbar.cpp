@@ -49,6 +49,7 @@
 #include <QVariantAnimation>
 
 #include <algorithm>
+#include <numbers>
 
 namespace finily {
 namespace {
@@ -160,7 +161,7 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
     } else if (kind == "shape-polygon") {
         QPolygonF hex;
         for (int i = 0; i < 6; ++i) {
-            const double a = M_PI / 6.0 + i * M_PI / 3.0;
+            const double a = std::numbers::pi / 6.0 + i * std::numbers::pi / 3.0;
             hex << QPointF(11.0 + 7.4 * std::cos(a), 11.0 + 7.4 * std::sin(a));
         }
         painter.drawPolygon(hex);
@@ -183,7 +184,7 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
         const int n = kind.mid(11).toInt();
         QPolygonF poly;
         for (int i = 0; i < n; ++i) {
-            const double a = -M_PI / 2.0 + i * 2.0 * M_PI / n;
+            const double a = -std::numbers::pi / 2.0 + i * 2.0 * std::numbers::pi / n;
             poly << QPointF(11.0 + 7.4 * std::cos(a), 11.0 + 7.4 * std::sin(a));
         }
         painter.drawPolygon(poly);

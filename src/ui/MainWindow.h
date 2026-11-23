@@ -2,7 +2,9 @@
 
 #include <QMainWindow>
 
+#ifdef Q_OS_LINUX
 class QSocketNotifier;
+#endif
 class QStackedWidget;
 
 namespace finily {
@@ -35,8 +37,10 @@ protected:
 
 private:
     void installShortcuts();
+#ifdef Q_OS_LINUX
     void setupWacomPadListener();
     void onWacomPadReadable();
+#endif
     void layoutChildren();
     void updateWindowTitle();
     void showEditorPage();
@@ -47,8 +51,10 @@ private:
     HomeScreen* m_homeScreen = nullptr;
     CanvasWidget* m_canvas = nullptr;
     FloatingToolbar* m_toolbar = nullptr;
+#ifdef Q_OS_LINUX
     int m_padFd = -1;
     QSocketNotifier* m_padNotifier = nullptr;
+#endif
 };
 
 } // namespace finily
