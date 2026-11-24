@@ -17,6 +17,8 @@ InstallDir "$LOCALAPPDATA\Programs\Finily"
 !define MUI_FINISHPAGE_TITLE "Instalación completada"
 !define MUI_FINISHPAGE_TEXT "Finily está listo. Puedes abrirlo desde el menú Inicio."
 !define MUI_FINISHPAGE_BUTTON "Finalizar"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\app\finily.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Abrir Finily ahora"
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -36,11 +38,17 @@ Function ${Prefix}LockMaintenance
 FunctionEnd
 
 Function ${Prefix}WaitForFinily
+    StrCpy $2 0
     check:
     IfFileExists "$INSTDIR\app\finily.exe" 0 done
     ; Comprobar el acceso de escritura sin modificar el ejecutable.
     System::Call 'kernel32::CreateFileW(w "$INSTDIR\app\finily.exe", i 0x40000000, i 7, p 0, i 3, i 0, p 0) p.r0'
     ${If} $0 == -1
+        ${If} $2 < 24
+            IntOp $2 $2 + 1
+            Sleep 250
+            Goto check
+        ${EndIf}
         MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Los archivos de Finily están en uso o bloqueados. Guarda tu trabajo, cierra Finily y pulsa Reintentar, o cancela." /SD IDCANCEL IDRETRY check
         SetErrorLevel 2
         Quit
@@ -89,12 +97,6 @@ Section "Finily"
     ClearErrors
     SetOutPath "${APP_STAGE}"
     IfErrors failed
-    ; Conservar los archivos que el usuario haya colocado en el directorio instalado.
-    IfFileExists "$INSTDIR\app\*.*" 0 extract
-    CopyFiles /SILENT "$INSTDIR\app\*.*" "${APP_STAGE}"
-    IfErrors failed
-
-    extract:
     File /r "${PAYLOAD_DIR}\*"
     IfErrors failed
     SetOutPath "$INSTDIR"

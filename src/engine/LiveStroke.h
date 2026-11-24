@@ -27,11 +27,12 @@ bool taperPenFlick(Stroke& stroke, double zoom);
 // punta queda siempre exactamente bajo el lápiz. Los extremos no se mueven.
 class InkSmoother {
 public:
-    static constexpr int kRadius = 3;            // vecinos a cada lado
-    void reset(double sigmaWorld);              // sigma <= 0: desactivado
+    static constexpr int kMaxRadius = 8;         // máximo de vecinos a cada lado (<= 8 para respetar LiveInkRenderer)
+    void reset(double sigmaWorld, int radius = kMaxRadius); // sigma <= 0: desactivado
     void push(Stroke& stroke);                  // llamar tras añadir un punto
 private:
     QVector<QPointF> m_raw;
     double m_sigma = 0;
+    int m_radius = kMaxRadius;
 };
 } // namespace finily

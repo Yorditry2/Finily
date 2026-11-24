@@ -3,6 +3,7 @@
 #include "core/Types.h"
 #include "engine/InkEngine.h"
 #include "engine/LiveStroke.h"
+#include "engine/StickerLibrary.h"
 #include <QElapsedTimer>
 #include <QImage>
 #include <QPolygonF>
@@ -11,6 +12,7 @@
 #include <QWidget>
 #include <QVariantAnimation>
 #include <algorithm>
+#include <future>
 #include <memory>
 
 namespace finily {
@@ -46,6 +48,8 @@ public:
     void setQuadVariant(int variant) { m_quadVariant = std::clamp(variant, 0, 4); emit stateChanged(); }
     int solidKind() const { return m_solidKind; }
     void setSolidKind(int kind) { m_solidKind = std::clamp(kind, 0, 9); emit stateChanged(); }
+    QString congruenceMarkSpec() const { return m_congruenceMarkSpec; }
+    void setCongruenceMarkSpec(const QString& spec) { m_congruenceMarkSpec = spec; emit stateChanged(); }
     bool isSelectionLocked() const;
     void toggleLockSelection();
     SelectionStyle selectionStyle() const;
@@ -83,11 +87,23 @@ public:
     int highlighterTip() const { return m_highlighterTip; }
     EraserMode eraserMode() const { return m_eraserMode; }
     double eraserSize() const { return m_eraserSize; }
+    bool eraserPreserveShapes() const { return m_eraserPreserveShapes; }
+    bool eraserOnlyHighlight() const { return m_eraserOnlyHighlight; }
+    void setEraserPreserveShapes(bool preserve);
+    void setEraserOnlyHighlight(bool onlyHighlight);
+    bool hasSelectedAxes() const;
+    QString selectedAxesFunction() const;
+    void setSelectedAxesFunction(const QString& expr);
+    void createTableShape(int rows, int cols);
+    bool insertStickerTemplate(const QString& stickerId, StickerStyle style);
+    bool saveSelectionAsSticker(const QString& title, const QString& category = QStringLiteral("Mis ★"));
     QColor inkColor() const { return m_color; }
     double strokeSize() const { return m_size; }
     LinePattern linePattern() const { return m_linePattern; }
     LineEnding lineEnding() const { return m_lineEnding; }
     double stabilizer() const { return m_stabilizer; }
+    double highlighterOpacity() const { return m_highlighterOpacity; }
+    double pressureSensitivity() const { return m_pressureSensitivity; }
     PressureProfile pressureProfile() const { return m_pressureProfile; }
     ThemeId themeId() const { return m_themeId; }
     BackgroundTemplate backgroundTemplate() const;
@@ -120,12 +136,15 @@ public:
     void setLinePattern(LinePattern pattern);
     void setLineEnding(LineEnding ending);
     void setStabilizer(double strength); // [0.0, 1.0]
+    void setHighlighterOpacity(double opacity); // [0.10, 0.70]
+    void setPressureSensitivity(double sensitivity); // [0.0, 1.0]
     void setPressureProfile(PressureProfile profile);
     void setThemeId(ThemeId themeId);
     void setBackgroundTemplate(BackgroundTemplate tpl);
     void setPageFormat(PageFormat format);
 
     // Shape, polyline, lasso, image & PDF actions
+    void stampCongruenceMarkAt(const QPointF& worldPos, const QString& markSpec);
     void finishActivePolyline(bool closeShape = false);
     void cancelActivePolyline();
     void deleteSelectedShape();
@@ -135,9 +154,14 @@ public:
     void cutSelection();
     void groupSelection();
     void ungroupSelection();
+    void flipSelectionHorizontal();
+    void flipSelectionVertical();
+    void bringSelectionToFront();
+    void sendSelectionToBack();
+    void insertVerticalSpaceAtSelection(double deltaY = 140.0);
+    void cropSelectionToNewPage();
     void straightenSelection();
     void convertSelectionToText();
-    bool saveSelectionAsTemplate(const QString& label);
     void clearSelection();
     void cancelInteraction();
     bool pasteFromClipboard();
@@ -181,6 +205,7 @@ signals:
     void stateChanged();
     void pageStructureChanged();
     void selectionMenuRequested(const QPoint& globalPosition);
+    void edgeMarkMenuRequested(const QPointF& screenPos, const QPointF& worldPos);
     void viewportChanged(double zoom);
     void toastRequested(const QString& message);
 
@@ -226,13 +251,13 @@ private:
     void beginInput(const QPointF& screenPos, double pressure, double tiltX, double tiltY, bool isHardwarePen, bool isEraserTip, Qt::MouseButton button, Qt::KeyboardModifiers mods);
     void moveInput(const QPointF& screenPos, double pressure, double tiltX, double tiltY, bool isHardwarePen, bool isEraserTip, Qt::KeyboardModifiers mods);
     void endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods);
-    void applyEraseAt(const QPointF& worldPos);
+    void applyEraseAt(const QPointF& worldPos, bool trimToIntersections = false);
     void pushUndoSnapshot(const DocumentSnapshot& snapshot);
     void pushPageHistory();
     bool preparePageChange();
     void loadWorkingPage(int index, bool structureChanged);
     void insertPages(int index, const QVector<PageData>& pages);
-    void writeAutosaveNow() const;
+    void writeAutosaveNow(bool async = true) const;
     DocumentSnapshot currentSnapshot() const;
     void updateCursorShape();
     QSet<QString> selectedItemIds() const;
@@ -249,6 +274,8 @@ private:
 
     void animateViewport(const Viewport& target);
     void animateZoom(double factor);
+    void clampFiniteViewport();
+    QRectF activeFiniteSheetRect() const;
     void clearPenCursor();
     void updatePenCursor(const QPointF& world, bool visible);
     void updateRadialHover(const QPointF& screenPos);
@@ -293,6 +320,7 @@ private:
     QString m_currentFilePath;
     bool m_dirty = false;
     QTimer* m_autosaveTimer = nullptr;
+    mutable std::future<void> m_autosaveFuture;
 
     // Active tool & styling
     ToolType m_tool = ToolType::Pen;
@@ -304,6 +332,7 @@ private:
     int m_polygonSides = 6; // lados del polígono regular (herramienta Figuras > Polígono)
     int m_quadVariant = 0;  // 0 polígono regular, 1 paralelogramo, 2 trapecio isósceles, 3 trapecio rectángulo, 4 trapezoide
     int m_solidKind = 0;    // 0..9 sólidos 3D (Cubo, Prisma, Cilindro, Cono, Esfera, Pirámide, Tetraedro, Octaedro, TroncoCono, TroncoPirámide)
+    QString m_congruenceMarkSpec; // Si no está vacío en ToolType::Shape (ej. "mark:zigzag"), un toque sobre cualquier lado estampa la marca imantada
     ShadePattern m_shadePattern = ShadePattern::Solid;
     bool m_holdToShapeEnabled = true;
     bool m_smartGuidesEnabled = true;
@@ -315,11 +344,15 @@ private:
     int m_highlighterTip = 0; // 0 = Biselado, 1 = Redondo, 2 = Recto
     EraserMode m_eraserMode = EraserMode::Stroke;
     double m_eraserSize = 18.0;
+    bool m_eraserPreserveShapes = false;
+    bool m_eraserOnlyHighlight = false;
     QColor m_color = QColor("#f8fafc");
     double m_size = 2.6;
     LinePattern m_linePattern = LinePattern::Solid;
     LineEnding m_lineEnding = LineEnding::None;
     double m_stabilizer = 0.15;
+    double m_highlighterOpacity = 0.25;
+    double m_pressureSensitivity = 0.5;
     PressureProfile m_pressureProfile = PressureProfile::Light;
     ThemeId m_themeId = ThemeId::DarkBoard;
     BackgroundTemplate m_template = BackgroundTemplate::Dots;
@@ -343,10 +376,11 @@ private:
     QPointF m_holdLastWorld;
     bool m_holdSnappedToShape = false;
 
-    // Deferred smart handwriting beautification (waits ~420ms or until next stroke moves away)
+    // Deferred smart handwriting beautification (waits ~950ms after finishing a word/line)
     QTimer* m_beautifyTimer = nullptr;
     int m_pendingBeautifyStart = -1;
     QRectF m_pendingBeautifyBox;
+    QSet<QString> m_pendingBeautifyIds;
 
     // Shape creation / editing / polyline / smart guides state
     bool m_hasActiveShape = false;
@@ -377,6 +411,7 @@ private:
     QSet<QString> m_selectedImageIds;
     QRectF m_lassoBounds;
     QPointF m_lassoDragStartWorld;
+    QPointF m_lassoPreviewDelta;
     QPointF m_lassoTransformCenter;
     double m_lassoStartAngle = 0.0;
     int m_lassoHandleIndex = -1;

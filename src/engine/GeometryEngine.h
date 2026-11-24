@@ -38,4 +38,35 @@ void attachNewShape(QVector<ShapeItem>& shapes);
 bool updateShapeLinks(QVector<ShapeItem>& shapes, const QVector<ShapeItem>& original,
                       const QSet<QString>& edited);
 std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke);
+std::optional<ShapeItem> trySnapAngleArcAtVertex(const Stroke& stroke, const QVector<ShapeItem>& shapes, double zoom);
+std::optional<ShapeItem> trySnapCongruenceStrokeOnEdge(const Stroke& stroke,
+                                                       const QVector<ShapeItem>& shapes,
+                                                       double zoom,
+                                                       bool allowSimpleMarks = false);
+bool stampOrCycleCongruenceMark(QVector<ShapeItem>& shapes,
+                                const QPointF& worldPos,
+                                const QString& markSpec,
+                                const QColor& color,
+                                double strokeSize,
+                                double zoom,
+                                QString* outCreatedId = nullptr);
+bool isCongruenceMarkShape(const ShapeItem& shape);
+bool constrainCongruenceMarkToEdge(ShapeItem& mark,
+                                   const QVector<ShapeItem>& shapes,
+                                   int handleIndex,
+                                   const QPointF& targetWorld,
+                                   const QPointF& dragDelta);
+bool isPointNearGeometryEdge(const QPointF& worldPos,
+                             const QVector<ShapeItem>& shapes,
+                             double zoom,
+                             double maxDistPx = 20.0,
+                             QPointF* outEdgePoint = nullptr);
+bool isValidMathFunction(const QString& expr);
+// Borrado parcial de figuras 2D (Line, Polyline, Triangle, Rectangle, Circle, Ellipse, Curve, Arc).
+// Con trimToIntersections=true (Shift) recorta limpio el tramo entre intersecciones con otras figuras.
+std::optional<QVector<ShapeItem>> eraseShapePartially(const ShapeItem& shape,
+                                                      const QVector<ShapeItem>& allShapes,
+                                                      const QPointF& center,
+                                                      double radius,
+                                                      bool trimToIntersections = false);
 } // namespace finily

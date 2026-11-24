@@ -18,7 +18,6 @@ namespace finily {
 QVector<ImageItem> importPdfPages(const QString& path,double startY) {
     QVector<ImageItem> pages;if(!std::isfinite(startY))return pages;
     QPdfDocument document;if(document.load(path)!=QPdfDocument::Error::None)return pages;
-    double y=startY;
     for(int i=0;i<document.pageCount();++i) {
         const QSizeF points=document.pagePointSize(i);
         if(points.width()<=0||points.height()<=0||!std::isfinite(points.width())||!std::isfinite(points.height()))continue;

@@ -33,7 +33,7 @@ private:
 QRectF computeBounds(const QVector<StrokePoint>& points, double padding = 0.0);
 bool hitTestStroke(const Stroke& stroke, const QPointF& worldPos, double radius);
 std::optional<QVector<Stroke>> eraseStrokePartially(const Stroke& stroke, const QPointF& worldPos, double radius);
-void drawStroke(QPainter& painter, const Stroke& stroke);
+void drawStroke(QPainter& painter, const Stroke& stroke, bool lightBackground = false);
 // Grosor relativo (0..~1.25) que da cada perfil a una presión cruda [0,1].
 double inkPressureFactor(double pressure, PressureProfile profile);
 void drawBackgroundTemplate(QPainter& painter, BackgroundTemplate tpl, const ThemeConfig& theme, const Viewport& vp, const QRectF& visibleWorldRect);

@@ -11,7 +11,7 @@ set "BUILD=%SOURCE%\build-windows"
 set "STAGE=%BUILD%\installer-files"
 set "SETUP=%BUILD%\Finily-Setup-x64.exe"
 
-cmake -S "%SOURCE%" -B "%BUILD%" -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_PREFIX_PATH=%UCRT%" "-DCMAKE_CXX_COMPILER=%UCRT%/bin/g++.exe" "-DCMAKE_MAKE_PROGRAM=%UCRT%/bin/ninja.exe" || exit /b 1
+cmake -S "%SOURCE%" -B "%BUILD%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DFINILY_BUILD_TESTS=OFF "-DCMAKE_PREFIX_PATH=%UCRT%" "-DCMAKE_CXX_COMPILER=%UCRT%/bin/g++.exe" "-DCMAKE_MAKE_PROGRAM=%UCRT%/bin/ninja.exe" || exit /b 1
 cmake --build "%BUILD%" || exit /b 1
 set /p "VERSION="<"%BUILD%\finily-version.txt" || exit /b 1
 if exist "%STAGE%" rmdir /s /q "%STAGE%"

@@ -154,7 +154,11 @@ bool taperPenFlick(Stroke& stroke,double zoom) {
     }
     return changed;
 }
-void InkSmoother::reset(double sigmaWorld) { m_raw.clear(); m_sigma = sigmaWorld; }
+void InkSmoother::reset(double sigmaWorld, int radius) {
+    m_raw.clear();
+    m_sigma = sigmaWorld;
+    m_radius = std::clamp(radius, 1, kMaxRadius);
+}
 void InkSmoother::push(Stroke& stroke) {
     auto& pts = stroke.points;
     if (pts.isEmpty()) { m_raw.clear(); return; }
@@ -163,9 +167,25 @@ void InkSmoother::push(Stroke& stroke) {
     m_raw.append({pts.back().x, pts.back().y});
     if (m_sigma <= 0) return;
     const qsizetype n = m_raw.size();
-    for (qsizetype i = std::max<qsizetype>(1, n - 1 - kRadius); i < n; ++i) {
-        const qsizetype r = std::min<qsizetype>({kRadius, i, n - 1 - i});
+    for (qsizetype i = std::max<qsizetype>(1, n - 1 - m_radius); i < n; ++i) {
+        const qsizetype r = std::min<qsizetype>({qsizetype(m_radius), i, n - 1 - i});
         if (r <= 0) { pts[i].x = m_raw[i].x(); pts[i].y = m_raw[i].y(); continue; }
+
+        // Proteger esquinas agudas: si el giro entre entrante y saliente es cerrado, reducir sigma.
+        double localSigma = m_sigma;
+        const QPointF vIn = m_raw[i] - m_raw[i - 1];
+        const QPointF vOut = m_raw[i + 1] - m_raw[i];
+        const double lIn = std::hypot(vIn.x(), vIn.y());
+        const double lOut = std::hypot(vOut.x(), vOut.y());
+        if (lIn > 1e-6 && lOut > 1e-6) {
+            const double cosTheta = (vIn.x() * vOut.x() + vIn.y() * vOut.y()) / (lIn * lOut);
+            if (cosTheta < 0.35) {
+                const double sharpness = std::clamp((0.35 - cosTheta) / 0.45, 0.0, 1.0);
+                localSigma *= (1.0 - 0.90 * sharpness);
+            }
+        }
+        if (localSigma <= 1e-6) { pts[i].x = m_raw[i].x(); pts[i].y = m_raw[i].y(); continue; }
+
         // Ventana simétrica: así un punto cerca del extremo no se arrastra hacia dentro.
         double sx = m_raw[i].x(), sy = m_raw[i].y(), sw = 1.0;
         for (int side : {-1, 1}) {
@@ -173,7 +193,7 @@ void InkSmoother::push(Stroke& stroke) {
             for (qsizetype d = 1; d <= r; ++d) {
                 const QPointF a = m_raw[i + side * (d - 1)], b = m_raw[i + side * d];
                 s += std::hypot(b.x() - a.x(), b.y() - a.y());
-                const double w = std::exp(-0.5 * s * s / (m_sigma * m_sigma));
+                const double w = std::exp(-0.5 * s * s / (localSigma * localSigma));
                 sx += b.x() * w; sy += b.y() * w; sw += w;
             }
         }

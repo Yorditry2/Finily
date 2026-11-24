@@ -1,4 +1,6 @@
 #include "CanvasWidget.h"
+#include "CanvasWidgetInternal.h"
+#include "engine/DocumentSerializer.h"
 #include "engine/InkEngine.h"
 #include "engine/GeometryEngine.h"
 #include "engine/HandwritingEngine.h"
@@ -45,360 +47,32 @@
 
 namespace finily {
 namespace {
-// Transient highlighter layers live with the widget without expanding its public
-// interface. Keeping ink separate lets a live highlight move beneath cached ink.
-class HighlighterLayers final : public QObject {
-public:
-    explicit HighlighterLayers(CanvasWidget* owner):QObject(owner) { setObjectName(QStringLiteral("_finily_highlighter_layers")); }
-    QImage background;
-    QImage ink;
-};
-HighlighterLayers& highlighterLayers(CanvasWidget* widget) {
-    auto* child=widget->findChild<QObject*>(QStringLiteral("_finily_highlighter_layers"),Qt::FindDirectChildrenOnly);
-    return child?*static_cast<HighlighterLayers*>(child):*new HighlighterLayers(widget);
-}
-Viewport fittedSheetViewport(PageFormat format,const QSize& size) {
-    const auto sheet=sheetRectForPageFormat(format);
-    if(sheet.isEmpty())return {};
-    const double pad = (format == PageFormat::Slide16x9) ? 0.0 : 24.0;
-    const double zoom=std::clamp(std::min(std::max(1.0,size.width()-pad)/sheet.width(),
-        std::max(1.0,size.height()-pad)/sheet.height()),0.2,5.0);
-    return {size.width()/2.0-sheet.center().x()*zoom,size.height()/2.0-sheet.center().y()*zoom,zoom};
-}
-Viewport fittedPdfViewport(const QRectF& bounds, const QSize& size) {
-    const double w = std::max(1.0, size.width() - 64.0);
-    const double h = std::max(1.0, size.height() - 64.0);
-    const double zoom = std::clamp(std::min(w / bounds.width(), h / bounds.height()), 0.2, 5.0);
-    return {size.width() / 2.0 - bounds.center().x() * zoom,
-            size.height() / 2.0 - bounds.center().y() * zoom, zoom};
-}
-
-QVector<int> validPageIndices(QVector<int> indices, int count) {
-    indices.removeIf([count](int index) { return index < 0 || index >= count; });
-    std::sort(indices.begin(), indices.end());
-    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
-    return indices;
-}
-qint64 nowMs() { static const QElapsedTimer timer=[] { QElapsedTimer t;t.start();return t; }();return timer.elapsed(); }
-QString autosavePath() { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)+QStringLiteral("/autosave.json"); }
-QJsonObject strokeJson(const Stroke& s) {
-    QJsonArray points;
-    for (const auto& p:s.points) points.append(QJsonArray{p.x,p.y,p.pressure,double(p.timestampMs),p.tiltX,p.tiltY});
-    return {{"id",s.id},{"groupId",s.groupId},{"tool",int(s.tool)},{"color",s.color.name(QColor::HexArgb)},{"size",s.size},
-            {"opacity",s.opacity},{"linePattern",int(s.linePattern)},{"pressureProfile",int(s.pressureProfile)},{"hasHardwarePressure",s.hasHardwarePressure},{"tipStyle",s.tipStyle},{"points",points}};
+QString congruenceMarkToast(const QString& label) {
+    if (label == QStringLiteral("mark:zigzag"))
+        return QStringLiteral("Serrucho ✓");
+    if (label == QStringLiteral("mark:spring"))
+        return QStringLiteral("Resorte ✓");
+    if (label == QStringLiteral("mark:dot"))
+        return QStringLiteral("Bolita ✓");
+    if (label == QStringLiteral("mark:bar"))
+        return QStringLiteral("Bultito ✓");
+    if (label.startsWith(QStringLiteral("mark:tick")))
+        return QStringLiteral("Rayitas ✓");
+    if (label.startsWith(QStringLiteral("mark:parallel")))
+        return QStringLiteral("Paralelas ✓");
+    return QStringLiteral("Marca ✓");
 }
 constexpr auto objectMimeType = "application/x-finily-objects";
 bool linkedFillOf(const ShapeItem& fill, const QString& id) {
     return fill.kind == ShapeKind::ShadedRegion && fill.shadeBoundary.size() == 1
         && fill.shadeBoundary.contains(id);
 }
-bool finite(double v) { return std::isfinite(v); }
 StrokePoint inputPoint(QPointF p,double pressure,double tiltX=0.0,double tiltY=0.0) { return {p.x(),p.y(),std::clamp(pressure,0.0,1.0),nowMs(),std::clamp(tiltX,-60.0,60.0),std::clamp(tiltY,-60.0,60.0)}; }
 StrokePoint snappedPoint(const StrokePoint& origin,StrokePoint point) {
     const double dx=point.x-origin.x,dy=point.y-origin.y;
     const double angle=std::round(std::atan2(dy,dx)/(std::numbers::pi/12))*(std::numbers::pi/12);
     const double dist=std::hypot(dx,dy);
     point.x=origin.x+dist*std::cos(angle);point.y=origin.y+dist*std::sin(angle);return point;
-}
-QString freshId() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
-double distance(QPointF a,QPointF b) { return std::hypot(a.x()-b.x(),a.y()-b.y()); }
-QJsonObject shapeJson(const ShapeItem& shape) {
-    QJsonArray vertices;for(auto p:shape.vertices)vertices.append(QJsonArray{p.x(),p.y()});
-    QJsonObject result{{"id",shape.id},{"groupId",shape.groupId},{"kind",int(shape.kind)},{"color",shape.color.name(QColor::HexArgb)},
-                       {"size",shape.size},{"opacity",shape.opacity},{"linePattern",int(shape.linePattern)},{"lineEnding",int(shape.lineEnding)},
-                       {"closed",shape.closed},{"locked",shape.locked},{"solidKind",shape.solidKind},{"vertices",vertices}};
-    if (!shape.label.isEmpty())
-        result.insert("label", shape.label);
-    if (shape.kind == ShapeKind::ShadedRegion) {
-        result.insert("shadePattern", int(shape.shadePattern));
-        if (!shape.shadeBoundary.isEmpty()) {
-            QJsonObject boundary;
-            for (auto it = shape.shadeBoundary.cbegin(); it != shape.shadeBoundary.cend(); ++it)
-                boundary.insert(it.key(), it.value());
-            result.insert("shadeBoundary", boundary);
-            result.insert("shadeProbe", QJsonArray{shape.shadeProbe.x(), shape.shadeProbe.y()});
-            result.insert("shadeVisible", shape.shadeVisible);
-        }
-        if (!shape.shadeContourStarts.isEmpty()) {
-            QJsonArray starts;
-            for (int start : shape.shadeContourStarts)
-                starts.append(start);
-            result.insert("shadeContourStarts", starts);
-        }
-    }
-    if (shape.attachmentsKnown) {
-        QJsonArray links;
-        for (const auto& attachment : shape.attachments)
-            links.append(QJsonArray{attachment.vertex, attachment.targetId, attachment.edge, attachment.position});
-        result.insert("attachments", links);
-    }
-    return result;
-}
-QFont textFont(double size) {
-    QFont font(QStringLiteral("Sans Serif"));font.setPixelSize(qRound(size));return font;
-}
-QRectF textBounds(const TextItem& item) {
-    const QFontMetricsF metrics(textFont(item.fontSize));
-    const QRectF ink=metrics.boundingRect(item.text).translated(item.pos+QPointF(0,metrics.ascent()));
-    return ink.united(QRectF(item.pos,QSizeF(metrics.horizontalAdvance(item.text),metrics.height())));
-}
-void drawTextItem(QPainter& painter,const TextItem& item) {
-    painter.save();painter.setRenderHint(QPainter::TextAntialiasing);painter.setFont(textFont(item.fontSize));painter.setPen(item.color);
-    painter.drawText(item.pos+QPointF(0,QFontMetricsF(painter.font()).ascent()),item.text);painter.restore();
-}
-class InlineTextEditor final : public QLineEdit {
-public:
-    explicit InlineTextEditor(QWidget* parent):QLineEdit(parent) { setObjectName(QStringLiteral("_finily_text_editor")); }
-    std::function<void(const QString&)> commit;
-    void finish(bool accept) {
-        if(done)return;
-        done=true;const auto value=text();hide();if(accept&&commit)commit(value);deleteLater();
-    }
-protected:
-    bool event(QEvent* event) override {
-        if(event->type()==QEvent::ShortcutOverride) {
-            const auto* ke=static_cast<QKeyEvent*>(event);
-            const auto k=ke->key();
-            if(k==Qt::Key_Escape||k==Qt::Key_Return||k==Qt::Key_Enter||k==Qt::Key_Tab
-               ||k==Qt::Key_Backspace||k==Qt::Key_Delete
-               ||(!ke->modifiers().testFlag(Qt::ControlModifier)&&!ke->modifiers().testFlag(Qt::AltModifier))) {
-                event->accept();return true;
-            }
-        }
-        return QLineEdit::event(event);
-    }
-    void keyPressEvent(QKeyEvent* event) override {
-        if(event->key()==Qt::Key_Escape){finish(false);event->accept();return;}
-        if(event->key()==Qt::Key_Return||event->key()==Qt::Key_Enter){finish(true);event->accept();return;}
-        QLineEdit::keyPressEvent(event);
-    }
-    void focusOutEvent(QFocusEvent* event) override { QLineEdit::focusOutEvent(event);finish(true); }
-private:
-    bool done=false;
-};
-void finishTextEditor(CanvasWidget* widget,bool accept) {
-    for(auto* child:widget->findChildren<QLineEdit*>(QStringLiteral("_finily_text_editor"),Qt::FindDirectChildrenOnly))
-        static_cast<InlineTextEditor*>(child)->finish(accept);
-}
-QJsonObject documentSettings(ShapeKind kind,bool hold,bool guides,bool swap,PressureProfile profile,ThemeId theme,BackgroundTemplate tpl,Viewport viewport,PageFormat pageFormat) {
-    return {{"shapeKind",int(kind)},{"holdToShapeEnabled",hold},{"smartGuidesEnabled",guides},{"swapPenButtons",swap},
-        {"pressureProfile",int(profile)},{"theme",int(theme)},{"template",int(tpl)},{"pageFormat",int(pageFormat)},
-        {"viewport",QJsonObject{{"x",viewport.x},{"y",viewport.y},{"zoom",viewport.zoom}}}};
-}
-struct PngCache { QHash<qint64,QString> previous,next; };
-PngCache& pngCache() { static PngCache cache;return cache; }
-QJsonObject serializePage(const PageData& document,bool& valid) {
-    QJsonArray strokes,shapes,images,texts;
-    for(const auto& stroke:document.strokes)strokes.append(strokeJson(stroke));
-    for(const auto& shape:document.shapes)shapes.append(shapeJson(shape));
-    for(const auto& item:document.texts)texts.append(QJsonObject{{"id",item.id},{"groupId",item.groupId},{"pos",QJsonArray{item.pos.x(),item.pos.y()}},
-        {"text",item.text},{"color",item.color.name(QColor::HexArgb)},{"fontSize",item.fontSize},{"locked",item.locked}});
-    for(const auto& image:document.images) {
-        QJsonObject value{{"id",image.id},{"groupId",image.groupId},{"rect",QJsonArray{image.rect.x(),image.rect.y(),image.rect.width(),image.rect.height()}},
-            {"isPdfPage",image.isPdfPage},{"pdfPageIndex",image.pdfPageIndex},{"pdfSourcePath",image.pdfSourcePath},{"locked",image.locked}};
-        // Codificar a PNG es lo más caro del guardado: se reutiliza el resultado
-        // mientras los píxeles de la imagen no cambien (QImage::cacheKey).
-        const qint64 key=image.image.cacheKey();QString encoded=pngCache().previous.value(key);
-        if(encoded.isEmpty()) {
-            QByteArray png;QBuffer buffer(&png);buffer.open(QIODevice::WriteOnly);
-            if(!image.image.save(&buffer,"PNG")){valid=false;return {};}
-            encoded=QString::fromLatin1(png.toBase64());
-        }
-        pngCache().next.insert(key,encoded);
-        value.insert("png",encoded);images.append(value);
-    }
-    QJsonObject page{{"strokes",strokes},{"shapes",shapes},{"images",images},{"texts",texts},
-        {"viewport",QJsonObject{{"x",document.viewport.x},{"y",document.viewport.y},{"zoom",document.viewport.zoom}}}};
-    if (document.background)
-        page.insert("pageBackground", int(*document.background));
-    return page;
-}
-bool serializeDocumentToFile(const QString& path, const QVector<PageData>& pages, int currentPage,
-                             QJsonObject root, bool newFile = false) {
-    QJsonArray serialized;bool valid=true;pngCache().next.clear();
-    for(const auto& page:pages){serialized.append(serializePage(page,valid));if(!valid)return false;}
-    if(serialized.isEmpty())serialized.append(serializePage(PageData{},valid));
-    // Conserva solo las imágenes que siguen en el documento.
-    pngCache().previous=std::move(pngCache().next);pngCache().next.clear();
-    root.remove("viewport");root.insert("version",5);root.insert("pages",serialized);root.insert("currentPageIndex",currentPage);
-    const auto data=QJsonDocument(root).toJson(QJsonDocument::Compact);
-    if (newFile) {
-        // Escribir en el temporal y publicarlo en la misma carpeta sin reemplazar otro cuaderno.
-        QTemporaryFile pending(QFileInfo(path).absolutePath() + QStringLiteral("/.finily-XXXXXX"));
-        if (!pending.open() || pending.write(data) != data.size() || !pending.flush()
-            || !pending.rename(path))
-            return false;
-        pending.setAutoRemove(false);
-        return true;
-    }
-    QSaveFile file(path);if(!file.open(QIODevice::WriteOnly))return false;
-    if(file.write(data)!=data.size()){file.cancelWriting();return false;}
-    return file.commit();
-}
-QJsonObject loadDocumentFromFile(const QString& path) {
-    QFile file(path);if(!file.open(QIODevice::ReadOnly))return {};
-    QJsonParseError error;const auto doc=QJsonDocument::fromJson(file.readAll(),&error);
-    if(error.error!=QJsonParseError::NoError||!doc.isObject())return {};
-    const auto root=doc.object();
-    const int version=root.value("version").toInt();if(version<1||version>5)return {};
-    if(version<5&&!root.value("strokes").isArray())return {};
-    if(version==5) {
-        if(!root.value("pages").isArray()||root.value("pages").toArray().isEmpty())return {};
-        for(const auto& value:root.value("pages").toArray())if(!value.isObject()||!value.toObject().value("strokes").isArray())return {};
-    }
-    return root;
-}
-PageData deserializePage(const QJsonObject& root,QHash<QString,QVector<ImageItem>>& pdfSources) {
-    QVector<Stroke> loaded;
-    for(const auto& value:root.value("strokes").toArray()) {
-        if(!value.isObject())continue;
-        const auto o=value.toObject();Stroke s;
-        const int tool=o.value("tool").toInt(-1),pattern=o.value("linePattern").toInt(-1);
-        if(tool<0||tool>int(ToolType::Highlighter)||pattern<0||pattern>int(LinePattern::Dimension))continue;
-        const int profile=o.value("pressureProfile").toInt(int(PressureProfile::Light));
-        if(profile<int(PressureProfile::Light)||profile>int(PressureProfile::Firm))continue;
-        s.pressureProfile=PressureProfile(profile);
-        s.tool=ToolType(tool);s.linePattern=LinePattern(pattern);s.id=o.value("id").toString();
-        s.groupId=o.value("groupId").toString();
-        s.tipStyle = std::clamp(o.value("tipStyle").toInt(s.tool == ToolType::Pen ? 1 : 0), 0, s.tool == ToolType::Highlighter ? 2 : 3);
-        if(s.id.isEmpty())s.id=QUuid::createUuid().toString(QUuid::WithoutBraces);
-        s.color=QColor(o.value("color").toString());s.size=o.value("size").toDouble(2.6);s.opacity=o.value("opacity").toDouble(1.0);
-        if(!s.color.isValid()||!finite(s.size)||s.size<=0||s.size>200||!finite(s.opacity))continue;
-        s.opacity=std::clamp(s.opacity,0.0,1.0);s.hasHardwarePressure=o.value("hasHardwarePressure").toBool();
-        bool valid=true;
-        for(const auto& pv:o.value("points").toArray()) {
-            const auto p=pv.toArray();if(p.size()!=4&&p.size()!=6){valid=false;break;}
-            for(const auto& n:p)if(!n.isDouble()||!finite(n.toDouble()))valid=false;
-            if(!valid)break;
-            const double stamp=p[3].toDouble();if(std::abs(stamp)>9e15){valid=false;break;}
-            s.points.append({p[0].toDouble(),p[1].toDouble(),std::clamp(p[2].toDouble(),0.0,1.0),qint64(stamp),p.size()==6?std::clamp(p[4].toDouble(),-60.0,60.0):0.0,p.size()==6?std::clamp(p[5].toDouble(),-60.0,60.0):0.0});
-        }
-        if(valid&&!s.points.isEmpty()){s.bounds=computeBounds(s.points,s.size*0.7);loaded.append(s);}
-    }
-    QVector<ShapeItem> loadedShapes;
-    for(const auto& value:root.value("shapes").toArray()) {
-        if(!value.isObject())continue;
-        const auto o=value.toObject();const int kind=o.value("kind").toInt(-1),pattern=o.value("linePattern").toInt(0);
-        if(kind<0||kind>int(ShapeKind::AngleMarker)||pattern<0||pattern>int(LinePattern::Dimension))continue;
-        ShapeItem shape;shape.kind=ShapeKind(kind);shape.linePattern=LinePattern(pattern);
-        shape.locked=o.value("locked").toBool(false);
-        shape.lineEnding = LineEnding(std::clamp(o.value("lineEnding").toInt(), 0, 2));
-        if (shape.linePattern == LinePattern::Arrow || shape.linePattern == LinePattern::DoubleArrow) {
-            shape.lineEnding = shape.linePattern == LinePattern::Arrow ? LineEnding::Arrow : LineEnding::DoubleArrow;
-            shape.linePattern = LinePattern::Solid;
-        }
-        shape.label = o.value("label").toString().left(80);
-        shape.solidKind=std::clamp(o.value("solidKind").toInt(0),0,9);
-        shape.id=o.value("id").toString();if(shape.id.isEmpty())shape.id=freshId();
-        shape.groupId=o.value("groupId").toString();
-        shape.color=QColor(o.value("color").toString());shape.size=o.value("size").toDouble(2.6);shape.opacity=o.value("opacity").toDouble(1);
-        if(!shape.color.isValid()||!finite(shape.size)||shape.size<=0||shape.size>200||!finite(shape.opacity))continue;
-        shape.opacity=std::clamp(shape.opacity,0.0,1.0);shape.closed=o.value("closed").toBool();bool valid=true;
-        for(const auto& vertex:o.value("vertices").toArray()) {
-            const auto a=vertex.toArray();if(a.size()!=2||!a[0].isDouble()||!a[1].isDouble()||!finite(a[0].toDouble())||!finite(a[1].toDouble())){valid=false;break;}
-            shape.vertices.append({a[0].toDouble(),a[1].toDouble()});
-        }
-        const bool threeVertices = shape.kind == ShapeKind::Triangle || shape.kind == ShapeKind::Radical
-            || shape.kind == ShapeKind::Curve || shape.kind == ShapeKind::RightAngle
-            || shape.kind == ShapeKind::Arc || shape.kind == ShapeKind::Sector || shape.kind == ShapeKind::AngleMarker;
-        const qsizetype expected = threeVertices ? 3 : 2;
-        if(!valid)continue;
-        if (shape.kind == ShapeKind::ShadedRegion) {
-            const int shade = o.value("shadePattern").toInt(0);
-            if (shade < int(ShadePattern::Soft) || shade > int(ShadePattern::Grid)
-                || !shape.closed)
-                continue;
-            int previous = 0;
-            for (const auto& offset : o.value("shadeContourStarts").toArray()) {
-                const int start = offset.toInt(-1);
-                if (start <= previous || start >= shape.vertices.size()) {
-                    valid = false;
-                    break;
-                }
-                const int count = start - previous;
-                if (count < 7 || (count - 1) % 3 != 0) {
-                    valid = false;
-                    break;
-                }
-                shape.shadeContourStarts.append(start);
-                previous = start;
-            }
-            const auto lastCount = shape.vertices.size() - previous;
-            if (!valid || lastCount < 7 || (lastCount - 1) % 3 != 0)
-                continue;
-            shape.shadePattern = ShadePattern(shade);
-            const auto boundary = o.value("shadeBoundary").toObject();
-            const auto probe = o.value("shadeProbe").toArray();
-            if (probe.size() == 2 && probe[0].isDouble() && probe[1].isDouble()
-                && finite(probe[0].toDouble()) && finite(probe[1].toDouble())) {
-                for (auto it = boundary.constBegin(); it != boundary.constEnd(); ++it) {
-                    const int side = it.value().toInt();
-                    if (!it.key().isEmpty() && side >= 1 && side <= 3)
-                        shape.shadeBoundary.insert(it.key(), side);
-                }
-                shape.shadeProbe = {probe[0].toDouble(), probe[1].toDouble()};
-                shape.shadeVisible = o.value("shadeVisible").toBool(true);
-            }
-        } else if (shape.vertices.size()<expected||(shape.kind!=ShapeKind::Polyline&&shape.vertices.size()!=expected))continue;
-        const auto links = o.value("attachments");
-        shape.attachmentsKnown = links.isArray();
-        for (const auto& link : links.toArray()) {
-            const auto fields = link.toArray();
-            if (fields.size() != 4 || !fields[3].isDouble()) continue;
-            const int vertex = fields[0].toInt(-1), edge = fields[2].toInt(-4);
-            const auto target = fields[1].toString();
-            const double position = fields[3].toDouble();
-            if ((vertex == 0 || vertex == shape.vertices.size() - 1) && !target.isEmpty() && target != shape.id
-                && edge >= -3 && finite(position) && (edge == -2 || (position >= 0 && position <= 1)))
-                shape.attachments.append({vertex, target, edge, position});
-        }
-        if(shape.kind==ShapeKind::Radical)shape.vertices[2].setY(shape.vertices[1].y());
-        shape.bounds=computeShapeBounds(shape);loadedShapes.append(shape);
-    }
-    QVector<ImageItem> loadedImages;
-    for(const auto& value:root.value("images").toArray()) {
-        const auto o=value.toObject();const auto r=o.value("rect").toArray();if(r.size()!=4)continue;
-        bool valid=true;for(const auto& number:r)if(!number.isDouble()||!finite(number.toDouble()))valid=false;
-        if(!valid||r[2].toDouble()<=0||r[3].toDouble()<=0)continue;
-        ImageItem image;image.id=o.value("id").toString();if(image.id.isEmpty())image.id=freshId();
-        image.rect=QRectF(r[0].toDouble(),r[1].toDouble(),r[2].toDouble(),r[3].toDouble());image.isPdfPage=o.value("isPdfPage").toBool();
-        if(!image.isPdfPage)image.groupId=o.value("groupId").toString();
-        image.locked = o.value("locked").toBool();
-        image.pdfSourcePath=o.value("pdfSourcePath").toString();image.pdfPageIndex=o.value("pdfPageIndex").toInt(-1);
-        image.image=QImage::fromData(QByteArray::fromBase64(o.value("png").toString().toLatin1()),"PNG");
-        if(image.isPdfPage&&image.image.isNull()) {
-            if(!QFileInfo::exists(image.pdfSourcePath))continue;
-            if(!pdfSources.contains(image.pdfSourcePath))pdfSources.insert(image.pdfSourcePath,importPdfPages(image.pdfSourcePath));
-            for(const auto& page:pdfSources[image.pdfSourcePath])if(page.pdfPageIndex==image.pdfPageIndex){image.image=page.image;break;}
-        }
-        if(!image.image.isNull())loadedImages.append(image);
-    }
-    QVector<TextItem> loadedTexts;
-    for(const auto& value:root.value("texts").toArray()) {
-        const auto o=value.toObject();const auto pos=o.value("pos").toArray();
-        if(pos.size()!=2||!pos[0].isDouble()||!pos[1].isDouble()||!finite(pos[0].toDouble())||!finite(pos[1].toDouble()))continue;
-        TextItem item;item.id=o.value("id").toString();if(item.id.isEmpty())item.id=freshId();
-        item.groupId=o.value("groupId").toString();
-        item.locked = o.value("locked").toBool();
-        item.pos={pos[0].toDouble(),pos[1].toDouble()};item.text=o.value("text").toString();item.color=QColor(o.value("color").toString());item.fontSize=o.value("fontSize").toDouble(22);
-        if(item.text.trimmed().isEmpty()||!item.color.isValid()||!finite(item.fontSize)||item.fontSize<1||item.fontSize>1000)continue;
-        item.bounds=textBounds(item);loadedTexts.append(item);
-    }
-    initializeShapeLinks(loadedShapes);
-    const auto view=root.value("viewport").toObject();
-    const double x=view.value("x").toDouble(),y=view.value("y").toDouble(),zoom=view.value("zoom").toDouble(1);
-    Viewport viewport;if(finite(x)&&finite(y)&&finite(zoom))viewport={x,y,std::clamp(zoom,.2,5.0)};
-    std::optional<BackgroundTemplate> background;
-    const int storedBackground = root.value("pageBackground").toInt(-1);
-    if (storedBackground >= int(BackgroundTemplate::Blank) && storedBackground <= int(BackgroundTemplate::Ruled))
-        background = BackgroundTemplate(storedBackground);
-    return {loaded,loadedShapes,loadedImages,loadedTexts,viewport,background};
-}
-void syncWorkingPage(QVector<PageData>& pages,int& index,const DocumentSnapshot& document,Viewport viewport) {
-    if(pages.isEmpty())pages.append(PageData{});
-    index=std::clamp(index,0,int(pages.size())-1);
-    auto& page=pages[index];
-    page.strokes=document.strokes;page.shapes=document.shapes;page.images=document.images;page.texts=document.texts;page.viewport=viewport;
 }
 // Polígono regular inscrito: centro en `origin`, radio hasta `end`; el primer
 // vértice apunta hacia donde arrastras (así se puede girar al crearlo).
@@ -494,7 +168,7 @@ CanvasWidget::CanvasWidget(QWidget* parent):QWidget(parent),m_stabilizerFilter(s
         if(m_mode!=InteractionMode::None){m_autosaveTimer->start();return;}
         writeAutosaveNow();
     });
-    m_beautifyTimer=new QTimer(this);m_beautifyTimer->setSingleShot(true);m_beautifyTimer->setInterval(420);
+    m_beautifyTimer=new QTimer(this);m_beautifyTimer->setSingleShot(true);m_beautifyTimer->setInterval(650);
     connect(m_beautifyTimer,&QTimer::timeout,this,&CanvasWidget::flushPendingBeautify);
     {
         QSettings settings("Finily","Finily");
@@ -505,12 +179,18 @@ CanvasWidget::CanvasWidget(QWidget* parent):QWidget(parent),m_stabilizerFilter(s
         m_cursorStyle=std::clamp(settings.value("ink/cursorStyle",0).toInt(),0,2);
         m_penTip=std::clamp(settings.value("ink/penTip",1).toInt(),0,3);
         m_highlighterTip=std::clamp(settings.value("ink/highlighterTip",0).toInt(),0,2);
+        m_eraserPreserveShapes=settings.value("ink/eraserPreserveShapes",false).toBool();
+        m_eraserOnlyHighlight=settings.value("ink/eraserOnlyHighlight",false).toBool();
+        m_pressureSensitivity=std::clamp(settings.value("ink/pressureSensitivity",0.5).toDouble(),0.0,1.0);
+        m_highlighterOpacity=std::clamp(settings.value("ink/highlighterOpacity",0.25).toDouble(),0.10,0.70);
     }
     m_pages.append(PageData{});loadAutosave();updateCursorShape();
 }
 CanvasWidget::~CanvasWidget() {
     finishTextEditor(this,false);
-    m_autosaveTimer->stop();writeAutosaveNow();
+    m_autosaveTimer->stop();
+    if(m_autosaveFuture.valid())m_autosaveFuture.wait();
+    writeAutosaveNow(false);
 }
 void CanvasWidget::setTool(ToolType tool) {
     clearPenCursor();
@@ -538,9 +218,10 @@ void CanvasWidget::setHoldToShapeEnabled(bool enabled) { m_holdToShapeEnabled=en
 void CanvasWidget::setSmartGuidesEnabled(bool enabled) { m_smartGuidesEnabled=enabled;if(!enabled)m_activeGuides.clear();update();emit stateChanged(); }
 void CanvasWidget::setMathBeautifyEnabled(bool enabled) {
     if(m_mathBeautifyEnabled==enabled)return;
+    if(!enabled)flushPendingBeautify();
     m_mathBeautifyEnabled=enabled;
     QSettings("Finily","Finily").setValue("ink/mathBeautify",enabled);
-    emit toastRequested(enabled ? QStringLiteral("Modo Ecuación ∑ activado (M)")
+    emit toastRequested(enabled ? QStringLiteral("Auto-embellecer escritura activado (M)")
                                 : QStringLiteral("Modo Escritura libre (M)"));
     emit stateChanged();
 }
@@ -633,7 +314,7 @@ void CanvasWidget::clearSelection() {
     clearPenCursor();
     m_selectedTextId.clear();m_selectedShapeId.clear();m_activeHandleIndex=-1;m_selectedStrokeIds.clear();m_selectedShapeIds.clear();
     m_selectedTextIds.clear();m_selectedImageIds.clear();m_linkedPreview=false;
-    m_selectedImageId.clear();m_lassoPolygon.clear();m_lassoBounds={};m_lassoHandleIndex=-1;m_imageHandleIndex=-1;
+    m_selectedImageId.clear();m_lassoPolygon.clear();m_lassoBounds={};m_lassoPreviewDelta=QPointF();m_lassoHandleIndex=-1;m_imageHandleIndex=-1;
     invalidateStaticCache();emit stateChanged();
 }
 void CanvasWidget::cancelInteraction() {
@@ -662,7 +343,7 @@ void CanvasWidget::cancelInteraction() {
     m_holdTimer->stop();
     m_radialOpen=false;
     m_liveInk.reset();m_liveInkLayer=QImage();
-    m_hasActiveStroke=false;m_hasActiveShape=false;m_holdSnappedToShape=false;
+    m_hasActiveStroke=false;m_hasActiveShape=false;m_holdSnappedToShape=false;m_lassoPreviewDelta=QPointF();
     m_mode=InteractionMode::None;m_erasedAnything=false;m_activeGuides.clear();
     clearSelection();updateCursorShape();
 }
@@ -985,44 +666,395 @@ void CanvasWidget::straightenSelection() {
     if(m_mode!=InteractionMode::None||m_selectedStrokeIds.isEmpty())return;
     auto strokes=m_strokes;if(!straightenSelectedStrokes(strokes,m_selectedStrokeIds))return;
     pushUndoSnapshot(currentSnapshot());m_strokes=std::move(strokes);
-    m_lassoBounds=lassoSelectionBounds();invalidateStaticCache();saveAutosave();emit stateChanged();emit toastRequested(QStringLiteral("Letras niveladas ✓"));
+    m_lassoBounds=lassoSelectionBounds();invalidateStaticCache();saveAutosave();emit stateChanged();emit toastRequested(QStringLiteral("Escritura embellecida y ordenada ✓"));
+}
+
+void CanvasWidget::flipSelectionHorizontal() {
+    if (m_mode != InteractionMode::None || m_polylineActive || !hasSelection())
+        return;
+    QSet<QString> shapeIds = m_selectedShapeIds;
+    if (!m_selectedShapeId.isEmpty())
+        shapeIds.insert(m_selectedShapeId);
+    const QRectF bounds = !m_lassoBounds.isEmpty() ? m_lassoBounds
+        : computeSelectionBounds(m_strokes, m_shapes, m_selectedStrokeIds, shapeIds);
+    if (bounds.isEmpty())
+        return;
+    const auto originalShapes = m_shapes;
+    pushUndoSnapshot(currentSnapshot());
+    flipSelection(m_strokes, m_shapes, m_selectedStrokeIds, shapeIds, bounds, true);
+    if (!shapeIds.isEmpty())
+        updateShapeLinks(m_shapes, originalShapes, shapeIds);
+    m_lassoBounds = lassoSelectionBounds();
+    invalidateStaticCache();
+    saveAutosave();
+    emit stateChanged();
+    emit toastRequested(QStringLiteral("Volteado horizontalmente ✓"));
+}
+
+void CanvasWidget::flipSelectionVertical() {
+    if (m_mode != InteractionMode::None || m_polylineActive || !hasSelection())
+        return;
+    QSet<QString> shapeIds = m_selectedShapeIds;
+    if (!m_selectedShapeId.isEmpty())
+        shapeIds.insert(m_selectedShapeId);
+    const QRectF bounds = !m_lassoBounds.isEmpty() ? m_lassoBounds
+        : computeSelectionBounds(m_strokes, m_shapes, m_selectedStrokeIds, shapeIds);
+    if (bounds.isEmpty())
+        return;
+    const auto originalShapes = m_shapes;
+    pushUndoSnapshot(currentSnapshot());
+    flipSelection(m_strokes, m_shapes, m_selectedStrokeIds, shapeIds, bounds, false);
+    if (!shapeIds.isEmpty())
+        updateShapeLinks(m_shapes, originalShapes, shapeIds);
+    m_lassoBounds = lassoSelectionBounds();
+    invalidateStaticCache();
+    saveAutosave();
+    emit stateChanged();
+    emit toastRequested(QStringLiteral("Volteado verticalmente ✓"));
+}
+
+void CanvasWidget::bringSelectionToFront() {
+    if (m_mode != InteractionMode::None || m_polylineActive || !hasSelection())
+        return;
+    const auto ids = selectedItemIds();
+    if (ids.isEmpty())
+        return;
+    pushUndoSnapshot(currentSnapshot());
+    auto partitionToBack = [&](auto& vec, auto pred) {
+        std::stable_partition(vec.begin(), vec.end(), [&](const auto& item) { return !pred(item); });
+    };
+    partitionToBack(m_strokes, [&](const Stroke& s) { return ids.contains(s.id); });
+    partitionToBack(m_shapes, [&](const ShapeItem& s) { return s.kind != ShapeKind::ShadedRegion && ids.contains(s.id); });
+    partitionToBack(m_images, [&](const ImageItem& im) { return !im.isPdfPage && ids.contains(im.id); });
+    partitionToBack(m_texts, [&](const TextItem& t) { return ids.contains(t.id); });
+    invalidateStaticCache();
+    saveAutosave();
+    emit stateChanged();
+    emit toastRequested(QStringLiteral("Traído al frente ✓"));
+}
+
+void CanvasWidget::sendSelectionToBack() {
+    if (m_mode != InteractionMode::None || m_polylineActive || !hasSelection())
+        return;
+    const auto ids = selectedItemIds();
+    if (ids.isEmpty())
+        return;
+    pushUndoSnapshot(currentSnapshot());
+    auto partitionToFront = [&](auto& vec, auto pred) {
+        std::stable_partition(vec.begin(), vec.end(), pred);
+    };
+    partitionToFront(m_strokes, [&](const Stroke& s) { return ids.contains(s.id); });
+    partitionToFront(m_shapes, [&](const ShapeItem& s) { return s.kind == ShapeKind::ShadedRegion || ids.contains(s.id); });
+    std::stable_partition(m_images.begin(), m_images.end(), [&](const ImageItem& im) {
+        return im.isPdfPage || ids.contains(im.id);
+    });
+    std::stable_partition(m_images.begin(), m_images.end(), [](const ImageItem& im) { return im.isPdfPage; });
+    partitionToFront(m_texts, [&](const TextItem& t) { return ids.contains(t.id); });
+    invalidateStaticCache();
+    saveAutosave();
+    emit stateChanged();
+    emit toastRequested(QStringLiteral("Enviado al fondo ✓"));
+}
+
+void CanvasWidget::insertVerticalSpaceAtSelection(double deltaY) {
+    if (m_mode != InteractionMode::None || m_polylineActive || !hasSelection())
+        return;
+    const QRectF screenRect = selectionScreenRect();
+    if (screenRect.isEmpty())
+        return;
+    const double yThreshold = screenToWorld(screenRect.topLeft()).y() - 4.0;
+    auto strokes = m_strokes;
+    auto shapes = m_shapes;
+    auto images = m_images;
+    auto texts = m_texts;
+    if (!shiftContentVertically(strokes, shapes, images, texts, yThreshold, deltaY))
+        return;
+    pushUndoSnapshot(currentSnapshot());
+    m_strokes = std::move(strokes);
+    m_shapes = std::move(shapes);
+    m_images = std::move(images);
+    m_texts = std::move(texts);
+    if (!m_lassoBounds.isEmpty())
+        m_lassoBounds.translate(0.0, deltaY);
+    invalidateStaticCache();
+    saveAutosave();
+    emit stateChanged();
+    emit toastRequested(QStringLiteral("Espacio vertical insertado ✓"));
+}
+
+void CanvasWidget::cropSelectionToNewPage() {
+    if (m_mode != InteractionMode::None || m_polylineActive || !hasSelection())
+        return;
+    QRectF worldRect = m_lassoBounds;
+    if (worldRect.isEmpty() && !m_selectedShapeId.isEmpty())
+        if (const auto* s = findShapeById(m_selectedShapeId))
+            worldRect = s->bounds;
+    if (worldRect.isEmpty() && !m_selectedImageId.isEmpty())
+        for (const auto& im : m_images)
+            if (im.id == m_selectedImageId)
+                worldRect = im.rect;
+    if (worldRect.isEmpty() && !m_selectedTextId.isEmpty())
+        for (const auto& t : m_texts)
+            if (t.id == m_selectedTextId)
+                worldRect = t.bounds;
+    worldRect = worldRect.normalized().adjusted(-12.0, -12.0, 12.0, 12.0);
+    if (worldRect.width() < 8.0 || worldRect.height() < 8.0)
+        return;
+
+    const double scale = 2.0;
+    const QSize pixelSize(std::clamp(qCeil(worldRect.width() * scale), 16, 4096),
+                          std::clamp(qCeil(worldRect.height() * scale), 16, 4096));
+    QImage captured(pixelSize, QImage::Format_ARGB32_Premultiplied);
+    const auto theme = getThemeConfig(m_themeId);
+    const bool hasPdf = std::any_of(m_images.cbegin(), m_images.cend(),
+                                    [](const ImageItem& img) { return img.isPdfPage && !img.rect.isEmpty(); });
+    captured.fill(hasPdf ? Qt::white : theme.background);
+    {
+        QPainter p(&captured);
+        p.setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform | QPainter::TextAntialiasing);
+        p.scale(double(pixelSize.width()) / worldRect.width(),
+                double(pixelSize.height()) / worldRect.height());
+        p.translate(-worldRect.topLeft());
+        if (!hasPdf)
+            drawBackgroundTemplate(p, backgroundTemplate(), theme, Viewport{0, 0, 1.0}, worldRect);
+        for (bool pdfPass : {true, false})
+            for (const auto& im : m_images)
+                if (im.isPdfPage == pdfPass && im.rect.intersects(worldRect) && !im.image.isNull())
+                    p.drawImage(im.rect, im.image);
+        for (const auto& s : m_shapes)
+            if (s.kind == ShapeKind::ShadedRegion && s.bounds.intersects(worldRect))
+                drawShape(p, s);
+        for (const auto& st : m_strokes)
+            if (st.tool == ToolType::Highlighter && st.bounds.intersects(worldRect))
+                drawStroke(p, st);
+        for (const auto& s : m_shapes)
+            if (s.kind != ShapeKind::ShadedRegion && s.bounds.intersects(worldRect))
+                drawShape(p, s);
+        for (const auto& st : m_strokes)
+            if (st.tool != ToolType::Highlighter && st.bounds.intersects(worldRect))
+                drawStroke(p, st);
+        for (const auto& t : m_texts)
+            if (t.bounds.intersects(worldRect))
+                drawTextItem(p, t);
+    }
+    captured.setDevicePixelRatio(scale);
+
+    if (!preparePageChange())
+        return;
+    PageData newPage;
+    newPage.viewport = fittedSheetViewport(m_pageFormat, size());
+    const QRectF sheet = sheetRectForPageFormat(m_pageFormat);
+    const double maxW = sheet.isEmpty() ? 680.0 : sheet.width() * 0.82;
+    const double targetW = std::min(worldRect.width(), maxW);
+    const double targetH = targetW * (worldRect.height() / std::max(1.0, worldRect.width()));
+    const double topY = sheet.isEmpty() ? -260.0 : sheet.top() + 36.0;
+
+    ImageItem snippet;
+    snippet.id = freshId();
+    snippet.image = captured;
+    snippet.rect = QRectF(-targetW / 2.0, topY, targetW, targetH);
+    newPage.images.append(snippet);
+
+    insertPages(m_currentPageIndex + 1, {newPage});
+    emit toastRequested(QStringLiteral("Recorte enviado a página nueva ✓"));
+}
+
+bool CanvasWidget::hasSelectedAxes() const {
+    if (!m_selectedShapeId.isEmpty()) {
+        const auto* s = findShapeById(m_selectedShapeId);
+        return s && s->kind == ShapeKind::Axes;
+    }
+    if (m_selectedShapeIds.size() == 1) {
+        const auto* s = findShapeById(*m_selectedShapeIds.cbegin());
+        return s && s->kind == ShapeKind::Axes;
+    }
+    return false;
+}
+
+QString CanvasWidget::selectedAxesFunction() const {
+    const QString id = !m_selectedShapeId.isEmpty() ? m_selectedShapeId
+        : (m_selectedShapeIds.size() == 1 ? *m_selectedShapeIds.cbegin() : QString());
+    if (const auto* s = findShapeById(id); s && s->kind == ShapeKind::Axes)
+        return s->label;
+    return {};
+}
+
+void CanvasWidget::setSelectedAxesFunction(const QString& expr) {
+    const QString id = !m_selectedShapeId.isEmpty() ? m_selectedShapeId
+        : (m_selectedShapeIds.size() == 1 ? *m_selectedShapeIds.cbegin() : QString());
+    auto* s = findShapeById(id);
+    if (!s || s->kind != ShapeKind::Axes)
+        return;
+    const QString cleaned = expr.trimmed();
+    if (!cleaned.isEmpty() && !isValidMathFunction(cleaned)) {
+        emit toastRequested(QStringLiteral("Fórmula no válida (ej: x^2 - 4, sin(x), 2*x + 1)"));
+        return;
+    }
+    if (s->label == cleaned)
+        return;
+    pushUndoSnapshot(currentSnapshot());
+    if (auto* target = findShapeById(id)) {
+        target->label = cleaned;
+        target->bounds = computeShapeBounds(*target);
+    }
+    invalidateStaticCache();
+    saveAutosave();
+    emit stateChanged();
+    emit toastRequested(cleaned.isEmpty() ? QStringLiteral("Función borrada") : QStringLiteral("Función graficada ✓"));
+}
+
+void CanvasWidget::createTableShape(int rows, int cols) {
+    if (m_mode != InteractionMode::None)
+        return;
+    if (m_polylineActive)
+        finishActivePolyline();
+    rows = std::clamp(rows, 1, 12);
+    cols = std::clamp(cols, 1, 12);
+    pushUndoSnapshot(currentSnapshot());
+    clearSelection();
+    const QPointF center = screenToWorld(QPointF(width() / 2.0, height() / 2.0));
+    const double w = std::clamp(cols * 76.0, 120.0, 720.0);
+    const double h = std::clamp(rows * 44.0, 72.0, 520.0);
+    ShapeItem table;
+    table.id = freshId();
+    table.kind = ShapeKind::Rectangle;
+    table.color = m_color;
+    table.size = m_size;
+    table.linePattern = LinePattern::Solid;
+    table.closed = true;
+    table.label = QStringLiteral("tabla:%1x%2").arg(rows).arg(cols);
+    table.vertices = {center - QPointF(w / 2.0, h / 2.0), center + QPointF(w / 2.0, h / 2.0)};
+    table.bounds = computeShapeBounds(table);
+    m_shapes.append(table);
+    m_selectedShapeId = table.id;
+    m_tool = ToolType::Select;
+    invalidateStaticCache();
+    saveAutosave();
+    updateCursorShape();
+    emit stateChanged();
+    emit toastRequested(QStringLiteral("Tabla %1×%2 creada ✓").arg(rows).arg(cols));
+}
+
+bool CanvasWidget::insertStickerTemplate(const QString& stickerId, StickerStyle style) {
+    if (m_mode != InteractionMode::None)
+        return false;
+    if (m_polylineActive)
+        finishActivePolyline();
+    const auto tpl = findStickerTemplate(stickerId);
+    if (!tpl)
+        return false;
+    const QPointF centerWorld = screenToWorld(QPointF(width() * 0.5, height() * 0.5));
+    const double scale = std::clamp(1.0 / std::max(0.25, m_viewport.zoom), 0.65, 1.8);
+    const InstantiatedSticker inst = instantiateSticker(*tpl, centerWorld, getThemeConfig(m_themeId), style, scale);
+    if (inst.shapes.isEmpty() && inst.strokes.isEmpty() && inst.texts.isEmpty())
+        return false;
+
+    pushUndoSnapshot(currentSnapshot());
+    clearSelection();
+    for (const auto& shape : inst.shapes) {
+        m_shapes.append(shape);
+        m_selectedShapeIds.insert(shape.id);
+    }
+    for (const auto& stroke : inst.strokes) {
+        m_strokes.append(stroke);
+        m_selectedStrokeIds.insert(stroke.id);
+    }
+    for (const auto& text : inst.texts) {
+        m_texts.append(text);
+        m_selectedTextIds.insert(text.id);
+    }
+    m_tool = ToolType::Lasso;
+    m_lassoBounds = lassoSelectionBounds();
+    invalidateStaticCache();
+    saveAutosave();
+    updateCursorShape();
+    emit toastRequested(inst.title + QStringLiteral(" ✓"));
+    emit stateChanged();
+    update();
+    return true;
+}
+
+bool CanvasWidget::saveSelectionAsSticker(const QString& title, const QString& category) {
+    const QString cleanedTitle = title.trimmed();
+    if (cleanedTitle.isEmpty())
+        return false;
+
+    QVector<Stroke> selStrokes;
+    for (const auto& s : std::as_const(m_strokes)) {
+        if (m_selectedStrokeIds.contains(s.id))
+            selStrokes.append(s);
+    }
+    QVector<ShapeItem> selShapes;
+    for (const auto& sh : std::as_const(m_shapes)) {
+        if (m_selectedShapeIds.contains(sh.id) || (!m_selectedShapeId.isEmpty() && sh.id == m_selectedShapeId))
+            selShapes.append(sh);
+    }
+    QVector<TextItem> selTexts;
+    for (const auto& tx : std::as_const(m_texts)) {
+        if (m_selectedTextIds.contains(tx.id) || (!m_selectedTextId.isEmpty() && tx.id == m_selectedTextId))
+            selTexts.append(tx);
+    }
+    if (selStrokes.isEmpty() && selShapes.isEmpty() && selTexts.isEmpty())
+        return false;
+
+    if (!saveCustomSticker(cleanedTitle, category, selStrokes, selShapes, selTexts))
+        return false;
+    emit toastRequested(QStringLiteral("Sticker guardado: ") + cleanedTitle + QStringLiteral(" ✓"));
+    return true;
 }
 void CanvasWidget::convertSelectionToText() {
     if(m_mode!=InteractionMode::None||m_selectedStrokeIds.isEmpty())return;
-    const QString recognized=HandwritingEngine::instance().recognizeStrokesToText(m_strokes,m_selectedStrokeIds);
-    if(recognized.trimmed().isEmpty()){emit toastRequested(QStringLiteral("No se reconoció texto en la selección"));return;}
+    const QString recognized=HandwritingEngine::instance().recognizeStrokesToText(m_strokes,m_selectedStrokeIds).replace(QLatin1Char('\n'), QLatin1Char(' ')).simplified();
     const QRectF bounds=computeSelectionBounds(m_strokes,m_shapes,m_selectedStrokeIds,{});
+    if(bounds.isEmpty())return;
     QColor inkColor=m_color;
     for(const auto& s:m_strokes)if(m_selectedStrokeIds.contains(s.id)){inkColor=s.color;break;}
-    pushUndoSnapshot(currentSnapshot());
-    m_strokes.removeIf([&](const Stroke& s){return m_selectedStrokeIds.contains(s.id);});
-    TextItem item;
-    item.id=freshId();
-    item.text=recognized;
-    item.color=inkColor;
-    const int lineCount=std::max(1,int(recognized.count(QLatin1Char('\n'))+1));
-    item.fontSize=std::clamp((bounds.height()/double(lineCount))*0.82,16.0,72.0);
-    item.pos=bounds.topLeft();
-    item.bounds=textBounds(item);
-    m_texts.append(item);
-    clearSelection();
-    m_selectedTextId=item.id;
-    invalidateStaticCache();saveAutosave();emit stateChanged();
-    emit toastRequested(QStringLiteral("Texto: «%1» ✓").arg(recognized.left(24)));
-}
-bool CanvasWidget::saveSelectionAsTemplate(const QString& label) {
-    if(m_mode!=InteractionMode::None||m_selectedStrokeIds.isEmpty()||label.trimmed().isEmpty())return false;
-    QVector<QVector<QPointF>> raw;
-    for(const auto& s:m_strokes) {
-        if(!m_selectedStrokeIds.contains(s.id)||s.points.size()<2)continue;
-        QVector<QPointF> pts;pts.reserve(s.points.size());
-        for(const auto& p:s.points)pts.append(QPointF(p.x,p.y));
-        raw.append(std::move(pts));
-    }
-    if(raw.isEmpty())return false;
-    if(!HandwritingEngine::instance().saveCustomTemplate(label,raw))return false;
-    emit toastRequested(QStringLiteral("Plantilla «%1» guardada ✓").arg(label.trimmed()));
-    return true;
+
+    finishTextEditor(this, true);
+    const QSet<QString> strokesToConvert = m_selectedStrokeIds;
+    TextItem draft;
+    draft.id = freshId();
+    draft.text = recognized;
+    draft.color = inkColor;
+    draft.fontSize = std::clamp(bounds.height() * 0.84, 18.0, 68.0);
+    draft.pos = bounds.topLeft();
+    draft.bounds = textBounds(draft);
+
+    auto* editor = new InlineTextEditor(this);
+    editor->setText(draft.text);
+    editor->setPlaceholderText(QStringLiteral("Escribe o corrige el texto…"));
+    editor->setFont(textFont(draft.fontSize * m_viewport.zoom));
+    const auto theme = getThemeConfig(m_themeId);
+    editor->setStyleSheet(QStringLiteral("QLineEdit { background: %1; color: %2; border: 1.5px solid %3; border-radius: 6px; padding: 4px 6px; }")
+                              .arg(theme.uiSurface.name(), draft.color.name(), theme.accent.name()));
+    const QPointF anchor = draft.pos * m_viewport.zoom + QPointF(m_viewport.x, m_viewport.y);
+    editor->move(anchor.toPoint());
+    editor->resize(std::max(220, qRound(QFontMetricsF(editor->font()).horizontalAdvance(draft.text) + 36)),
+                   qRound(QFontMetricsF(editor->font()).height() + 14));
+    connect(editor, &QLineEdit::textChanged, editor, [editor](const QString& text) {
+        editor->resize(std::max(220, qRound(QFontMetricsF(editor->font()).horizontalAdvance(text) + 36)),
+                       editor->height());
+    });
+    editor->commit = [this, draft, strokesToConvert](const QString& text) mutable {
+        const QString cleaned = text.trimmed();
+        if (cleaned.isEmpty())
+            return;
+        pushUndoSnapshot(currentSnapshot());
+        m_strokes.removeIf([&](const Stroke& s) { return strokesToConvert.contains(s.id); });
+        draft.text = cleaned;
+        draft.bounds = textBounds(draft);
+        m_texts.append(draft);
+        clearSelection();
+        m_selectedTextId = draft.id;
+        invalidateStaticCache();
+        saveAutosave();
+        emit stateChanged();
+        emit toastRequested(QStringLiteral("Texto: «%1» ✓").arg(cleaned.left(24)));
+    };
+    editor->show();
+    editor->setFocus(Qt::MouseFocusReason);
+    editor->selectAll();
+    update();
 }
 bool CanvasWidget::copySelection() {
     if (m_mode != InteractionMode::None || m_polylineActive)
@@ -1183,11 +1215,32 @@ void CanvasWidget::finishActivePolyline(bool closeShape) {
 }
 void CanvasWidget::setEraserMode(EraserMode mode) { m_eraserMode=mode;emit stateChanged(); }
 void CanvasWidget::setEraserSize(double size) { if(!finite(size))return;m_eraserSize=std::clamp(size,1.0,500.0);update();emit stateChanged(); }
+void CanvasWidget::setEraserPreserveShapes(bool preserve) {
+    if (m_eraserPreserveShapes == preserve)
+        return;
+    m_eraserPreserveShapes = preserve;
+    QSettings("Finily", "Finily").setValue("ink/eraserPreserveShapes", preserve);
+    emit stateChanged();
+}
+void CanvasWidget::setEraserOnlyHighlight(bool onlyHighlight) {
+    if (m_eraserOnlyHighlight == onlyHighlight)
+        return;
+    m_eraserOnlyHighlight = onlyHighlight;
+    QSettings("Finily", "Finily").setValue("ink/eraserOnlyHighlight", onlyHighlight);
+    emit stateChanged();
+}
 void CanvasWidget::setInkColor(const QColor& color) {
-    if (!color.isValid() || m_color == color)
+    if (!color.isValid())
         return;
     clearPenCursor();
     m_color = color;
+    // Cambio de color en 1 clic si hay objetos seleccionados (estilo Xournal++ / PDF Annotator)
+    if (m_mode == InteractionMode::None && !m_polylineActive && hasSelection()) {
+        SelectionStyle edits;
+        edits.color = color;
+        setSelectionStyle(edits);
+        return;
+    }
     emit stateChanged();
 }
 
@@ -1195,10 +1248,15 @@ void CanvasWidget::setStrokeSize(double size) {
     if (!finite(size))
         return;
     const double width = std::clamp(size, .1, 200.0);
-    if (m_size == width)
-        return;
     clearPenCursor();
     m_size = width;
+    // Cambio de grosor en 1 clic si hay objetos seleccionados
+    if (m_mode == InteractionMode::None && !m_polylineActive && hasSelection()) {
+        SelectionStyle edits;
+        edits.width = width;
+        setSelectionStyle(edits);
+        return;
+    }
     emit stateChanged();
 }
 
@@ -1215,6 +1273,14 @@ void CanvasWidget::setLineEnding(LineEnding ending) {
     m_lineEnding = ending;
     emit stateChanged();
 }
+void CanvasWidget::setPressureSensitivity(double sensitivity) {
+    if (!finite(sensitivity)) return;
+    const double clamped = std::clamp(sensitivity, 0.0, 1.0);
+    if (std::abs(m_pressureSensitivity - clamped) < 1e-6) return;
+    m_pressureSensitivity = clamped;
+    QSettings("Finily", "Finily").setValue("ink/pressureSensitivity", clamped);
+    emit stateChanged();
+}
 void CanvasWidget::setPressureProfile(PressureProfile profile) {
     if(int(profile)<int(PressureProfile::Light)||int(profile)>int(PressureProfile::Firm))return;
     if(m_pressureProfile==profile)return;
@@ -1224,6 +1290,14 @@ void CanvasWidget::setStabilizer(double strength) {
     if(!finite(strength))return;
     m_stabilizer=std::clamp(strength,0.0,1.0);
     m_stabilizerFilter->setStrength(m_stabilizer);emit stateChanged();
+}
+void CanvasWidget::setHighlighterOpacity(double opacity) {
+    if (!finite(opacity)) return;
+    const double clamped = std::clamp(opacity, 0.10, 0.70);
+    if (std::abs(m_highlighterOpacity - clamped) < 1e-6) return;
+    m_highlighterOpacity = clamped;
+    QSettings("Finily", "Finily").setValue("ink/highlighterOpacity", clamped);
+    emit stateChanged();
 }
 void CanvasWidget::setThemeId(ThemeId id) {
     clearPenCursor();const auto old=getThemeConfig(m_themeId);m_themeId=id;
@@ -1252,12 +1326,56 @@ void CanvasWidget::setBackgroundTemplate(BackgroundTemplate tpl) {
     emit pageStructureChanged();
     emit stateChanged();
 }
+QRectF CanvasWidget::activeFiniteSheetRect() const {
+    for (const auto& item : m_images)
+        if (item.isPdfPage && !item.rect.isEmpty())
+            return item.rect;
+    return sheetRectForPageFormat(m_pageFormat);
+}
+
+void CanvasWidget::clampFiniteViewport() {
+    if (width() <= 0 || height() <= 0)
+        return;
+    const QRectF sheet = activeFiniteSheetRect();
+    if (sheet.isEmpty())
+        return;
+
+    const double availW = std::max(240.0, width() - 156.0);
+    const double availH = std::max(200.0, height() - 116.0);
+    const double minZoom = std::clamp(std::min(availW / sheet.width(), availH / sheet.height()), 0.2, 5.0);
+    m_viewport.zoom = std::clamp(m_viewport.zoom, minZoom, 5.0);
+
+    const double sheetW = sheet.width() * m_viewport.zoom;
+    const double sheetH = sheet.height() * m_viewport.zoom;
+    const double marginX = 72.0;
+    const double marginY = 58.0;
+
+    if (sheetW <= width() - marginX * 2.0) {
+        m_viewport.x = width() / 2.0 - sheet.center().x() * m_viewport.zoom;
+    } else {
+        const double maxX = marginX - sheet.left() * m_viewport.zoom;
+        const double minX = (width() - marginX) - sheet.right() * m_viewport.zoom;
+        m_viewport.x = std::clamp(m_viewport.x, std::min(minX, maxX), std::max(minX, maxX));
+    }
+
+    if (sheetH <= height() - marginY * 2.0) {
+        m_viewport.y = height() / 2.0 - sheet.center().y() * m_viewport.zoom;
+    } else {
+        const double maxY = marginY - sheet.top() * m_viewport.zoom;
+        const double minY = (height() - marginY) - sheet.bottom() * m_viewport.zoom;
+        m_viewport.y = std::clamp(m_viewport.y, std::min(minY, maxY), std::max(minY, maxY));
+    }
+}
+
 void CanvasWidget::setPageFormat(PageFormat format) {
     if(format!=PageFormat::Infinite&&format!=PageFormat::A4&&format!=PageFormat::Slide16x9)return;
     if(m_pageFormat==format)return;
     m_pageFormat=format;m_dirty=true;
     m_zoomAnimation->stop();clearPenCursor();
-    if(format!=PageFormat::Infinite)m_viewport=fittedSheetViewport(format,size());
+    if(format!=PageFormat::Infinite) {
+        m_viewport=fittedSheetViewport(format,size());
+        clampFiniteViewport();
+    }
     invalidateStaticCache();saveAutosave();emit pageStructureChanged();emit stateChanged();emit viewportChanged(m_viewport.zoom);
 }
 QPointF CanvasWidget::screenToWorld(const QPointF& p) const { return {(p.x()-m_viewport.x)/m_viewport.zoom,(p.y()-m_viewport.y)/m_viewport.zoom}; }
@@ -1266,11 +1384,19 @@ void CanvasWidget::zoomByFactor(double factor,const QPointF& anchor) {
     m_zoomAnimation->stop();clearPenCursor();
     const auto world=screenToWorld(anchor);m_viewport.zoom=std::clamp(m_viewport.zoom*factor,0.2,5.0);
     m_viewport.x=anchor.x()-world.x()*m_viewport.zoom;m_viewport.y=anchor.y()-world.y()*m_viewport.zoom;
+    clampFiniteViewport();
     invalidateStaticCache();emit viewportChanged(m_viewport.zoom);
 }
 void CanvasWidget::animateViewport(const Viewport& target) {
     m_zoomAnimation->stop();clearPenCursor();m_zoomStart=m_viewport;m_zoomTarget=target;
-    if(m_zoomStart.x==target.x&&m_zoomStart.y==target.y&&m_zoomStart.zoom==target.zoom)return;
+    if (!activeFiniteSheetRect().isEmpty()) {
+        const Viewport saved = m_viewport;
+        m_viewport = target;
+        clampFiniteViewport();
+        m_zoomTarget = m_viewport;
+        m_viewport = saved;
+    }
+    if(m_zoomStart.x==m_zoomTarget.x&&m_zoomStart.y==m_zoomTarget.y&&m_zoomStart.zoom==m_zoomTarget.zoom)return;
     m_zoomAnimation->start();
 }
 void CanvasWidget::animateZoom(double factor) {
@@ -1290,667 +1416,28 @@ void CanvasWidget::resetViewport() {
     saveAutosave();
 }
 
-bool CanvasWidget::preparePageChange() {
-    if (m_mode == InteractionMode::LaserTrail)
-        m_mode = InteractionMode::None;
-    if (m_mode != InteractionMode::None)
-        return false;
-    finishTextEditor(this, true);
-    if (m_polylineActive)
-        finishActivePolyline();
-    flushPendingBeautify();
-    m_zoomAnimation->stop();
-    return true;
-}
-
-void CanvasWidget::loadWorkingPage(int index, bool structureChanged) {
-    m_zoomAnimation->stop();
-    stopShapePulse();
-    clearPenCursor();
-    m_holdTimer->stop();
-    m_laserTimer->stop();
-    m_laserTrail.clear();
-    m_tabletActive = false;
-    m_currentPageIndex = index;
-    const auto& page = m_pages.at(index);
-    m_strokes = page.strokes;
-    m_shapes = page.shapes;
-    m_images = page.images;
-    m_texts = page.texts;
-    m_viewport = page.viewport;
-    if (m_viewport.x == 0 && m_viewport.y == 0 && m_viewport.zoom == 1) {
-        for (const auto& image : m_images) {
-            if (image.isPdfPage && !image.rect.isEmpty()) {
-                m_viewport = fittedPdfViewport(image.rect, size());
-                break;
-            }
-        }
-    }
-    clearSelection();
-    updateCursorShape();
-    invalidateStaticCache();
-    saveAutosave();
-    if (structureChanged)
-        emit pageStructureChanged();
-    emit stateChanged();
-    emit viewportChanged(m_viewport.zoom);
-}
-
-void CanvasWidget::goToPage(int index) {
-    if (index < 0 || index >= pageCount() || index == m_currentPageIndex || !preparePageChange())
-        return;
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    loadWorkingPage(index, false);
-}
-
-void CanvasWidget::addPage() { insertPage(m_currentPageIndex + 1); }
-void CanvasWidget::nextPage() { goToPage(m_currentPageIndex + 1); }
-void CanvasWidget::prevPage() { goToPage(m_currentPageIndex - 1); }
-void CanvasWidget::deleteCurrentPage() { deletePages({m_currentPageIndex}); }
-
-void CanvasWidget::insertPage(int index, std::optional<BackgroundTemplate> background) {
-    PageData page;
-    page.viewport = fittedSheetViewport(m_pageFormat, size());
-    page.background = background;
-    insertPages(index, {page});
-}
-
-void CanvasWidget::insertPages(int index, const QVector<PageData>& pages) {
-    if (pages.isEmpty() || index < 0 || index > pageCount() || !preparePageChange())
-        return;
-    pushPageHistory();
-    int position = index;
-    for (const auto& page : pages)
-        m_pages.insert(position++, page);
-    loadWorkingPage(index, true);
-}
-
-bool CanvasWidget::movePages(QVector<int> indices, int destination) {
-    indices = validPageIndices(std::move(indices), pageCount());
-    if (indices.isEmpty() || destination < 0 || destination > pageCount())
-        return false;
-    const int before = int(std::lower_bound(indices.cbegin(), indices.cend(), destination) - indices.cbegin());
-    const int target = destination - before;
-    if (indices.last() - indices.first() + 1 == indices.size() && target == indices.first())
-        return false;
-    if (!preparePageChange())
-        return false;
-    pushPageHistory();
-    QVector<PageData> moved;
-    for (int index : std::as_const(indices))
-        moved.append(m_pages.at(index));
-    for (auto it = indices.crbegin(); it != indices.crend(); ++it)
-        m_pages.removeAt(*it);
-    for (qsizetype i = 0; i < moved.size(); ++i)
-        m_pages.insert(target + i, moved.at(i));
-    loadWorkingPage(target, true);
-    return true;
-}
-
-void CanvasWidget::duplicatePages(QVector<int> indices) {
-    indices = validPageIndices(std::move(indices), pageCount());
-    if (indices.isEmpty() || !preparePageChange())
-        return;
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    QVector<PageData> copies;
-    for (int index : std::as_const(indices))
-        copies.append(m_pages.at(index));
-    insertPages(indices.last() + 1, copies);
-}
-
-bool CanvasWidget::copyPages(QVector<int> indices) {
-    indices = validPageIndices(std::move(indices), pageCount());
-    if (indices.isEmpty() || !preparePageChange())
-        return false;
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    m_copiedPages.clear();
-    for (int index : std::as_const(indices)) {
-        m_copiedPages.append(m_pages.at(index));
-        if (!m_copiedPages.last().background)
-            m_copiedPages.last().background = m_template;
-    }
-    emit toastRequested(tr("Páginas copiadas · %1").arg(indices.size()));
-    return true;
-}
-
-void CanvasWidget::pastePages(int index) { insertPages(index, m_copiedPages); }
-
-void CanvasWidget::deletePages(QVector<int> indices) {
-    indices = validPageIndices(std::move(indices), pageCount());
-    if (indices.isEmpty() || !preparePageChange())
-        return;
-    pushPageHistory();
-    const int current = m_currentPageIndex;
-    const auto firstAtOrAfter = std::lower_bound(indices.cbegin(), indices.cend(), current);
-    const int removedBefore = int(firstAtOrAfter - indices.cbegin());
-    for (auto it = indices.crbegin(); it != indices.crend(); ++it)
-        m_pages.removeAt(*it);
-    if (m_pages.isEmpty()) {
-        PageData blank;
-        blank.viewport = fittedSheetViewport(m_pageFormat, size());
-        m_pages.append(blank);
-    }
-    loadWorkingPage(std::min(current - removedBefore, int(m_pages.size()) - 1), true);
-}
-bool CanvasWidget::currentPageHasContent() const { return !m_strokes.isEmpty()||!m_shapes.isEmpty()||!m_images.isEmpty()||!m_texts.isEmpty(); }
-bool CanvasWidget::hasUnsavedChanges() const {
-    if(!m_dirty)return false;
-    if(currentPageHasContent()||m_pages.size()>1||m_pageFormat!=PageFormat::Infinite)return true;
-    return !m_currentFilePath.isEmpty(); // un cuaderno guardado que se vació también es un cambio
-}
-DocumentSnapshot CanvasWidget::currentSnapshot() const { return {m_strokes,m_shapes,m_images,m_texts}; }
-void CanvasWidget::pushUndoSnapshot(const DocumentSnapshot& snapshot) {
-    m_undoStack.append({m_currentPageIndex, snapshot, {}});
-    if (m_undoStack.size() > 100)
-        m_undoStack.removeFirst();
-    m_redoStack.clear();
-    m_dirty = true;
-}
-
-void CanvasWidget::pushPageHistory() {
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    m_undoStack.append({m_currentPageIndex, {}, m_pages});
-    if (m_undoStack.size() > 100)
-        m_undoStack.removeFirst();
-    m_redoStack.clear();
-    m_dirty = true;
-}
-
-void CanvasWidget::restoreHistoryEntry(QVector<HistoryEntry>& source, QVector<HistoryEntry>& destination) {
-    if (source.isEmpty())
-        return;
-    auto entry = source.takeLast();
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    const bool structureChanged = !entry.pages.isEmpty();
-    if (structureChanged) {
-        destination.append({m_currentPageIndex, {}, m_pages});
-        m_pages = std::move(entry.pages);
-    } else {
-        auto& page = m_pages[entry.pageIndex];
-        destination.append({entry.pageIndex, {page.strokes, page.shapes, page.images, page.texts}, {}});
-        page.strokes = entry.content.strokes;
-        page.shapes = entry.content.shapes;
-        page.images = entry.content.images;
-        page.texts = entry.content.texts;
-    }
-    m_dirty = true;
-    loadWorkingPage(entry.pageIndex, structureChanged);
-}
-
-void CanvasWidget::undo() {
-    if (m_mode != InteractionMode::None)
-        return;
-    finishTextEditor(this, true);
-    if (m_polylineActive) {
-        cancelActivePolyline();
-        return;
-    }
-    if (m_beautifyTimer) m_beautifyTimer->stop();
-    m_pendingBeautifyStart = -1; m_pendingBeautifyBox = QRectF();
-    restoreHistoryEntry(m_undoStack, m_redoStack);
-}
-
-void CanvasWidget::redo() {
-    if (m_mode != InteractionMode::None || m_polylineActive)
-        return;
-    finishTextEditor(this, true);
-    if (m_beautifyTimer) m_beautifyTimer->stop();
-    m_pendingBeautifyStart = -1; m_pendingBeautifyBox = QRectF();
-    restoreHistoryEntry(m_redoStack, m_undoStack);
-}
-
-void CanvasWidget::clearBoard() {
-    if (m_mode != InteractionMode::None)
-        return;
-    finishTextEditor(this, true);
-    if (m_polylineActive)
-        cancelActivePolyline();
-    if (m_strokes.isEmpty() && m_shapes.isEmpty() && m_texts.isEmpty()
-        && std::none_of(m_images.cbegin(), m_images.cend(), [](const auto& image) { return !image.isPdfPage; }))
-        return;
-    flushPendingBeautify();
-    pushUndoSnapshot(currentSnapshot());
-    m_strokes.clear();
-    m_shapes.clear();
-    m_images.removeIf([](const auto& image) { return !image.isPdfPage; });
-    m_texts.clear();
-    clearSelection();
-    saveAutosave();
-    emit stateChanged();
-}
-void CanvasWidget::newDocument() {
-    m_zoomAnimation->stop();stopShapePulse();clearPenCursor();
-    finishTextEditor(this,false);m_holdTimer->stop();m_laserTimer->stop();m_laserTrail.clear();
-    m_beautifyTimer->stop();m_pendingBeautifyStart=-1;
-    m_mode=InteractionMode::None;m_tabletActive=false;m_hasActiveStroke=false;m_hasActiveShape=false;m_holdSnappedToShape=false;
-    cancelActivePolyline();m_strokes.clear();m_shapes.clear();m_images.clear();m_texts.clear();m_currentFilePath.clear();
-    m_pages={PageData{}};m_currentPageIndex=0;m_dirty=false;
-    m_undoStack.clear();m_redoStack.clear();m_showEraserCursor=false;clearSelection();m_viewport=fittedSheetViewport(m_pageFormat,size());emit viewportChanged(m_viewport.zoom);updateCursorShape();saveAutosave();emit pageStructureChanged();emit stateChanged();
-}
-
-bool CanvasWidget::createNotebook(const QString& path, ThemeId theme, BackgroundTemplate background,
-                                  PageFormat format) {
-    if (m_mode != InteractionMode::None || path.isEmpty())
-        return false;
-    PageData page;
-    page.viewport = fittedSheetViewport(format, size());
-    const auto settings = documentSettings(m_shapeKind, m_holdToShapeEnabled, m_smartGuidesEnabled,
-        m_swapPenButtons, m_pressureProfile, theme, background, page.viewport, format);
-    // El borrador anterior sigue abierto si falla la creación del archivo.
-    return serializeDocumentToFile(path, {page}, 0, settings, true) && loadFromFile(path);
-}
-
-bool CanvasWidget::saveToFile(const QString& path, bool newFile) {
-    if (!preparePageChange() || path.isEmpty())
-        return false;
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    const auto settings = documentSettings(m_shapeKind, m_holdToShapeEnabled, m_smartGuidesEnabled,
-        m_swapPenButtons, m_pressureProfile, m_themeId, m_template, m_viewport, m_pageFormat);
-    if (!serializeDocumentToFile(path, m_pages, m_currentPageIndex, settings, newFile)) {
-        emit toastRequested(tr("No se pudo guardar el cuaderno"));
-        return false;
-    }
-    m_currentFilePath = path;
-    m_dirty = false;
-    saveAutosave();
-    emit stateChanged();
-    emit toastRequested(tr("Guardado ✓"));
-    return true;
-}
-void CanvasWidget::saveAutosave() const { m_autosaveTimer->start(); }
-void CanvasWidget::flushAutosave() { if(m_autosaveTimer->isActive()){m_autosaveTimer->stop();writeAutosaveNow();} }
-void CanvasWidget::writeAutosaveNow() const {
-    DocumentSnapshot document=currentSnapshot();
-    if(m_mode==InteractionMode::Erase)document=m_snapshotBeforeErase;
-    if(m_mode==InteractionMode::ShapeDragHandle||m_mode==InteractionMode::ShapeMove||m_mode==InteractionMode::ShapeScale)document=m_snapshotBeforeShapeEdit;
-    if(m_mode==InteractionMode::LassoMove||m_mode==InteractionMode::LassoScale||m_mode==InteractionMode::LassoRotate)document=m_snapshotBeforeLassoTransform;
-    if(m_mode==InteractionMode::ImageMove||m_mode==InteractionMode::ImageResize)document=m_snapshotBeforeImageEdit;
-    if(m_mode==InteractionMode::TextMove)document=m_snapshotBeforeTextEdit;
-    const auto path=autosavePath();if(!QDir().mkpath(QFileInfo(path).absolutePath()))return;
-    auto* self=const_cast<CanvasWidget*>(this);
-    syncWorkingPage(self->m_pages,self->m_currentPageIndex,document,m_viewport);
-    auto settings=documentSettings(m_shapeKind,m_holdToShapeEnabled,m_smartGuidesEnabled,m_swapPenButtons,m_pressureProfile,m_themeId,m_template,m_viewport,m_pageFormat);
-    // Autoguardado real: si el cuaderno ya tiene archivo .finily, también lo actualiza
-    // atómicamente en disco (QSaveFile) para jamás perder trabajo!
-    if(!m_currentFilePath.isEmpty()&&m_dirty) {
-        if(serializeDocumentToFile(m_currentFilePath,m_pages,m_currentPageIndex,settings))
-            self->m_dirty=false;
-    }
-    // Datos de sesión: al reabrir la app se recupera el cuaderno asociado y si
-    // tenía cambios sin guardar (los .finily del usuario nunca los llevan).
-    settings.insert("sessionFilePath",m_currentFilePath);settings.insert("sessionDirty",self->m_dirty);
-    serializeDocumentToFile(path,m_pages,m_currentPageIndex,settings);
-}
-void CanvasWidget::loadAutosave() {
-    const auto previousPath=m_currentFilePath;const bool previousDirty=m_dirty;
-    if(!loadFromFile(autosavePath())){m_currentFilePath=previousPath;m_dirty=previousDirty;return;}
-    // loadFromFile ya restauró la sesión; un autoguardado antiguo (sin datos de
-    // sesión) deja la ruta apuntando al propio autosave.json.
-    if(m_currentFilePath==autosavePath()){m_currentFilePath.clear();m_dirty=true;}
-    if(!m_currentFilePath.isEmpty()&&!QFileInfo::exists(m_currentFilePath)){m_currentFilePath.clear();m_dirty=true;}
-    m_autosaveTimer->stop();emit stateChanged();
-}
-bool CanvasWidget::loadFromFile(const QString& path) {
-    if(m_mode!=InteractionMode::None)return false;
-    const auto root=loadDocumentFromFile(path);if(root.isEmpty())return false;
-    m_zoomAnimation->stop();stopShapePulse();clearPenCursor();
-    finishTextEditor(this,false);
-    m_beautifyTimer->stop();m_pendingBeautifyStart=-1;
-    QVector<PageData> pages;QHash<QString,QVector<ImageItem>> pdfSources;
-    if(root.value("version").toInt()==5)for(const auto& value:root.value("pages").toArray())pages.append(deserializePage(value.toObject(),pdfSources));
-    else pages.append(deserializePage(root,pdfSources));
-    if(pages.isEmpty())pages.append(PageData{});
-    m_liveInk.reset();m_liveInkLayer=QImage();m_radialOpen=false;
-    m_pages=std::move(pages);m_currentPageIndex=std::clamp(root.value("currentPageIndex").toInt(),0,int(m_pages.size())-1);
-    const auto page=m_pages[m_currentPageIndex];
-    m_strokes=page.strokes;m_shapes=page.shapes;m_images=page.images;m_texts=page.texts;m_viewport=page.viewport;
-    m_selectedTextId.clear();m_laserTrail.clear();m_laserTimer->stop();m_hasActiveStroke=false;
-    m_undoStack.clear();m_redoStack.clear();
-    m_selectedStrokeIds.clear();m_selectedShapeIds.clear();m_selectedTextIds.clear();m_selectedImageIds.clear();m_selectedImageId.clear();m_lassoBounds={};m_lassoPolygon.clear();m_linkedPreview=false;
-    m_polylineActive=false;m_lastPolylineTapMs=-1;m_polylineVertices.clear();m_hasActiveShape=false;m_selectedShapeId.clear();m_activeGuides.clear();
-    const int shapeKind=root.value("shapeKind").toInt(int(ShapeKind::Triangle));
-    if(shapeKind>=0&&shapeKind<=int(ShapeKind::AngleMarker)&&shapeKind!=int(ShapeKind::ShadedRegion))m_shapeKind=ShapeKind(shapeKind);
-    m_holdToShapeEnabled=root.value("holdToShapeEnabled").toBool(true);m_smartGuidesEnabled=root.value("smartGuidesEnabled").toBool(true);
-    m_swapPenButtons=root.value("swapPenButtons").toBool(false);
-    const int profile=root.value("pressureProfile").toInt(int(PressureProfile::Light));
-    if(profile>=int(PressureProfile::Light)&&profile<=int(PressureProfile::Firm))m_pressureProfile=PressureProfile(profile);
-    const int format=root.value("pageFormat").toInt(int(PageFormat::Infinite));
-    m_pageFormat=format>=int(PageFormat::Infinite)&&format<=int(PageFormat::Slide16x9)?PageFormat(format):PageFormat::Infinite;
-    const int theme=root.value("theme").toInt(0),tpl=root.value("template").toInt(2);
-    if(theme>=0&&theme<=int(ThemeId::PaperCream))m_themeId=ThemeId(theme);
-    if(tpl>=0&&tpl<=int(BackgroundTemplate::Ruled))m_template=BackgroundTemplate(tpl);
-    m_color=getThemeConfig(m_themeId).defaultInk;
-    m_currentFilePath=path;m_dirty=false;
-    if(root.contains("sessionFilePath")){m_currentFilePath=root.value("sessionFilePath").toString();m_dirty=root.value("sessionDirty").toBool(false);}
-    invalidateStaticCache();saveAutosave();emit pageStructureChanged();emit stateChanged();emit viewportChanged(m_viewport.zoom);return true;
-}
-void CanvasWidget::invalidateStaticCache() { m_staticCacheDirty=true;update(); }
-void CanvasWidget::rebuildStaticCache() {
-    const double dpr=devicePixelRatioF();const QSize pixels(qCeil(width()*dpr),qCeil(height()*dpr));
-    if(pixels.isEmpty())return;
-    if(m_staticCache.size()!=pixels||m_staticCache.devicePixelRatio()!=dpr) {
-        m_staticCache=QImage(pixels,QImage::Format_ARGB32_Premultiplied);m_staticCache.setDevicePixelRatio(dpr);
-    }
-    const auto theme=getThemeConfig(m_themeId);
-    const bool hasPdfPage=std::any_of(m_images.cbegin(),m_images.cend(),[](const ImageItem& img){return img.isPdfPage&&!img.rect.isEmpty();});
-    const auto sheet=hasPdfPage?QRectF():sheetRectForPageFormat(m_pageFormat);
-    // Sin bordes negros: en Hoja/Diapo el exterior usa el mismo color del tema (sin cuadrícula);
-    // en PDFs usa un tono armónico suave.
-    m_staticCache.fill(hasPdfPage?(theme.isDark?theme.background.darker(118):QColor("#eef0f4")):theme.background);
-    QPainter p(&m_staticCache);p.translate(m_viewport.x,m_viewport.y);p.scale(m_viewport.zoom,m_viewport.zoom);
-    const QRectF visible(screenToWorld(QPointF(0,0)),screenToWorld(QPointF(width(),height())));
-    if(hasPdfPage) {
-        // Modo presentación / PDF: fondo de escritorio limpio SIN cuadrícula de pizarra detrás.
-    } else if(sheet.isEmpty())drawBackgroundTemplate(p,backgroundTemplate(),theme,m_viewport,visible);
-    else {
-        p.save();
-        p.fillRect(sheet,theme.background);
-        p.save();p.setClipRect(sheet,Qt::IntersectClip);
-        drawBackgroundTemplate(p,backgroundTemplate(),theme,m_viewport,sheet.intersected(visible));p.restore();
-        p.setBrush(Qt::NoBrush);
-        QPen border(theme.isDark?QColor(255,255,255,22):QColor(15,23,42,24));
-        border.setStyle(Qt::DashLine);
-        border.setWidthF(1.0/m_viewport.zoom);p.setPen(border);p.drawRect(sheet);p.restore();
-    }
-    p.setRenderHint(QPainter::SmoothPixmapTransform);
-    for(int pass=0;pass<2;++pass)for(const auto& image:m_images) {
-        if(image.isPdfPage!=(pass==0)||image.id==m_selectedImageId||!image.rect.intersects(visible))continue;
-        if(image.isPdfPage){p.fillRect(image.rect.translated(4/m_viewport.zoom,5/m_viewport.zoom),QColor(0,0,0,38));p.fillRect(image.rect,Qt::white);}
-        p.drawImage(image.rect,image.image);
-    }
-    auto drawPass=[&](QPainter& target,bool highlights) {
-        for(const auto& stroke:m_strokes) {
-            if((stroke.tool==ToolType::Highlighter)!=highlights||m_selectedStrokeIds.contains(stroke.id))continue;
-            const double margin=std::max(16.0,stroke.size*5.0);
-            if(stroke.bounds.adjusted(-margin,-margin,margin,margin).intersects(visible))drawStroke(target,stroke);
-        }
-    };
-    auto drawShapes=[&](QPainter& target,bool shading) {
-        for(const auto& shape:m_shapes)
-            if((shape.kind==ShapeKind::ShadedRegion)==shading&&shape.id!=m_selectedShapeId
-               &&!m_selectedShapeIds.contains(shape.id)&&shape.bounds.intersects(visible))drawShape(target,shape);
-    };
-    const bool selectedHighlight=std::any_of(m_strokes.cbegin(),m_strokes.cend(),[&](const Stroke& stroke){return m_selectedStrokeIds.contains(stroke.id)&&stroke.tool==ToolType::Highlighter;});
-    const bool selectedShade=std::any_of(m_shapes.cbegin(),m_shapes.cend(),[&](const ShapeItem& shape){return (m_selectedShapeIds.contains(shape.id)||shape.id==m_selectedShapeId)&&shape.kind==ShapeKind::ShadedRegion;});
-    const bool imageUnderlay=!m_selectedImageId.isEmpty();
-    if(!imageUnderlay)drawShapes(p,true);
-    if(!imageUnderlay&&!selectedShade)drawPass(p,true);
-    if((m_hasActiveStroke&&m_activeStroke.tool==ToolType::Highlighter)||selectedHighlight||selectedShade||imageUnderlay) {
-        auto& layers=highlighterLayers(this);
-        layers.background=m_staticCache.copy();
-        layers.ink=QImage(pixels,QImage::Format_ARGB32_Premultiplied);
-        layers.ink.setDevicePixelRatio(dpr);layers.ink.fill(Qt::transparent);
-        {
-            QPainter inkPainter(&layers.ink);
-            inkPainter.translate(m_viewport.x,m_viewport.y);inkPainter.scale(m_viewport.zoom,m_viewport.zoom);
-            if(imageUnderlay)drawShapes(inkPainter,true);
-            if(imageUnderlay||selectedShade)drawPass(inkPainter,true);
-            drawShapes(inkPainter,false);drawPass(inkPainter,false);
-            for(const auto& item:m_texts)if(item.id!=m_selectedTextId)drawTextItem(inkPainter,item);
-        }
-        p.save();p.resetTransform();p.drawImage(QPointF(0,0),layers.ink);p.restore();
-    } else {
-        drawShapes(p,false);drawPass(p,false);
-        for(const auto& item:m_texts)if(item.id!=m_selectedTextId)drawTextItem(p,item);
-        // Release temporary full-size buffers as soon as the highlight commits.
-        auto* child=findChild<QObject*>(QStringLiteral("_finily_highlighter_layers"),Qt::FindDirectChildrenOnly);
-        if(child) { auto* layers=static_cast<HighlighterLayers*>(child);layers->background=QImage();layers->ink=QImage(); }
-    }
-    m_staticCacheDirty=false;
-}
-void CanvasWidget::paintEvent(QPaintEvent*) {
-    const double dpr = devicePixelRatioF();
-    const QSize pixels(qCeil(width() * dpr), qCeil(height() * dpr));
-    if (m_staticCacheDirty || m_staticCache.size() != pixels || m_staticCache.devicePixelRatio() != dpr)
-        rebuildStaticCache();
-    const bool liveHighlight=(m_hasActiveStroke&&m_activeStroke.tool==ToolType::Highlighter)||!m_selectedImageId.isEmpty()
-        ||std::any_of(m_strokes.cbegin(),m_strokes.cend(),[&](const Stroke& stroke){return m_selectedStrokeIds.contains(stroke.id)&&stroke.tool==ToolType::Highlighter;})
-        ||std::any_of(m_shapes.cbegin(),m_shapes.cend(),[&](const ShapeItem& shape){return (m_selectedShapeIds.contains(shape.id)||shape.id==m_selectedShapeId)&&shape.kind==ShapeKind::ShadedRegion;});
-    QPainter p(this);
-    p.drawImage(QPointF(0,0),liveHighlight?highlighterLayers(this).background:m_staticCache);
-    p.translate(m_viewport.x,m_viewport.y);p.scale(m_viewport.zoom,m_viewport.zoom);
-    for(const auto& image:m_images)if(image.id==m_selectedImageId){p.setRenderHint(QPainter::SmoothPixmapTransform);p.drawImage(image.rect,image.image);}
-    for(const auto& shape:m_shapes)if(shape.kind==ShapeKind::ShadedRegion&&(m_selectedShapeIds.contains(shape.id)||shape.id==m_selectedShapeId))drawShape(p,shape);
-    for(const auto& stroke:m_strokes)if(m_selectedStrokeIds.contains(stroke.id)&&stroke.tool==ToolType::Highlighter)drawStroke(p,stroke);
-    if(m_hasActiveStroke) {
-        if (m_liveInkPending) {
-            m_liveInk.advance(m_activeStroke, m_liveInkLayer, m_viewport, pixels, dpr);
-            m_liveInkPending = false;
-        }
-        const Stroke live=withPredictedTip(m_activeStroke,m_viewport.zoom);
-        if (LiveInkRenderer::eligible(live) && m_liveInk.usable(m_viewport, pixels)
-            && m_liveInkLayer.devicePixelRatio() == dpr) {
-            p.save();p.resetTransform();p.drawImage(QPointF(0,0),m_liveInkLayer);p.restore();
-            m_liveInk.drawTail(p,live);
-        } else drawStroke(p,live);
-    }
-    if(liveHighlight) {
-        p.save();p.resetTransform();p.drawImage(QPointF(0,0),highlighterLayers(this).ink);p.restore();
-    }
-    for(const auto& shape:m_shapes)if(shape.kind!=ShapeKind::ShadedRegion&&m_selectedShapeIds.contains(shape.id))drawShape(p,shape);
-    for(const auto& stroke:m_strokes)if(m_selectedStrokeIds.contains(stroke.id)&&stroke.tool!=ToolType::Highlighter)drawStroke(p,stroke);
-    if(m_mode==InteractionMode::LassoDraw)drawLassoPath(p,m_lassoPolygon,getThemeConfig(m_themeId),m_viewport.zoom);
-    if(hasLassoSelection())drawLassoSelectionBox(p,m_lassoBounds,getThemeConfig(m_themeId),m_viewport.zoom,m_selectedTextIds.isEmpty()&&m_selectedImageIds.isEmpty());
-    for(const auto& image:m_images)if(image.id==m_selectedImageId) {
-        const auto theme=getThemeConfig(m_themeId);p.setPen(QPen(theme.accent,1.4/m_viewport.zoom,Qt::DashLine));p.setBrush(Qt::NoBrush);p.drawRect(image.rect);
-        p.setPen(QPen(theme.accent,1.5/m_viewport.zoom));p.setBrush(theme.isDark?theme.background:QColor(Qt::white));
-        for(auto point:{image.rect.topLeft(),image.rect.topRight(),image.rect.bottomRight(),image.rect.bottomLeft()})p.drawEllipse(point,6/m_viewport.zoom,6/m_viewport.zoom);
-    }
-    if(m_shapePulseAlpha>0.0) {
-        ShapeItem halo=m_shapePulseShape;halo.linePattern=LinePattern::Solid;
-        const double expansion=(1.0-m_shapePulseAlpha)*12.0/m_viewport.zoom;
-        for(int layer=3;layer>=1;--layer) {
-            halo.color=getThemeConfig(m_themeId).accent;
-            halo.opacity=m_shapePulseAlpha*.16;
-            halo.size=m_shapePulseShape.size+expansion+layer*4.0/m_viewport.zoom;
-            drawShape(p,halo);
-        }
-    }
-    if(m_hasActiveShape)drawShape(p,m_activeShape);
-    if(const auto* selected=findShapeById(m_selectedShapeId)) {
-        if(selected->kind!=ShapeKind::ShadedRegion&&(!m_hasActiveShape||selected->id!=m_activeShape.id))drawShape(p,*selected);
-        drawSelectionOverlay(p,*selected,getThemeConfig(m_themeId),m_viewport.zoom,m_tool==ToolType::Select);
-    }
-    if(m_polylineActive&&m_polylineSnapClose&&!m_polylineVertices.isEmpty()) {
-        p.setRenderHint(QPainter::Antialiasing);p.setPen(QPen(getThemeConfig(m_themeId).accent,2/m_viewport.zoom));p.setBrush(Qt::NoBrush);
-        p.drawEllipse(m_polylineVertices.front(),10/m_viewport.zoom,10/m_viewport.zoom);
-    }
-    for(const auto& item:m_texts)if(item.id==m_selectedTextId) {
-        drawTextItem(p,item);p.setPen(QPen(getThemeConfig(m_themeId).accent,1/m_viewport.zoom,Qt::DashLine));p.setBrush(Qt::NoBrush);
-        p.drawRoundedRect(item.bounds.adjusted(-4/m_viewport.zoom,-3/m_viewport.zoom,4/m_viewport.zoom,3/m_viewport.zoom),2,2);
-    }
-    p.setRenderHint(QPainter::Antialiasing);
-    const auto laserNow=nowMs();
-    // Láser continuo de seda (UN SOLO QPainterPath suavizado con quadTo por trazo,
-    // CERO bolitas/puntos superpuestos en los vértices!).
-    {
-        qsizetype segStart=0;
-        while(segStart<m_laserTrail.size()) {
-            qsizetype segEnd=segStart+1;
-            while(segEnd<m_laserTrail.size()&&!m_laserTrail[segEnd].breakBefore)++segEnd;
-            // Recolectar puntos aún vivos de este trazo continuo
-            QVector<QPointF> livePts;
-            double avgFade=0.0;
-            for(qsizetype i=segStart;i<segEnd;++i) {
-                const double f=std::clamp(1.0-double(laserNow-m_laserTrail[i].timestampMs)/1200.0,0.0,1.0);
-                if(f>0.02){livePts.append(m_laserTrail[i].pos);avgFade=std::max(avgFade,f);}
-            }
-            if(livePts.size()>=2&&avgFade>0.02) {
-                QPainterPath smoothPath;
-                smoothPath.moveTo(livePts[0]);
-                for(qsizetype i=1;i+1<livePts.size();++i) {
-                    const QPointF mid=(livePts[i]+livePts[i+1])*0.5;
-                    smoothPath.quadTo(livePts[i],mid);
-                }
-                smoothPath.lineTo(livePts.back());
-                const double ease=avgFade*avgFade;
-                QColor glowCol("#ff3b30"); glowCol.setAlphaF(ease*0.22);
-                QColor midCol("#ff453a");  midCol.setAlphaF(ease*0.65);
-                QColor coreCol("#fff8f6"); coreCol.setAlphaF(ease*0.98);
-                p.setBrush(Qt::NoBrush);
-                p.setPen(QPen(glowCol,14.0/m_viewport.zoom,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));
-                p.strokePath(smoothPath,p.pen());
-                p.setPen(QPen(midCol,6.2/m_viewport.zoom,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));
-                p.strokePath(smoothPath,p.pen());
-                p.setPen(QPen(coreCol,2.2/m_viewport.zoom,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));
-                p.strokePath(smoothPath,p.pen());
-            }
-            segStart=segEnd;
-        }
-    }
-    if(!m_laserTrail.isEmpty()) {
-        const auto& tip=m_laserTrail.back();const double fade=std::clamp(1.0-double(laserNow-tip.timestampMs)/1200.0,0.0,1.0);
-        if(fade>0.02) {
-            p.setPen(Qt::NoPen);
-            for(int layer=3;layer>=0;--layer){
-                QColor color=layer==0?QColor("#ffffff"):QColor("#ff3b30");
-                color.setAlphaF(fade*(layer==0?1.0:layer==1?0.55:layer==2?0.24:0.10));
-                const double r=(2.6+layer*3.4)/m_viewport.zoom;
-                p.drawEllipse(tip.pos,r,r);
-            }
-        }
-    }
-    drawSmartGuides(p,m_activeGuides,getThemeConfig(m_themeId),m_viewport.zoom);
-    if(m_showPenCursor) {
-        p.save();p.resetTransform();
-        const QPointF c=m_hoverWorldPos*m_viewport.zoom+QPointF(m_viewport.x,m_viewport.y);
-        if(m_tool==ToolType::Laser) {
-            p.setPen(Qt::NoPen);
-            QColor glow("#ff3b30"); glow.setAlpha(75);
-            p.setBrush(glow); p.drawEllipse(c,10.0,10.0);
-            p.setBrush(QColor("#ff3b30")); p.drawEllipse(c,4.5,4.5);
-            p.setBrush(QColor("#ffffff")); p.drawEllipse(c,1.9,1.9);
-        } else if(m_cursorStyle==0) {
-            // Plantilla 0: Lapicito estilizado cuya punta exacta está en c!
-            const bool darkBg=getThemeConfig(m_themeId).isDark;
-            const QColor outline=darkBg?QColor("#0f172a"):QColor("#1e293b");
-            const QColor bodyCol=darkBg?QColor("#f8fafc"):QColor("#ffffff");
-            QColor ink=inkColor();
-            if(m_tool==ToolType::Highlighter)ink.setAlpha(200);
-            // Pequeño punto de contacto en la punta exacta
-            p.setPen(Qt::NoPen);p.setBrush(ink);p.drawEllipse(c,1.8,1.8);
-            // Cuerpo del lapicito apuntando a c desde arriba-derecha (45°)
-            p.save();
-            p.translate(c);
-            p.rotate(-45.0);
-            // Cono de la punta (x: 0..6)
-            QPainterPath tip;
-            tip.moveTo(0.0,0.0); tip.lineTo(6.5,-2.8); tip.lineTo(6.5,2.8); tip.closeSubpath();
-            p.setPen(QPen(outline,1.0,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));
-            p.setBrush(QColor("#e2e8f0"));
-            p.drawPath(tip);
-            // Punta coloreada con la tinta activa
-            QPainterPath nib;
-            nib.moveTo(0.0,0.0); nib.lineTo(2.8,-1.2); nib.lineTo(2.8,1.2); nib.closeSubpath();
-            p.setPen(Qt::NoPen);p.setBrush(ink);p.drawPath(nib);
-            // Banda de color de tinta (x: 6.5..10.5)
-            p.setPen(QPen(outline,1.0));p.setBrush(ink);
-            p.drawRect(QRectF(6.5,-2.8,4.0,5.6));
-            // Barril limpio (x: 10.5..21.5)
-            p.setBrush(bodyCol);
-            p.drawRoundedRect(QRectF(10.5,-2.8,11.0,5.6),1.6,1.6);
-            p.restore();
-        } else if(m_cursorStyle==1) {
-            // Plantilla 1: Aro de precisión + punto de tinta real
-            const double rawR=strokeSize()*m_viewport.zoom/2.0;
-            const double ringR=std::max(5.0,rawR+1.5);
-            const bool darkBg=getThemeConfig(m_themeId).isDark;
-            const QColor outer=darkBg?QColor(255,255,255,215):QColor(15,23,42,195);
-            const QColor halo=darkBg?QColor(0,0,0,155):QColor(255,255,255,210);
-            p.setPen(QPen(halo,2.4));p.setBrush(Qt::NoBrush);p.drawEllipse(c,ringR,ringR);
-            p.setPen(QPen(outer,1.3));p.drawEllipse(c,ringR,ringR);
-            p.setPen(Qt::NoPen);p.setBrush(inkColor());p.drawEllipse(c,std::max(2.0,rawR),std::max(2.0,rawR));
-        } else {
-            // Plantilla 2: Cruz fina técnica + punto central de tinta
-            const bool darkBg=getThemeConfig(m_themeId).isDark;
-            const QColor lineCol=darkBg?QColor(255,255,255,210):QColor(15,23,42,195);
-            p.setPen(QPen(lineCol,1.3,Qt::SolidLine,Qt::RoundCap));
-            p.drawLine(c+QPointF(-8,0),c+QPointF(-3,0));
-            p.drawLine(c+QPointF(3,0),c+QPointF(8,0));
-            p.drawLine(c+QPointF(0,-8),c+QPointF(0,-3));
-            p.drawLine(c+QPointF(0,3),c+QPointF(0,8));
-            p.setPen(Qt::NoPen);p.setBrush(inkColor());p.drawEllipse(c,2.0,2.0);
-        }
-        p.restore();
-    }
-    if(m_showEraserCursor) {
-        p.setRenderHint(QPainter::Antialiasing);QPen pen(getThemeConfig(m_themeId).accent);pen.setCosmetic(true);pen.setWidthF(1.3);
-        p.setPen(pen);p.setBrush(Qt::NoBrush);p.drawEllipse(m_eraserWorldPos,m_eraserSize/2,m_eraserSize/2);
-    }
-    if(m_radialOpen) {
-        p.save();
-        p.resetTransform();
-        p.setRenderHint(QPainter::Antialiasing,true);
-        const ThemeConfig th=getThemeConfig(m_themeId);
-        const QPointF c=m_radialCenter;
-        // Anillo limpio de cristal con 8 colores (sin texto cortado)
-        const QColor bg=th.isDark?QColor(18,28,24,226):QColor(255,255,255,236);
-        const QColor ringCol=th.isDark?QColor(255,255,255,34):QColor(15,23,42,26);
-        // Sombra suave exterior
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0,0,0,th.isDark?75:32));
-        p.drawEllipse(c+QPointF(0,4),78.0,78.0);
-        // Anillo principal (dona limpia)
-        QPainterPath ring;
-        ring.setFillRule(Qt::OddEvenFill);
-        ring.addEllipse(c,76.0,76.0);
-        ring.addEllipse(c,24.0,24.0);
-        p.setPen(QPen(ringCol,1.2));
-        p.setBrush(bg);
-        p.drawPath(ring);
-
-        const QVector<QColor> rColors = th.isDark
-            ? QVector<QColor>{QColor("#f8fafc"),QColor("#fde047"),QColor("#fb923c"),QColor("#f87171"),
-                              QColor("#f472b6"),QColor("#c084fc"),QColor("#38bdf8"),QColor("#4ade80")}
-            : QVector<QColor>{QColor("#0f172a"),QColor("#ca8a04"),QColor("#ea580c"),QColor("#dc2626"),
-                              QColor("#db2777"),QColor("#9333ea"),QColor("#0284c7"),QColor("#16a34a")};
-        constexpr double kPi=3.14159265358979323846;
-        for(int i=0;i<8;++i) {
-            const double ang=-kPi/2.0+i*(kPi/4.0);
-            const QPointF pt=c+QPointF(std::cos(ang)*50.0,std::sin(ang)*50.0);
-            const bool hov=(m_radialHoveredColor==i);
-            if(hov) {
-                p.setPen(QPen(th.accent,2.2));
-                p.setBrush(QColor(th.accent.red(),th.accent.green(),th.accent.blue(),55));
-                p.drawEllipse(pt,16.5,16.5);
-            }
-            p.setPen(QPen(th.isDark?QColor(255,255,255,150):QColor(15,23,42,110),hov?1.8:1.0));
-            p.setBrush(rColors[i]);
-            p.drawEllipse(pt,hov?12.0:9.5,hov?12.0:9.5);
-        }
-        // Puntero visible desde el centro hacia el cursor para seleccionar con precisión
-        const QPointF dir = m_radialCursorPos - c;
-        const double dist = std::hypot(dir.x(), dir.y());
-        if (dist > 4.0) {
-            const double clamped = std::min(dist, 64.0);
-            const QPointF tip = c + (dir / dist) * clamped;
-            p.setPen(QPen(th.accent, 2.0, Qt::SolidLine, Qt::RoundCap));
-            p.drawLine(c, tip);
-            p.setPen(Qt::NoPen);
-            p.setBrush(th.accent);
-            p.drawEllipse(tip, 3.6, 3.6);
-        }
-        // Punto central con color activo (o el color resaltado)
-        p.setPen(QPen(ringCol,1.0));
-        p.setBrush(m_radialHoveredColor>=0?rColors[m_radialHoveredColor]:m_color);
-        p.drawEllipse(c,8.0,8.0);
-        p.restore();
-    }
-}
 void CanvasWidget::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     const auto pdf = std::find_if(m_images.cbegin(), m_images.cend(),
                                   [](const auto& item) { return item.isPdfPage && !item.rect.isEmpty(); });
     if (pdf != m_images.cend()) {
         const auto previous = fittedPdfViewport(pdf->rect, event->oldSize());
-        const bool wasFitted = std::abs(previous.x - m_viewport.x) < .01
-            && std::abs(previous.y - m_viewport.y) < .01 && std::abs(previous.zoom - m_viewport.zoom) < .0001;
-        if (wasFitted || event->oldSize().isEmpty()) {
+        const bool wasFitted = std::abs(previous.x - m_viewport.x) < 1.0
+            && std::abs(previous.y - m_viewport.y) < 1.0 && std::abs(previous.zoom - m_viewport.zoom) < .005;
+        if (wasFitted || event->oldSize().isEmpty() || event->oldSize().width() <= 960) {
             m_viewport = fittedPdfViewport(pdf->rect, size());
-            emit viewportChanged(m_viewport.zoom);
+        } else {
+            clampFiniteViewport();
         }
-    } else if (m_pageFormat == PageFormat::Slide16x9 && !size().isEmpty()) {
-        m_viewport = fittedSheetViewport(m_pageFormat, size());
+        emit viewportChanged(m_viewport.zoom);
+    } else if (m_pageFormat != PageFormat::Infinite && !size().isEmpty()) {
+        const auto previous = fittedSheetViewport(m_pageFormat, event->oldSize());
+        const bool wasFitted = std::abs(previous.x - m_viewport.x) < 1.0
+            && std::abs(previous.y - m_viewport.y) < 1.0 && std::abs(previous.zoom - m_viewport.zoom) < .005;
+        if (wasFitted || event->oldSize().isEmpty() || event->oldSize().width() <= 960) {
+            m_viewport = fittedSheetViewport(m_pageFormat, size());
+        }
+        clampFiniteViewport();
         emit viewportChanged(m_viewport.zoom);
     }
     invalidateStaticCache();
@@ -1976,7 +1463,7 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
     if(eraser||m_tool==ToolType::Eraser) {
         if(m_polylineActive)cancelActivePolyline();
         m_mode=InteractionMode::Erase;m_snapshotBeforeErase=currentSnapshot();m_erasedAnything=false;
-        m_eraserWorldPos=world;m_showEraserCursor=true;applyEraseAt(world);updateCursorShape();return;
+        m_eraserWorldPos=world;m_showEraserCursor=true;applyEraseAt(world, mods.testFlag(Qt::ShiftModifier));updateCursorShape();return;
     }
     if(m_tool==ToolType::Laser) {
         m_mode=InteractionMode::LaserTrail;m_laserTrail.append({world,nowMs(),true});m_laserTimer->start();update();return;
@@ -1987,20 +1474,40 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
             emit toastRequested(tr("No hay una región cerrada en ese punto"));
             return;
         }
-        const auto existing = std::find_if(m_shapes.cbegin(), m_shapes.cend(), [&region](const ShapeItem& shape) {
-            return shape.kind == ShapeKind::ShadedRegion && shape.vertices == region->vertices
-                && shape.shadeContourStarts == region->shadeContourStarts;
-        });
-        if (existing == m_shapes.cend()) {
-            pushUndoSnapshot(currentSnapshot());
+        int sameRegionCount = 0;
+        qsizetype lastSameRegionIdx = -1;
+        qsizetype exactMatchIdx = -1;
+        for (qsizetype i = 0; i < m_shapes.size(); ++i) {
+            const auto& shape = m_shapes[i];
+            if (shape.kind == ShapeKind::ShadedRegion && shape.vertices == region->vertices
+                && shape.shadeContourStarts == region->shadeContourStarts) {
+                ++sameRegionCount;
+                lastSameRegionIdx = i;
+                if (shape.color == region->color && shape.shadePattern == m_shadePattern)
+                    exactMatchIdx = i;
+            }
+        }
+        pushUndoSnapshot(currentSnapshot());
+        if (exactMatchIdx >= 0) {
+            // Tocar de nuevo con el mismo color y trama quita esa capa (toggle) y renumera las restantes.
+            m_shapes.removeAt(exactMatchIdx);
+            int nextLayer = 0;
+            for (auto& shape : m_shapes) {
+                if (shape.kind == ShapeKind::ShadedRegion && shape.vertices == region->vertices
+                    && shape.shadeContourStarts == region->shadeContourStarts) {
+                    shape.shadeLayer = nextLayer++;
+                }
+            }
+        } else if (sameRegionCount >= 3 && lastSameRegionIdx >= 0) {
+            // Máximo 3 capas superpuestas en una misma región.
+            m_shapes[lastSameRegionIdx].color = region->color;
+            m_shapes[lastSameRegionIdx].shadePattern = m_shadePattern;
+        } else {
+            // Añadir nueva capa encima desplazada/alternada para distinguir ambos colores.
             region->id = freshId();
+            region->shadeLayer = sameRegionCount;
             m_shapes.append(*region);
-        } else if (existing->color != region->color || existing->shadePattern != m_shadePattern) {
-            const auto index = existing - m_shapes.cbegin();
-            pushUndoSnapshot(currentSnapshot());
-            m_shapes[index].color = region->color;
-            m_shapes[index].shadePattern = m_shadePattern;
-        } else return;
+        }
         invalidateStaticCache();
         saveAutosave();
         emit stateChanged();
@@ -2023,6 +1530,7 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
     };
     auto startSelectionTransform = [&](int handle) {
         m_lassoHandleIndex=handle;
+        m_lassoPreviewDelta=QPointF();
         m_snapshotBeforeLassoTransform=currentSnapshot();m_lassoDragStartWorld=world;
         m_mode=handle==4?InteractionMode::LassoRotate:handle>=0?InteractionMode::LassoScale:InteractionMode::LassoMove;
         const QVector<QPointF> corners{m_lassoBounds.topLeft(),m_lassoBounds.topRight(),m_lassoBounds.bottomRight(),m_lassoBounds.bottomLeft()};
@@ -2050,10 +1558,14 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
             const int handle = hitTestLassoHandle(image.rect, world, m_viewport.zoom);
             if (handle >= 0 && handle < 4) { startImageEdit(image, handle); return; }
         }
-        if (hasLassoSelection()&&m_selectedTextIds.isEmpty()&&m_selectedImageIds.isEmpty()) {
+        if (hasLassoSelection()) {
             const int handle = hitTestLassoHandle(m_lassoBounds, world, m_viewport.zoom);
             if (handle >= 0) { startSelectionTransform(handle); return; }
         }
+    }
+    if (m_tool == ToolType::Lasso && hasLassoSelection()) {
+        const int handle = hitTestLassoHandle(m_lassoBounds, world, m_viewport.zoom);
+        if (handle >= 0) { startSelectionTransform(handle); return; }
     }
     if(m_tool==ToolType::Text||m_tool==ToolType::Lasso||m_tool==ToolType::Select) {
         QString hit;
@@ -2144,6 +1656,10 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
         }
         if(hasLassoSelection()&&m_lassoBounds.contains(world)) { startSelectionTransform(-1); return; }
         clearSelection();
+        m_mode = InteractionMode::LassoDraw;
+        m_lassoRectOrigin = world;
+        m_lassoPolygon.append(world);
+        update();
         return;
     }
     if(m_tool==ToolType::Lasso) {
@@ -2154,8 +1670,7 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
             }
         }
         if(hasLassoSelection()) {
-            const int handle=m_selectedTextIds.isEmpty()&&m_selectedImageIds.isEmpty()
-                ? hitTestLassoHandle(m_lassoBounds,world,m_viewport.zoom) : -1;
+            const int handle=hitTestLassoHandle(m_lassoBounds,world,m_viewport.zoom);
             if(handle>=0||m_lassoBounds.contains(world)) {
                 startSelectionTransform(handle);return;
             }
@@ -2223,6 +1738,30 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
         m_activeShape.vertices=m_polylineVertices;m_activeShape.closed=false;m_activeShape.bounds=computeShapeBounds(m_activeShape);m_hasActiveShape=true;update();emit stateChanged();return;
     }
     if(m_tool==ToolType::Shape) {
+        if(!m_congruenceMarkSpec.isEmpty()) {
+            auto candidate=m_shapes;
+            QString markId;
+            if(stampOrCycleCongruenceMark(candidate,world,m_congruenceMarkSpec,m_color,m_size,m_viewport.zoom,&markId)) {
+                pushUndoSnapshot(currentSnapshot());
+                m_shapes=std::move(candidate);
+                clearSelection();
+                if(!markId.isEmpty()) {
+                    if(const auto* placed=findShapeById(markId)) {
+                        m_shapePulseAnimation->stop();
+                        m_shapePulseShape=*placed;
+                        m_shapePulseAlpha=1.0;
+                        m_shapePulseAnimation->start();
+                    }
+                }
+                invalidateStaticCache();
+                saveAutosave();
+                emit stateChanged();
+                update();
+            } else {
+                emit toastRequested(QStringLiteral("Toca sobre el lado de una figura para imantar la marca"));
+            }
+            return;
+        }
         clearSelection();m_snapshotBeforeShapeEdit=currentSnapshot();m_mode=InteractionMode::ShapeCreate;m_holdSnappedToShape=false;
         // Solo las líneas imantan su punto inicial a vértices cercanos; las figuras cerradas
         // (círculo, rectángulo, triángulo, elipse, etc.) comienzan exactamente donde haces clic!
@@ -2238,16 +1777,26 @@ void CanvasWidget::beginInput(const QPointF& screen,double pressure,double tiltX
         createShapeVertices(m_activeShape,snap.point,snap.point,m_polygonSides,m_quadVariant);m_hasActiveShape=true;m_selectedShapeId=m_activeShape.id;update();return;
     }
     if(m_beautifyTimer)m_beautifyTimer->stop();
-    clearSelection();m_mode=InteractionMode::Draw;m_holdSnappedToShape=false;m_stabilizerFilter->reset();m_stabilizerFilter->setStrength(0.0);m_liveInk.reset();m_liveInkLayer=QImage();m_inkSmoother.reset(m_stabilizer>0?(1.5+7.0*m_stabilizer)/m_viewport.zoom:0.0);m_activeStroke={};
+    if(m_mathBeautifyEnabled&&(m_tool==ToolType::Pen||m_tool==ToolType::Ballpoint)
+       &&!m_pendingBeautifyIds.isEmpty()&&!m_pendingBeautifyBox.isEmpty()) {
+        const double refH=std::clamp(m_pendingBeautifyBox.height(),18.0,80.0);
+        const bool jumpedRight=(world.x()-m_pendingBeautifyBox.right())>std::max(14.0,refH*0.42);
+        const bool jumpedLeft=(m_pendingBeautifyBox.left()-world.x())>std::max(18.0,refH*0.60);
+        const bool jumpedLine=std::abs(world.y()-m_pendingBeautifyBox.center().y())>refH*1.15;
+        if(jumpedRight||jumpedLeft||jumpedLine)
+            flushPendingBeautify();
+    }
+    clearSelection();m_mode=InteractionMode::Draw;m_holdSnappedToShape=false;m_stabilizerFilter->reset();m_stabilizerFilter->setStrength(0.0);m_liveInk.reset();m_liveInkLayer=QImage();m_inkSmoother.reset(m_stabilizer>0?(1.5+10.5*m_stabilizer)/m_viewport.zoom:0.0,3+qRound(5.0*m_stabilizer));m_activeStroke={};
     m_activeStroke.id=freshId();m_activeStroke.tool=m_tool;m_activeStroke.color=m_color;m_activeStroke.size=m_size;
-    m_activeStroke.linePattern=LinePattern::Solid;m_activeStroke.pressureProfile=m_pressureProfile;m_activeStroke.hasHardwarePressure=hardware;
+    m_activeStroke.linePattern=LinePattern::Solid;m_activeStroke.pressureProfile=m_pressureProfile;m_activeStroke.pressureSensitivity=m_pressureSensitivity;m_activeStroke.hasHardwarePressure=hardware;
     m_activeStroke.tipStyle=(m_tool==ToolType::Highlighter)?m_highlighterTip:m_penTip;
+    if (m_tool == ToolType::Highlighter) m_activeStroke.opacity = m_highlighterOpacity;
     m_rawStartPoint=inputPoint(world,pressure,tiltX,tiltY);m_activeStroke.points.append(m_stabilizerFilter->filter(m_rawStartPoint));m_inkSmoother.push(m_activeStroke);
     m_liveStrokeBounds = QRectF(m_activeStroke.points.front().x, m_activeStroke.points.front().y, 0, 0);
     m_liveInkPending = false;
     m_hasActiveStroke=true;m_showEraserCursor=false;
     m_holdAnchorWorld=world;m_holdLastWorld=world;
-    if(m_holdToShapeEnabled&&(m_tool==ToolType::Pen||m_tool==ToolType::Ballpoint))m_holdTimer->start();
+    if(m_holdToShapeEnabled&&(m_tool==ToolType::Pen||m_tool==ToolType::Ballpoint||(m_tool==ToolType::Highlighter&&m_highlighterTip!=2)))m_holdTimer->start();
     Q_UNUSED(mods);if(m_activeStroke.tool==ToolType::Highlighter)invalidateStaticCache();else update();
 }
 void CanvasWidget::updateLinkedPreview(const QVector<ShapeItem>& original, const QSet<QString>& edited) {
@@ -2273,15 +1822,21 @@ void CanvasWidget::moveInput(const QPointF& screen,double pressure,double tiltX,
             if (std::hypot(delta.x(), delta.y()) < 4.0)
                 return;
             m_rightClickOnSelection = false;
-        }m_viewport.x=m_panStartViewport.x()+delta.x();m_viewport.y=m_panStartViewport.y()+delta.y();invalidateStaticCache();return;
+        }
+        m_viewport.x=m_panStartViewport.x()+delta.x();
+        m_viewport.y=m_panStartViewport.y()+delta.y();
+        clampFiniteViewport();
+        invalidateStaticCache();
+        return;
     }
     if(m_mode==InteractionMode::Erase) {
         const auto previous=m_eraserWorldPos;const int steps=std::max(1,int(std::ceil(distance(world,previous)/std::max(.5,m_eraserSize/4))));
-        for(int i=1;i<=steps;++i)applyEraseAt(previous+(world-previous)*(double(i)/steps));
+        const bool trimIntersections = mods.testFlag(Qt::ShiftModifier);
+        for(int i=1;i<=steps;++i)applyEraseAt(previous+(world-previous)*(double(i)/steps), trimIntersections);
         m_eraserWorldPos=world;update();return;
     }
     if(m_mode==InteractionMode::LassoDraw) {
-        if(m_lassoRectMode) {
+        if(m_lassoRectMode || m_tool == ToolType::Select) {
             const QRectF r(m_lassoRectOrigin, world);
             m_lassoPolygon = QPolygonF{r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()};
         } else if(m_lassoPolygon.isEmpty()||distance(world,m_lassoPolygon.back())*m_viewport.zoom>1) {
@@ -2289,28 +1844,64 @@ void CanvasWidget::moveInput(const QPointF& screen,double pressure,double tiltX,
         }
         update();return;
     }
-    if(m_mode==InteractionMode::LassoMove||m_mode==InteractionMode::LassoScale||m_mode==InteractionMode::LassoRotate) {
+    if (m_mode == InteractionMode::LassoMove) {
+        // Durante el arrastre solo desplazamos el delta visual: evita copiar todo el documento y reconstruir el caché a 200 Hz.
+        m_lassoPreviewDelta = world - m_lassoDragStartWorld;
+        update();
+        return;
+    }
+    if(m_mode==InteractionMode::LassoScale||m_mode==InteractionMode::LassoRotate) {
         m_strokes=m_snapshotBeforeLassoTransform.strokes;m_shapes=m_snapshotBeforeLassoTransform.shapes;
-        if(m_mode==InteractionMode::LassoMove){
-            const auto delta=world-m_lassoDragStartWorld;
-            translateSelection(m_strokes,m_shapes,m_selectedStrokeIds,m_selectedShapeIds,delta);
-            if(!m_selectedTextIds.isEmpty()||!m_selectedImageIds.isEmpty()) {
-                m_texts=m_snapshotBeforeLassoTransform.texts;m_images=m_snapshotBeforeLassoTransform.images;
-                for(auto& text:m_texts)if(!text.locked&&m_selectedTextIds.contains(text.id)){text.pos+=delta;text.bounds.translate(delta);}
-                for(auto& image:m_images)if(!image.locked&&m_selectedImageIds.contains(image.id))image.rect.translate(delta);
-                invalidateStaticCache();
-            }
-        }
-        else if(m_mode==InteractionMode::LassoRotate) {
+        if(m_mode==InteractionMode::LassoRotate) {
             const double angle=std::atan2(world.y()-m_lassoTransformCenter.y(),world.x()-m_lassoTransformCenter.x())-m_lassoStartAngle;
             rotateSelection(m_strokes,m_shapes,m_selectedStrokeIds,m_selectedShapeIds,m_lassoTransformCenter,angle);
+            if(!m_selectedTextIds.isEmpty()||!m_selectedImageIds.isEmpty()) {
+                m_texts=m_snapshotBeforeLassoTransform.texts;m_images=m_snapshotBeforeLassoTransform.images;
+                const double c=std::cos(angle),s=std::sin(angle);
+                auto rotatePt=[&](const QPointF& pt){
+                    const QPointF d=pt-m_lassoTransformCenter;
+                    return m_lassoTransformCenter+QPointF(d.x()*c-d.y()*s,d.x()*s+d.y()*c);
+                };
+                for(auto& text:m_texts)if(!text.locked&&m_selectedTextIds.contains(text.id)){
+                    const QPointF oldCenter=text.bounds.center();
+                    const QPointF delta=rotatePt(oldCenter)-oldCenter;
+                    text.pos+=delta;text.bounds.translate(delta);
+                }
+                for(auto& image:m_images)if(!image.locked&&m_selectedImageIds.contains(image.id)){
+                    const QPointF oldCenter=image.rect.center();
+                    image.rect.translate(rotatePt(oldCenter)-oldCenter);
+                }
+                invalidateStaticCache();
+            }
         } else {
-            const auto bounds=computeSelectionBounds(m_snapshotBeforeLassoTransform.strokes,m_snapshotBeforeLassoTransform.shapes,m_selectedStrokeIds,m_selectedShapeIds);
+            auto bounds=computeSelectionBounds(m_snapshotBeforeLassoTransform.strokes,m_snapshotBeforeLassoTransform.shapes,m_selectedStrokeIds,m_selectedShapeIds);
+            auto addRect=[&](const QRectF& r){ bounds=bounds.isNull()?r:bounds.united(r); };
+            for(const auto& text:m_snapshotBeforeLassoTransform.texts)if(m_selectedTextIds.contains(text.id))addRect(text.bounds);
+            for(const auto& image:m_snapshotBeforeLassoTransform.images)if(m_selectedImageIds.contains(image.id))addRect(image.rect);
             const QVector<QPointF> corners{bounds.topLeft(),bounds.topRight(),bounds.bottomRight(),bounds.bottomLeft()};
             const auto diagonal=corners[m_lassoHandleIndex]-m_lassoTransformCenter,target=diagonal+world-m_lassoDragStartWorld;
             const double denominator=diagonal.x()*diagonal.x()+diagonal.y()*diagonal.y();
-            const double scale=std::clamp(denominator>1e-10?(diagonal.x()*target.x()+diagonal.y()*target.y())/denominator:1.0,.05,20.0);
+            const double scale=std::clamp(denominator>1e-10?(diagonal.x()*target.x()+diagonal.y()*target.y())/denominator:1.0,.15,12.0);
             scaleSelection(m_strokes,m_shapes,m_selectedStrokeIds,m_selectedShapeIds,m_lassoTransformCenter,scale,scale);
+            if(!m_selectedTextIds.isEmpty()||!m_selectedImageIds.isEmpty()) {
+                m_texts=m_snapshotBeforeLassoTransform.texts;m_images=m_snapshotBeforeLassoTransform.images;
+                for(auto& text:m_texts)if(!text.locked&&m_selectedTextIds.contains(text.id)){
+                    const QPointF oldCenter=text.bounds.center();
+                    const QPointF newCenter=m_lassoTransformCenter+(oldCenter-m_lassoTransformCenter)*scale;
+                    text.fontSize=std::clamp(text.fontSize*scale,6.0,240.0);
+                    text.pos=m_lassoTransformCenter+(text.pos-m_lassoTransformCenter)*scale;
+                    text.bounds=textBounds(text);
+                    const QPointF drift=newCenter-text.bounds.center();
+                    text.pos+=drift;
+                    text.bounds.translate(drift);
+                }
+                for(auto& image:m_images)if(!image.locked&&m_selectedImageIds.contains(image.id)){
+                    const QPointF tl=m_lassoTransformCenter+(image.rect.topLeft()-m_lassoTransformCenter)*scale;
+                    const QPointF br=m_lassoTransformCenter+(image.rect.bottomRight()-m_lassoTransformCenter)*scale;
+                    image.rect=QRectF(tl,br).normalized();
+                }
+                invalidateStaticCache();
+            }
         }
         if(!m_selectedShapeIds.isEmpty())updateLinkedPreview(m_snapshotBeforeLassoTransform.shapes,m_selectedShapeIds);
         m_lassoBounds=lassoSelectionBounds();update();return;
@@ -2360,18 +1951,28 @@ void CanvasWidget::moveInput(const QPointF& screen,double pressure,double tiltX,
                     m_activeGuides={{QPointF(next.left()-guideMargin,y),QPointF(next.right()+guideMargin,y),{},false}};
                 }
             } else if(m_mode==InteractionMode::ShapeDragHandle) {
-                const auto anchor=handleAnchor(*shape,m_activeHandleIndex);
                 const auto raw=(m_tool==ToolType::Select)
                     ? (getShapeHandles(*shape).at(m_activeHandleIndex)+delta)
                     : world;
-                const auto external=snapPointWithGuides(raw,anchor,m_shapes,shape->id,m_viewport.zoom,m_smartGuidesEnabled);
-                const auto result=snapShapeVertex(*shape,m_activeHandleIndex,external,raw,m_viewport.zoom);
-                m_activeGuides=result.guides;
-                applyHandleDrag(*shape,m_activeHandleIndex,result.point);
+                if (isCongruenceMarkShape(*shape)
+                    && constrainCongruenceMarkToEdge(*shape, m_shapes, m_activeHandleIndex, raw, delta)) {
+                    m_activeGuides.clear();
+                } else {
+                    const auto anchor=handleAnchor(*shape,m_activeHandleIndex);
+                    const auto external=snapPointWithGuides(raw,anchor,m_shapes,shape->id,m_viewport.zoom,m_smartGuidesEnabled);
+                    const auto result=snapShapeVertex(*shape,m_activeHandleIndex,external,raw,m_viewport.zoom);
+                    m_activeGuides=result.guides;
+                    applyHandleDrag(*shape,m_activeHandleIndex,result.point);
+                }
             } else {
-                const auto origin=m_shapeDragOriginalVertices.front();
-                const auto target=snapped(origin+delta,std::nullopt,shape->id);
-                translateShape(*shape,target-origin);
+                if (isCongruenceMarkShape(*shape)
+                    && constrainCongruenceMarkToEdge(*shape, m_shapes, -1, world, delta)) {
+                    m_activeGuides.clear();
+                } else {
+                    const auto origin=m_shapeDragOriginalVertices.front();
+                    const auto target=snapped(origin+delta,std::nullopt,shape->id);
+                    translateShape(*shape,target-origin);
+                }
             }
         }
         updateLinkedPreview(m_snapshotBeforeShapeEdit.shapes,{m_selectedShapeId});
@@ -2383,8 +1984,13 @@ void CanvasWidget::moveInput(const QPointF& screen,double pressure,double tiltX,
                 m_activeShape.vertices=m_shapeDragOriginalVertices;m_activeShape.bounds=computeShapeBounds(m_activeShape);update();return;
             }
             m_activeShape.vertices=m_shapeDragOriginalVertices;
-            applyHandleDrag(m_activeShape,m_activeHandleIndex,snapped(world,handleAnchor(m_activeShape,m_activeHandleIndex),
-                            m_activeShape.id));
+            const auto anchor = handleAnchor(m_activeShape, m_activeHandleIndex);
+            const auto external = snapPointWithGuides(world, anchor, m_shapes, m_activeShape.id, m_viewport.zoom, m_smartGuidesEnabled);
+            const auto result = m_smartGuidesEnabled
+                ? snapShapeVertex(m_activeShape, m_activeHandleIndex, external, world, m_viewport.zoom)
+                : external;
+            m_activeGuides = result.guides;
+            applyHandleDrag(m_activeShape, m_activeHandleIndex, result.point);
         } else {
             // Only snap angles for Line shapes (not Rectangles, Circles, Ellipses, Triangles!)
             const bool allowAngleSnap = (m_activeShape.kind == ShapeKind::Line);
@@ -2423,16 +2029,20 @@ void CanvasWidget::moveInput(const QPointF& screen,double pressure,double tiltX,
     }
     if(m_mode==InteractionMode::Draw&&m_hasActiveStroke) {
         m_holdLastWorld=world;
-        if (m_holdToShapeEnabled && (m_activeStroke.tool == ToolType::Pen || m_activeStroke.tool == ToolType::Ballpoint)
+        if (m_holdToShapeEnabled && !m_holdSnappedToShape
+            && (m_activeStroke.tool == ToolType::Pen || m_activeStroke.tool == ToolType::Ballpoint
+                || (m_activeStroke.tool == ToolType::Highlighter && m_activeStroke.tipStyle != 2))
             && distance(world, m_holdAnchorWorld) * m_viewport.zoom > 4) {
             m_holdAnchorWorld = world;
             m_holdTimer->start();
         }
         auto point = m_stabilizerFilter->filter(inputPoint(world, pressure, tiltX, tiltY));
-        if (mods.testFlag(Qt::ShiftModifier)) {
+        if (mods.testFlag(Qt::ShiftModifier) || m_holdSnappedToShape) {
             m_liveInk.reset();
             m_liveInkPending = false;
             point = snappedPoint(m_rawStartPoint, point);
+            m_activeStroke.points = {m_rawStartPoint, point};
+        } else if (m_activeStroke.tool == ToolType::Highlighter && m_activeStroke.tipStyle == 2) {
             m_activeStroke.points = {m_rawStartPoint, point};
         } else {
             const auto& last = m_activeStroke.points.back();
@@ -2488,11 +2098,88 @@ void CanvasWidget::moveInput(const QPointF& screen,double pressure,double tiltX,
         update();
     }
 }
+void CanvasWidget::stampCongruenceMarkAt(const QPointF& worldPos, const QString& markSpec) {
+    if (markSpec.trimmed().isEmpty())
+        return;
+    auto candidate = m_shapes;
+    QString markId;
+    if (!stampOrCycleCongruenceMark(candidate, worldPos, markSpec, m_color, m_size, m_viewport.zoom, &markId))
+        return;
+    pushUndoSnapshot(currentSnapshot());
+    m_shapes = std::move(candidate);
+    clearSelection();
+    if (!markId.isEmpty()) {
+        if (const auto* placed = findShapeById(markId)) {
+            m_shapePulseAnimation->stop();
+            m_shapePulseShape = *placed;
+            m_shapePulseAlpha = 1.0;
+            m_shapePulseAnimation->start();
+            emit toastRequested(congruenceMarkToast(placed->label));
+        }
+    }
+    invalidateStaticCache();
+    saveAutosave();
+    emit stateChanged();
+    update();
+}
 void CanvasWidget::triggerHoldToShape() {
-    if(!m_holdToShapeEnabled||m_mode!=InteractionMode::Draw||!m_hasActiveStroke||(m_activeStroke.tool!=ToolType::Pen&&m_activeStroke.tool!=ToolType::Ballpoint))return;
+    if(!m_holdToShapeEnabled||m_mode!=InteractionMode::Draw||!m_hasActiveStroke)return;
+    const bool isHighlighter = (m_activeStroke.tool == ToolType::Highlighter && m_activeStroke.tipStyle != 2);
+    if(!isHighlighter && m_activeStroke.tool!=ToolType::Pen && m_activeStroke.tool!=ToolType::Ballpoint)return;
     double total=0;for(qsizetype i=1;i<m_activeStroke.points.size();++i)total+=distance({m_activeStroke.points[i-1].x,m_activeStroke.points[i-1].y},{m_activeStroke.points[i].x,m_activeStroke.points[i].y});
+    if (isHighlighter) {
+        if (total * m_viewport.zoom < 16.0) return;
+        m_holdSnappedToShape = true;
+        m_activeStroke.points = {m_rawStartPoint, snappedPoint(m_rawStartPoint, m_activeStroke.points.back())};
+        m_holdTimer->stop();
+        update();
+        return;
+    }
+    // 1. Mantener presionado un punto sobre una arista -> abrir mini-barra rápida de marcas de congruencia
+    if (total * m_viewport.zoom < 16.0) {
+        QPointF edgePt;
+        if (isPointNearGeometryEdge(m_holdLastWorld, m_shapes, m_viewport.zoom, 22.0, &edgePt)) {
+            m_hasActiveStroke = false;
+            m_liveInk.reset();
+            m_liveInkLayer = QImage();
+            m_mode = InteractionMode::None;
+            m_holdTimer->stop();
+            update();
+            const QPointF screenPos(edgePt.x() * m_viewport.zoom + m_viewport.x,
+                                    edgePt.y() * m_viewport.zoom + m_viewport.y);
+            emit edgeMarkMenuRequested(screenPos, edgePt);
+        }
+        return;
+    }
+    if(const auto autoAngle=trySnapAngleArcAtVertex(m_activeStroke,m_shapes,m_viewport.zoom)) {
+        pushUndoSnapshot(currentSnapshot());
+        m_shapes.append(*autoAngle);
+        attachNewShape(m_shapes);
+        m_hasActiveStroke=false;
+        m_mode=InteractionMode::None;
+        m_holdTimer->stop();
+        m_shapePulseAnimation->stop();
+        m_shapePulseShape=*autoAngle;
+        m_shapePulseAlpha=1.0;
+        m_shapePulseAnimation->start();
+        emit toastRequested(QStringLiteral("Ángulo ✓"));
+        invalidateStaticCache();
+        saveAutosave();
+        emit stateChanged();
+        update();
+        return;
+    }
     if(total*m_viewport.zoom<25)return;
     const auto recognized=recognizeFreehandShape(m_activeStroke);if(!recognized)return;
+    // Nunca convertir trazos cortos sobre una arista en una Curva accidental
+    if (recognized->kind == ShapeKind::Curve) {
+        const QRectF sb = computeBounds(m_activeStroke.points, 0.0);
+        const double dim = std::max(sb.width(), sb.height());
+        if (dim * m_viewport.zoom < 150.0
+            && isPointNearGeometryEdge(sb.center(), m_shapes, m_viewport.zoom, 30.0)) {
+            return;
+        }
+    }
     m_activeShape=*recognized;m_hasActiveShape=true;m_hasActiveStroke=false;m_holdSnappedToShape=true;m_selectedShapeId=m_activeShape.id;
     if (drawsFromEndpoints(m_activeShape.kind)) {
         auto& points = m_activeShape.vertices;
@@ -2528,6 +2215,7 @@ void CanvasWidget::triggerHoldToShape() {
     case ShapeKind::Brace:name=QStringLiteral("Llave");break;
     case ShapeKind::Axes:name=QStringLiteral("Ejes");break;
     case ShapeKind::ShadedRegion:break;
+    default:break;
     }
     emit toastRequested(name+QStringLiteral(" ✓"));invalidateStaticCache();emit stateChanged();
 }
@@ -2549,9 +2237,44 @@ void CanvasWidget::endInput(const QPointF& screen,Qt::KeyboardModifiers mods) {
                 if(!image.isPdfPage&&m_lassoPolygon.containsPoint(image.rect.center(),Qt::OddEvenFill))m_selectedImageIds.insert(image.id);
         }
         expandLassoSelection();
-        if(!hasLassoSelection())for(qsizetype i=m_images.size();i-->0;)if(!m_images[i].isPdfPage&&m_images[i].rect.contains(world)){m_selectedImageId=m_images[i].id;break;}
+        if(!hasLassoSelection()) {
+            const double tapTol = 8.0 / m_viewport.zoom;
+            for (auto it = m_shapes.crbegin(); it != m_shapes.crend(); ++it) {
+                if (it->kind != ShapeKind::ShadedRegion && hitTestShape(*it, world, tapTol)) {
+                    m_selectedShapeId = it->id;
+                    break;
+                }
+            }
+            if (m_selectedShapeId.isEmpty()) {
+                for (qsizetype i = m_images.size(); i-- > 0;) {
+                    if (!m_images[i].isPdfPage && m_images[i].rect.contains(world)) {
+                        m_selectedImageId = m_images[i].id;
+                        break;
+                    }
+                }
+            }
+        }
         m_lassoPolygon.clear();invalidateStaticCache();
-    } else if(m_mode==InteractionMode::LassoMove||m_mode==InteractionMode::LassoScale||m_mode==InteractionMode::LassoRotate) {
+    } else if (m_mode == InteractionMode::LassoMove) {
+        const QPointF delta = screenToWorld(screen) - m_lassoDragStartWorld;
+        m_lassoPreviewDelta = QPointF();
+        if (distance(screenToWorld(screen), m_lassoDragStartWorld) * m_viewport.zoom > .01) {
+            translateSelection(m_strokes, m_shapes, m_selectedStrokeIds, m_selectedShapeIds, delta);
+            for (auto& text : m_texts)
+                if (!text.locked && m_selectedTextIds.contains(text.id)) {
+                    text.pos += delta;
+                    text.bounds.translate(delta);
+                }
+            for (auto& image : m_images)
+                if (!image.locked && m_selectedImageIds.contains(image.id))
+                    image.rect.translate(delta);
+            if (!m_selectedShapeIds.isEmpty())
+                updateShapeLinks(m_shapes, m_snapshotBeforeLassoTransform.shapes, m_selectedShapeIds);
+            m_lassoBounds = lassoSelectionBounds();
+            pushUndoSnapshot(m_snapshotBeforeLassoTransform);
+        }
+        invalidateStaticCache();
+    } else if(m_mode==InteractionMode::LassoScale||m_mode==InteractionMode::LassoRotate) {
         moveInput(screen,0,0,0,false,false,mods);
         if(distance(screenToWorld(screen),m_lassoDragStartWorld)*m_viewport.zoom>.01)pushUndoSnapshot(m_snapshotBeforeLassoTransform);
         invalidateStaticCache();
@@ -2561,7 +2284,8 @@ void CanvasWidget::endInput(const QPointF& screen,Qt::KeyboardModifiers mods) {
         invalidateStaticCache();
     } else if(m_mode==InteractionMode::Draw&&m_hasActiveStroke) {
         const auto& last=m_activeStroke.points.back();auto end=inputPoint(screenToWorld(screen),last.pressure,last.tiltX,last.tiltY);
-        if(mods.testFlag(Qt::ShiftModifier))m_activeStroke.points={m_rawStartPoint,snappedPoint(m_rawStartPoint,end)};
+        if(mods.testFlag(Qt::ShiftModifier) || m_holdSnappedToShape)m_activeStroke.points={m_rawStartPoint,snappedPoint(m_rawStartPoint,end)};
+        else if(m_activeStroke.tool==ToolType::Highlighter&&m_activeStroke.tipStyle==2)m_activeStroke.points={m_rawStartPoint,end};
         else if(distance({last.x,last.y},{end.x,end.y})>.001){m_activeStroke.points.append(end);m_inkSmoother.push(m_activeStroke);}
         if(!mods.testFlag(Qt::ShiftModifier)&&(m_activeStroke.tool==ToolType::Pen||m_activeStroke.tool==ToolType::Ballpoint))
             trimPenHooks(m_activeStroke,m_viewport.zoom);
@@ -2570,43 +2294,55 @@ void CanvasWidget::endInput(const QPointF& screen,Qt::KeyboardModifiers mods) {
         if(m_activeStroke.tool==ToolType::Highlighter&&m_activeStroke.tipStyle==2&&m_activeStroke.points.size()>=2)
             m_activeStroke.points={m_activeStroke.points.front(),m_activeStroke.points.back()};
         m_liveInk.reset();m_liveInkLayer=QImage();
-        pushUndoSnapshot(currentSnapshot());m_activeStroke.bounds=computeBounds(m_activeStroke.points,m_activeStroke.size*.7);
+        m_activeStroke.bounds=computeBounds(m_activeStroke.points,m_activeStroke.size*.7);
+        // Auto-ángulo en vértices o auto-marca de congruencia (serrucho/resorte) sobre lados:
+        if(!mods.testFlag(Qt::ShiftModifier)
+           &&(m_activeStroke.tool==ToolType::Pen||m_activeStroke.tool==ToolType::Ballpoint)) {
+            if(const auto autoAngle=trySnapAngleArcAtVertex(m_activeStroke,m_shapes,m_viewport.zoom)) {
+                pushUndoSnapshot(currentSnapshot());
+                m_shapes.append(*autoAngle);
+                attachNewShape(m_shapes);
+                m_hasActiveStroke=false;
+                m_shapePulseAnimation->stop();
+                m_shapePulseShape=*autoAngle;
+                m_shapePulseAlpha=1.0;
+                m_shapePulseAnimation->start();
+                invalidateStaticCache();
+                m_mode=InteractionMode::None;
+                m_linkedPreview=false;
+                m_activeGuides.clear();
+                m_activeHandleIndex=-1;
+                updateCursorShape();
+                saveAutosave();
+                emit stateChanged();
+                update();
+                return;
+            }
+        }
+        pushUndoSnapshot(currentSnapshot());
         m_strokes.append(m_activeStroke);m_hasActiveStroke=false;
         if(m_mathBeautifyEnabled&&!mods.testFlag(Qt::ShiftModifier)
            &&(m_activeStroke.tool==ToolType::Pen||m_activeStroke.tool==ToolType::Ballpoint)) {
-            int newIdx=int(m_strokes.size())-1;
             const QRectF nb=m_activeStroke.bounds;
-            bool sameChar=false;
-            if(m_pendingBeautifyStart>=0&&m_pendingBeautifyStart<newIdx&&(newIdx-m_pendingBeautifyStart)<3) {
-                const QRectF& pb=m_pendingBeautifyBox;
-                const double overlapX=std::min(pb.right(),nb.right())-std::max(pb.left(),nb.left());
-                const double minW=std::max(6.0,std::min(pb.width(),nb.width()));
-                const double refH=std::max({pb.height(),nb.height(),24.0});
-                const double dy=std::abs(pb.center().y()-nb.center().y());
-                // Un circulito pequeño arriba-derecha (signo de grado °) NO se fusiona con el número previo!
-                const bool isDegreePos=(std::max(nb.width(),nb.height())<=pb.height()*0.55)
-                                       &&(nb.center().y()<=pb.top()+pb.height()*0.38)
-                                       &&(nb.center().x()>=pb.center().x());
-                // SOLO fusionar trazos que realmente se solapan en X (>= 28% del ancho menor),
-                // jamás dígitos vecinos como '1' y '0' o '2' y '0'!
-                sameChar=(!isDegreePos&&dy<=refH*1.10&&overlapX>=minW*0.28);
-            }
-            if(sameChar) {
-                m_pendingBeautifyBox=m_pendingBeautifyBox.united(nb);
-            } else {
-                if(m_pendingBeautifyStart>=0&&m_pendingBeautifyStart<newIdx) {
-                    QVector<Stroke> candidate=m_strokes;QString label;int delta=0;
-                    const QColor opCol=m_autoColorOperators?m_operatorColor:QColor();
-                    if(HandwritingEngine::instance().beautifyCluster(candidate,m_pendingBeautifyStart,newIdx,opCol,&label,&delta,m_shapes)) {
-                        pushUndoSnapshot(currentSnapshot());
-                        m_strokes=std::move(candidate);
-                        newIdx+=delta;
-                    }
+            if(!m_pendingBeautifyIds.isEmpty()&&!m_pendingBeautifyBox.isEmpty()) {
+                const double refH=std::clamp(m_pendingBeautifyBox.height(),18.0,80.0);
+                // ¿Es un accesorio retroactivo dentro de la palabra actual (cruce de 't', punto de 'i', tilde)?
+                const bool retroAccessory=(nb.right()>=m_pendingBeautifyBox.left()-6.0)
+                                        &&(nb.left()<=m_pendingBeautifyBox.right()+6.0)
+                                        &&(std::abs(nb.center().y()-m_pendingBeautifyBox.center().y())<=refH*0.95);
+                const bool jumpedRight=(nb.left()-m_pendingBeautifyBox.right())>std::max(14.0,refH*0.42);
+                const bool jumpedLeft=!retroAccessory&&(m_pendingBeautifyBox.left()-nb.right())>std::max(14.0,refH*0.45);
+                const bool jumpedLine=std::abs(m_pendingBeautifyBox.center().y()-nb.center().y())>refH*1.15;
+                // Si el trazo nuevo ya pertenece a la siguiente palabra o renglón, embellecer la palabra anterior
+                if(jumpedRight||jumpedLeft||jumpedLine) {
+                    flushPendingBeautify();
                 }
-                m_pendingBeautifyStart=newIdx;
-                m_pendingBeautifyBox=nb;
             }
-            m_beautifyTimer->start(380);
+            if(m_pendingBeautifyStart<0)
+                m_pendingBeautifyStart=int(m_strokes.size())-1;
+            m_pendingBeautifyIds.insert(m_activeStroke.id);
+            m_pendingBeautifyBox=m_pendingBeautifyBox.isEmpty()?nb:m_pendingBeautifyBox.united(nb);
+            m_beautifyTimer->start(650);
         }
         invalidateStaticCache();
     } else if(m_mode==InteractionMode::ShapeCreate&&m_hasActiveShape) {
@@ -2647,15 +2383,14 @@ void CanvasWidget::endInput(const QPointF& screen,Qt::KeyboardModifiers mods) {
 }
 void CanvasWidget::flushPendingBeautify() {
     if(m_beautifyTimer)m_beautifyTimer->stop();
-    const int start=m_pendingBeautifyStart;
+    const QSet<QString> ids=m_pendingBeautifyIds;
     m_pendingBeautifyStart=-1;
     m_pendingBeautifyBox=QRectF();
-    if(!m_mathBeautifyEnabled||m_mode!=InteractionMode::None||start<0||start>=m_strokes.size())
+    m_pendingBeautifyIds.clear();
+    if(!m_mathBeautifyEnabled||m_mode!=InteractionMode::None||ids.isEmpty())
         return;
     QVector<Stroke> candidate=m_strokes;
-    QString label;
-    const QColor opCol=m_autoColorOperators?m_operatorColor:QColor();
-    if(HandwritingEngine::instance().beautifyCluster(candidate,start,-1,opCol,&label,nullptr,m_shapes)) {
+    if(straightenSelectedStrokes(candidate,ids)) {
         pushUndoSnapshot(currentSnapshot()); // 1er Ctrl+Z vuelve al trazo original!
         m_strokes=std::move(candidate);
         invalidateStaticCache();
@@ -2664,14 +2399,58 @@ void CanvasWidget::flushPendingBeautify() {
         update();
     }
 }
-void CanvasWidget::applyEraseAt(const QPointF& world) {
+void CanvasWidget::applyEraseAt(const QPointF& world, bool trimToIntersections) {
     QVector<Stroke> next;bool changed=false;
     for(const auto& stroke:m_strokes) {
+        if (m_eraserOnlyHighlight && stroke.tool != ToolType::Highlighter) {
+            next.append(stroke);
+            continue;
+        }
         if(m_eraserMode==EraserMode::Stroke){if(hitTestStroke(stroke,world,m_eraserSize/2))changed=true;else next.append(stroke);}
         else {const auto split=eraseStrokePartially(stroke,world,m_eraserSize/2);if(split){changed=true;next+=*split;}else next.append(stroke);}
     }
+    if (m_eraserOnlyHighlight) {
+        if (changed) {
+            m_strokes = std::move(next);
+            m_erasedAnything = true;
+            invalidateStaticCache();
+        }
+        return;
+    }
     auto shapes=m_shapes;
     auto eraseShapes=[&](bool shading) {
+        if (m_eraserPreserveShapes && !shading)
+            return;
+        if (!shading && (m_eraserMode == EraserMode::Partial || trimToIntersections)) {
+            QVector<ShapeItem> nextShapes;
+            nextShapes.reserve(shapes.size());
+            for (const auto& shape : shapes) {
+                if (shape.locked || shape.kind == ShapeKind::ShadedRegion) {
+                    nextShapes.append(shape);
+                    continue;
+                }
+                const bool partialSupported = (shape.kind == ShapeKind::Line || shape.kind == ShapeKind::Polyline
+                    || shape.kind == ShapeKind::Triangle || shape.kind == ShapeKind::Rectangle
+                    || shape.kind == ShapeKind::Circle || shape.kind == ShapeKind::Ellipse
+                    || shape.kind == ShapeKind::Curve || shape.kind == ShapeKind::Arc);
+                if (partialSupported) {
+                    if (const auto split = eraseShapePartially(shape, shapes, world, m_eraserSize / 2.0, trimToIntersections)) {
+                        changed = true;
+                        if (shape.id == m_selectedShapeId) m_selectedShapeId.clear();
+                        nextShapes += *split;
+                    } else {
+                        nextShapes.append(shape);
+                    }
+                } else if (hitTestShape(shape, world, m_eraserSize / 2.0)) {
+                    changed = true;
+                    if (shape.id == m_selectedShapeId) m_selectedShapeId.clear();
+                } else {
+                    nextShapes.append(shape);
+                }
+            }
+            shapes = std::move(nextShapes);
+            return;
+        }
         const auto count=shapes.removeIf([&](const ShapeItem& shape) {
             if(shape.locked||(shape.kind==ShapeKind::ShadedRegion)!=shading||!hitTestShape(shape,world,m_eraserSize/2))return false;
             if(shape.id==m_selectedShapeId)m_selectedShapeId.clear();
@@ -2828,9 +2607,34 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent* event) {
     endInput(event->position(),event->modifiers());
 }
 void CanvasWidget::wheelEvent(QWheelEvent* event) {
-    event->accept();m_zoomAnimation->stop();if(m_mode!=InteractionMode::None)return;
-    const double delta=event->pixelDelta().isNull()?event->angleDelta().y():event->pixelDelta().y()*2.0;
-    zoomByFactor(std::exp(delta*0.0015),event->position());
+    event->accept();
+    m_zoomAnimation->stop();
+    if (m_mode != InteractionMode::None)
+        return;
+    const auto mods = event->modifiers();
+    if (mods.testFlag(Qt::ControlModifier)) {
+        const double delta = event->pixelDelta().isNull() ? event->angleDelta().y() : event->pixelDelta().y() * 2.0;
+        zoomByFactor(std::exp(delta * 0.0015), event->position());
+        return;
+    }
+    clearPenCursor();
+    QPointF scrollDelta;
+    if (!event->pixelDelta().isNull()) {
+        scrollDelta = QPointF(event->pixelDelta());
+    } else {
+        const QPoint angle = event->angleDelta();
+        if (mods.testFlag(Qt::ShiftModifier) && angle.x() == 0)
+            scrollDelta = QPointF(angle.y() * 0.65, 0.0);
+        else
+            scrollDelta = QPointF(angle.x() * 0.65, angle.y() * 0.65);
+    }
+    if (scrollDelta.isNull())
+        return;
+    m_viewport.x += scrollDelta.x();
+    m_viewport.y += scrollDelta.y();
+    clampFiniteViewport();
+    invalidateStaticCache();
+    saveAutosave();
 }
 void CanvasWidget::keyPressEvent(QKeyEvent* event) {
     if(event->key()==Qt::Key_0&&event->modifiers().testFlag(Qt::ControlModifier)){resetViewport();event->accept();return;}
@@ -2894,68 +2698,6 @@ void CanvasWidget::focusOutEvent(QFocusEvent* event) {
     updateCursorShape();
     QWidget::focusOutEvent(event);
 }
-void CanvasWidget::updateRadialHover(const QPointF& screenPos) {
-    m_radialCursorPos=screenPos;
-    const QPointF d=screenPos-m_radialCenter;
-    const double r=std::hypot(d.x(),d.y());
-    constexpr double kPi=3.14159265358979323846;
-    int newCol=-1;
-    if(r>=20.0&&r<=110.0) {
-        double ang=std::atan2(d.y(),d.x())+kPi/2.0+kPi/8.0;
-        while(ang<0) ang+=2.0*kPi;
-        while(ang>=2.0*kPi) ang-=2.0*kPi;
-        newCol=std::clamp(int(ang/(kPi/4.0)),0,7);
-    }
-    m_radialHoveredColor=newCol;
-    update();
-}
-void CanvasWidget::commitRadialSelection(bool quickTap) {
-    const int colIdx=m_radialHoveredColor;
-    m_radialOpen=false;
-    m_radialHoveredColor=-1;
-    m_radialHoveredTool=-1;
-    if(colIdx>=0) {
-        const ThemeConfig th=getThemeConfig(m_themeId);
-        const QVector<QColor> rColors = th.isDark
-            ? QVector<QColor>{QColor("#f8fafc"),QColor("#fde047"),QColor("#fb923c"),QColor("#f87171"),
-                              QColor("#f472b6"),QColor("#c084fc"),QColor("#38bdf8"),QColor("#4ade80")}
-            : QVector<QColor>{QColor("#0f172a"),QColor("#ca8a04"),QColor("#ea580c"),QColor("#dc2626"),
-                              QColor("#db2777"),QColor("#9333ea"),QColor("#0284c7"),QColor("#16a34a")};
-        // Primero volvemos al lápiz (sin recolorear una figura seleccionada por accidente) y luego cambiamos color!
-        if(m_tool!=ToolType::Pen&&m_tool!=ToolType::Ballpoint&&m_tool!=ToolType::Highlighter)
-            setTool(m_lastWriteTool);
-        setInkColor(rColors[colIdx]);
-    } else if(quickTap) {
-        setTool(m_lastWriteTool);
-    }
-    updateCursorShape();
-    update();
-}
-void CanvasWidget::clearPenCursor() {
-    if(!m_showPenCursor)return;
-    m_showPenCursor=false;update(m_penCursorRect);m_penCursorRect={};
-}
-void CanvasWidget::updatePenCursor(const QPointF& world,bool visible) {
-    if(!visible){clearPenCursor();return;}
-    const QPointF center=world*m_viewport.zoom+QPointF(m_viewport.x,m_viewport.y);
-    const double radius=std::max(26.0,strokeSize()*m_viewport.zoom/2.0+6.0);
-    const QRect dirty=QRectF(center-QPointF(radius,radius),QSizeF(radius*2,radius*2)).toAlignedRect();
-    // Coalesce subpixel hardware jitter without timers or full-canvas repaints.
-    if(m_showPenCursor&&dirty==m_penCursorRect&&distance(world,m_hoverWorldPos)*m_viewport.zoom<.5)return;
-    if(m_showPenCursor)update(m_penCursorRect);
-    m_hoverWorldPos=world;m_showPenCursor=true;m_penCursorRect=dirty;update(dirty);
-}
-QRect CanvasWidget::shapePulseRect() const {
-    const auto bounds=computeShapeBounds(m_shapePulseShape);
-    const QPointF offset(m_viewport.x,m_viewport.y);
-    return QRectF(bounds.topLeft()*m_viewport.zoom+offset,bounds.bottomRight()*m_viewport.zoom+offset)
-        .adjusted(-28,-28,28,28).toAlignedRect();
-}
-void CanvasWidget::stopShapePulse() {
-    if(!m_shapePulseAnimation)return;
-    m_shapePulseAnimation->stop();
-    if(m_shapePulseAlpha>0.0){m_shapePulseAlpha=0.0;update(shapePulseRect());}
-}
 void CanvasWidget::switchTabletTool(ToolType tool) {
     if(m_tool==tool)return;
     setTool(tool);
@@ -3005,76 +2747,4 @@ void CanvasWidget::updateCursorShape() {
     else setCursor(Qt::CrossCursor);
 }
 
-// Miniatura simplificada de una página (fondo del tema + trazos y figuras como polilíneas).
-QImage CanvasWidget::pageThumbnail(int index, const QSize& size) const {
-    QImage image(size * 2, QImage::Format_ARGB32_Premultiplied);
-    image.setDevicePixelRatio(2.0);
-    const auto theme = getThemeConfig(m_themeId);
-    image.fill(theme.background);
-    if (index < 0 || index >= m_pages.size())
-        return image;
-
-    const auto& page = m_pages.at(index);
-    const bool current = index == m_currentPageIndex;
-    const auto& strokes = current ? m_strokes : page.strokes;
-    const auto& shapes = current ? m_shapes : page.shapes;
-    const auto& images = current ? m_images : page.images;
-    const auto& texts = current ? m_texts : page.texts;
-    QRectF bounds = sheetRectForPageFormat(m_pageFormat);
-    for (const auto& item : images) {
-        if (item.isPdfPage) {
-            bounds = item.rect;
-            break;
-        }
-    }
-    for (const auto& item : images)
-        bounds = bounds.united(item.rect);
-    for (const auto& item : strokes)
-        bounds = bounds.united(item.bounds);
-    for (const auto& item : shapes)
-        bounds = bounds.united(item.bounds);
-    for (const auto& item : texts)
-        bounds = bounds.united(item.bounds);
-    if (bounds.isEmpty())
-        bounds = QRectF(0, 0, 1000, 700);
-    const double zoom = std::min((size.width() - 8.0) / bounds.width(),
-                                 (size.height() - 8.0) / bounds.height());
-    if (zoom <= 0)
-        return image;
-
-    QPainter painter(&image);
-    painter.setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
-    painter.translate(size.width() / 2.0, size.height() / 2.0);
-    painter.scale(zoom, zoom);
-    painter.translate(-bounds.center());
-    drawBackgroundTemplate(painter, page.background.value_or(m_template), theme, Viewport{0, 0, zoom}, bounds);
-    for (bool pdf : {true, false})
-        for (const auto& item : images)
-            if (item.isPdfPage == pdf)
-                painter.drawImage(item.rect, item.image);
-    for (const auto& shape : shapes)
-        if (shape.kind == ShapeKind::ShadedRegion)
-            drawShape(painter, shape);
-    for (const auto& stroke : strokes)
-        if (stroke.tool == ToolType::Highlighter)
-            drawStroke(painter, stroke);
-    for (const auto& shape : shapes)
-        if (shape.kind != ShapeKind::ShadedRegion)
-            drawShape(painter, shape);
-    for (const auto& stroke : strokes)
-        if (stroke.tool != ToolType::Highlighter)
-            drawStroke(painter, stroke);
-    for (const auto& item : texts)
-        drawTextItem(painter, item);
-    return image;
-}
-
-int CanvasWidget::documentPdfPageCount() const {
-    int total = 0;
-    for (int i = 0; i < m_pages.size(); ++i) {
-        const auto& images = i == m_currentPageIndex ? m_images : m_pages.at(i).images;
-        total += int(std::count_if(images.cbegin(), images.cend(), [](const auto& item) { return item.isPdfPage; }));
-    }
-    return total;
-}
 } // namespace finily

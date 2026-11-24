@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Types.h"
+#include "engine/StickerLibrary.h"
 
 #include <QColor>
 #include <QPointer>
@@ -11,6 +12,7 @@
 class QButtonGroup;
 class QComboBox;
 class QFrame;
+class QGridLayout;
 class QLabel;
 class QPropertyAnimation;
 class QPushButton;
@@ -63,6 +65,7 @@ public:
 
     void selectTool(ToolType tool);
     void selectPreset(int index); // 0..4
+    void openStickersPopover();
 
     // Diálogos de importación/exportación (también disparados por Ctrl+O / Ctrl+E).
     void importPdfDialog();
@@ -113,12 +116,16 @@ private:
     void buildStrokePopover();
     void buildPaperPopover();
     void buildShapesPopover();
+    void buildStickersPopover();
+    void rebuildStickersGrid();
     void buildFilePopover();
     void rebuildRecentGallery();
     void rememberRecentImage(const QString& path);
     void buildContextPill();
     void showSelectionMenu(const QPoint& globalPosition);
     void editSelectionProperties();
+    void buildEdgeMarkPill();
+    void showEdgeMarkPill(const QPointF& screenPos, const QPointF& worldPos);
 
     void applyThemeStylesheet();
     QString buildStylesheet(const ThemeConfig& theme) const;
@@ -210,13 +217,29 @@ private:
     QVector<int> m_shapeQuadSpecs;    // -1 no aplica, o variante de cuadrilátero
     QVector<int> m_shapeSolidSpecs;   // -1 no aplica, o tipo de sólido 3D (0..9)
     QVector<bool> m_shapeDimensionSpecs;
+    QVector<QString> m_shapeMarkSpecs; // "" no aplica, o marca de congruencia ("mark:zigzag", etc.)
     QComboBox* m_shapeEndings = nullptr;
     QToolButton* m_holdToShapeBtn = nullptr;
     QToolButton* m_smartGuidesBtn = nullptr;
     GlassCapsule* m_contextPill = nullptr;
     QToolButton* m_finishPolylineBtn = nullptr;
     QToolButton* m_closePolylineBtn = nullptr;
+    QToolButton* m_ctxBeautifyBtn = nullptr;
+    QToolButton* m_ctxAxesFuncBtn = nullptr;
+    QToolButton* m_ctxDuplicateBtn = nullptr;
+    QToolButton* m_ctxDeleteBtn = nullptr;
     QToolButton* m_selectionActions = nullptr;
+
+    // Popover "Fórmulas y Stickers de Geometría"
+    QToolButton* m_stickersBtn = nullptr;
+    GlassCapsule* m_stickersPopover = nullptr;
+    QLineEdit* m_stickerSearchEdit = nullptr;
+    QWidget* m_stickerGridHost = nullptr;
+    QGridLayout* m_stickerGrid = nullptr;
+    QVector<QToolButton*> m_stickerCatBtns;
+    QVector<QToolButton*> m_stickerStyleBtns;
+    QString m_activeStickerCategory = QStringLiteral("Todos");
+    StickerStyle m_stickerStyle = StickerStyle::CleanWithTitle;
 
     // Popover "Archivo / Cuaderno / PDF"
     GlassCapsule* m_filePopover = nullptr;
@@ -239,11 +262,16 @@ private:
     QToolButton* m_zoomResetBtn = nullptr;
     QToolButton* m_zoomInBtn = nullptr;
 
+    // Pill contextual de selección / marcas en arista
+    GlassCapsule* m_edgeMarkPill = nullptr;
+    QPointF m_edgeMarkWorldPos;
+
     // Pill de páginas (inferior izquierda) — cápsula de cristal antialias
     GlassCapsule* m_pagePill = nullptr;
     QToolButton* m_pagePrevBtn = nullptr;
     QLabel* m_pageLabel = nullptr;
     QToolButton* m_pageNextBtn = nullptr;
+    QToolButton* m_pageAddBtn = nullptr;
 
     // Botón diminuto de restauración (modo interfaz limpia)
     QToolButton* m_restoreBtn = nullptr;
@@ -262,6 +290,9 @@ private:
     QWidget* m_fillStyleSection = nullptr;
     QVector<QPair<QToolButton*, ShadePattern>> m_fillStyles;
     QWidget* m_stabilizerRow = nullptr;
+    QWidget* m_hlOpacityRow = nullptr;
+    QLabel* m_hlOpacityIcon = nullptr;
+    QSlider* m_hlOpacitySlider = nullptr;
     QWidget* m_eraserSection = nullptr;
     QVector<ColorDotButton*> m_swatches;
     QToolButton* m_customColorBtn = nullptr;
@@ -271,14 +302,15 @@ private:
     QLabel* m_stabilizerIcon = nullptr;
     QLabel* m_stabilizerLabel = nullptr;
     QSlider* m_stabilizerSlider = nullptr;
-    QVector<QToolButton*> m_pressureBtns;
-    QVector<PressureProfile> m_pressureSpecs;
+    QLabel* m_pressureLabel = nullptr;
+    QSlider* m_pressureSlider = nullptr;
     QToolButton* m_mathBeautifyBtn = nullptr;
-    QToolButton* m_autoColorOpsBtn = nullptr;
-    ColorDotButton* m_opColorBtn = nullptr;
+    QToolButton* m_strokeBeautifyBtn = nullptr;
     QVector<QToolButton*> m_cursorBtns; // 0 = Lapicito, 1 = Aro, 2 = Cruz
     QToolButton* m_eraserStrokeBtn = nullptr;
     QToolButton* m_eraserPartialBtn = nullptr;
+    QVector<QToolButton*> m_eraserFilterBtns; // 0 = Todo, 1 = Sin figuras, 2 = Resaltado
+    StrokePreviewWidget* m_eraserPreview = nullptr;
     QLabel* m_eraserSizeLabel = nullptr;
     QSlider* m_eraserSizeSlider = nullptr;
 

@@ -1,6 +1,9 @@
 #include "InkEngine.h"
+#include <QHash>
+#include <QImage>
 #include <QPainterPath>
 #include <QPolygonF>
+#include <QTransform>
 #include <QUuid>
 #include <algorithm>
 #include <cmath>
@@ -71,16 +74,8 @@ QVector<InkSample> sampledCurve(const QVector<StrokePoint>& points) {
     }
     return samples;
 }
-double pressureFactor(double pressure,PressureProfile profile) {
-    double p=std::clamp(pressure,0.0,1.0);
-    switch (profile) {
-    case PressureProfile::Light:
-        // Extra light-touch gain gives a confident body at 0.15--0.35 pressure.
-        return 0.10+1.02*std::pow(std::min(1.0,p*1.55),0.48);
-    case PressureProfile::Normal: return 0.08+1.07*std::pow(p,0.70);
-    case PressureProfile::Firm: return 0.06+1.19*std::pow(p,1.05);
-    }
-    return 0.85;
+double pressureMix(double baseFactor, double dynamicFactor, double sensitivity) {
+    return std::lerp(baseFactor, dynamicFactor, std::clamp(sensitivity, 0.0, 1.0));
 }
 struct LiquidShape { QVector<InkSample> samples; QVector<double> distances,radii; };
 LiquidShape liquidShape(const Stroke& stroke,double minRadius) {
@@ -95,29 +90,49 @@ LiquidShape liquidShape(const Stroke& stroke,double minRadius) {
         const double fast=sample.speed/(sample.speed+0.7);
         double factor=0.85;
         if (stroke.tool==ToolType::Ballpoint || stroke.tipStyle == 0) {
-            // Bolígrafo: línea nítida, fina y pareja con mínima variación.
+            // Bolígrafo: monolínea nítida y predecible para números y fórmulas.
             const double pressure=stroke.hasHardwarePressure?std::clamp(sample.point.pressure,0.0,1.0):0.5;
-            factor=0.78+0.08*pressure-0.03*fast;
-            if (taperLength>1e-6) {
-                const double t=std::clamp(std::min(distances[i],total-distances[i])/taperLength,0.0,1.0);
-                factor*=0.30+0.70*t*t*(3-2*t);
+            factor=0.96+0.06*pressure-0.02*fast;
+            const double ballTaper=std::min(4.0,total*0.20);
+            if (ballTaper>1e-6) {
+                const double t=std::clamp(std::min(distances[i],total-distances[i])/ballTaper,0.0,1.0);
+                factor*=0.65+0.35*t*t*(3-2*t);
             }
         } else if (stroke.tipStyle == 2) {
-            // Plumón / marcador: trazo ancho, firme y uniforme (sin afinarse en extremos).
-            factor = 1.68;
-        } else if (stroke.tipStyle == 3) {
-            // Pincel: gran contraste expresivo por presión y puntas largas y suaves.
-            const double p = stroke.hasHardwarePressure ? std::clamp(sample.point.pressure, 0.0, 1.0) : 0.65;
-            factor = 0.22 + 1.65 * std::pow(p, 0.72);
-            factor *= 1.0 - 0.14 * fast;
+            // Lápiz grafito: sensible a presión (según sensibilidad 0..1) y a inclinación (tilt).
+            const double p = stroke.hasHardwarePressure ? std::clamp(sample.point.pressure, 0.0, 1.0) : 0.60;
+            const double tilt = std::hypot(sample.point.tiltX, sample.point.tiltY);
+            const double tiltBoost = 1.0 + 0.45 * std::clamp((tilt - 12.0) / 38.0, 0.0, 1.0);
+            const double pFactor = stroke.hasHardwarePressure
+                                       ? pressureMix(0.96, 0.45 + 0.80 * p, stroke.pressureSensitivity)
+                                       : 0.96;
+            factor = pFactor * (1.0 - 0.08 * fast) * tiltBoost;
             if (taperLength > 1e-6) {
-                const double t = std::clamp(std::min(distances[i], total - distances[i]) / (taperLength * 2.0), 0.0, 1.0);
-                factor *= 0.16 + 0.84 * t * t * (3 - 2 * t);
+                const double t = std::clamp(std::min(distances[i], total - distances[i]) / taperLength, 0.0, 1.0);
+                factor *= 0.40 + 0.60 * t * t * (3 - 2 * t);
+            }
+        } else if (stroke.tipStyle == 3) {
+            // Tiza: trazo firme con micro-rugosidad en el borde y respuesta a la sensibilidad 0..1.
+            const double p = stroke.hasHardwarePressure ? std::clamp(sample.point.pressure, 0.0, 1.0) : 0.68;
+            const double tilt = std::hypot(sample.point.tiltX, sample.point.tiltY);
+            const double tiltBoost = 1.0 + 0.25 * std::clamp((tilt - 15.0) / 35.0, 0.0, 1.0);
+            const double edgeNoise = std::sin(distances[i] * 2.3 + double(i) * 1.7)
+                                   * std::cos(distances[i] * 0.9 - double(i) * 0.6);
+            const double pFactor = stroke.hasHardwarePressure
+                                       ? pressureMix(1.00, 0.55 + 0.70 * p, stroke.pressureSensitivity)
+                                       : 1.00;
+            factor = pFactor * (1.0 - 0.12 * fast) * tiltBoost * (1.0 + 0.13 * edgeNoise);
+            if (taperLength > 1e-6) {
+                const double t = std::clamp(std::min(distances[i], total - distances[i]) / taperLength, 0.0, 1.0);
+                factor *= 0.55 + 0.45 * t * t * (3 - 2 * t);
             }
         } else {
-            // Pluma fuente: caligráfica, sensible a presión, velocidad y ángulo del trazo.
-            if (stroke.hasHardwarePressure) factor=pressureFactor(sample.point.pressure,stroke.pressureProfile);
-            factor*=1.0-0.16*fast;
+            // Pluma fuente: caligráfica, contraste por sensibilidad 0..1 y ángulo de plumilla.
+            const double p = stroke.hasHardwarePressure ? std::clamp(sample.point.pressure, 0.0, 1.0) : 0.55;
+            factor = stroke.hasHardwarePressure
+                         ? pressureMix(0.95, 0.20 + 1.18 * p, stroke.pressureSensitivity)
+                         : 0.95;
+            factor *= 1.0 - 0.22 * fast;
             const qsizetype before=std::max<qsizetype>(0,i-1),after=std::min(i+1,samples.size()-1);
             const QPointF direction=pos(samples[after].point)-pos(samples[before].point);
             if (length(direction)>1e-8) {
@@ -125,13 +140,19 @@ LiquidShape liquidShape(const Stroke& stroke,double minRadius) {
                 const double tilt=std::hypot(sample.point.tiltX,sample.point.tiltY);
                 double nib=std::numbers::pi/4;
                 if (tilt>1e-6) nib+=std::min(1.0,tilt/45.0)*std::remainder(std::atan2(sample.point.tiltY,sample.point.tiltX)-nib,std::numbers::pi);
-                factor*=1.0-0.12*std::cos(2*(heading-nib))+0.06*std::sin(heading);
+                factor*=1.0-0.34*std::cos(2*(heading-nib))+0.18*std::sin(heading);
+            }
+            const double nibTaper = std::min(6.0, total * 0.22);
+            if (nibTaper > 1e-6) {
+                const double t = std::clamp(std::min(distances[i], total - distances[i]) / nibTaper, 0.0, 1.0);
+                factor *= 0.45 + 0.55 * t * t * (3 - 2 * t);
             }
         }
         radii[i]=std::max(0.0005,stroke.size*factor/2);
     }
-    // Pasadas [1 2 1]/4: quitan el temblor de la presión sin mover la forma (efecto local, ~2 unidades).
-    for (int pass=0;pass<3&&radii.size()>2;++pass) {
+    // Pasadas [1 2 1]/4: quitan el temblor de la presión sin mover la forma (tiza conserva más rugosidad).
+    const int smoothPasses = (stroke.tool == ToolType::Pen && stroke.tipStyle == 3) ? 1 : 3;
+    for (int pass=0;pass<smoothPasses&&radii.size()>2;++pass) {
         double prev=radii[0];
         for (qsizetype i=1;i+1<radii.size();++i) {
             const double current=radii[i];
@@ -229,12 +250,148 @@ QPainterPath liquidRibbon(const LiquidShape& shape,double pixelScale) {
     }
     return out;
 }
-double screenMinRadius(double zoom) { return zoom>1e-6?0.4/zoom:0.0005; }
+double screenMinRadius(double zoom) { return zoom>1e-6?0.25/zoom:0.0005; }
+quint64 computeRelativeStrokeHash(const Stroke& s) {
+    quint64 h = 14695981039346656037ULL;
+    auto mixInt = [&](quint64 v) {
+        h ^= v;
+        h *= 1099511628211ULL;
+    };
+    mixInt(quint64(s.tool));
+    mixInt(quint64(s.tipStyle));
+    mixInt(quint64(s.linePattern));
+    mixInt(quint64(s.pressureProfile));
+    mixInt(quint64(std::llround(s.pressureSensitivity * 100.0)));
+    mixInt(quint64(s.hasHardwarePressure));
+    mixInt(quint64(std::llround(s.size * 1000.0)));
+    mixInt(quint64(s.points.size()));
+    if (!s.points.isEmpty()) {
+        const double x0 = s.points.front().x;
+        const double y0 = s.points.front().y;
+        for (const auto& p : s.points) {
+            mixInt(quint64(std::llround((p.x - x0) * 100.0)));
+            mixInt(quint64(std::llround((p.y - y0) * 100.0)));
+            mixInt(quint64(std::llround(p.pressure * 1000.0)));
+        }
+    }
+    return h == 0 ? 1 : h;
+}
+QPainterPath cachedLiquidPath(const Stroke& stroke, double zoom) {
+    const double minRad = screenMinRadius(zoom);
+    // Miniaturas o zoom extremo (< 0.4): nunca contaminar la caché de pantalla del trazo
+    if (zoom < 0.4) {
+        const auto shape = liquidShape(stroke, minRad);
+        return liquidRibbon(shape, zoom);
+    }
+    quint64 h = computeRelativeStrokeHash(stroke);
+    h ^= quint64(std::llround(minRad * 50.0)) + 0x9e3779b97f4a7c15ULL;
+    h *= 1099511628211ULL;
+    if (h == 0)
+        h = 1;
+    const QPointF origin = pos(stroke.points.front());
+    if (stroke.cachedShapeHash == h && !stroke.cachedPath.isEmpty()) {
+        const QPointF delta = origin - stroke.cachedOrigin;
+        if (std::abs(delta.x()) > 1e-6 || std::abs(delta.y()) > 1e-6) {
+            stroke.cachedPath.translate(delta);
+            stroke.cachedOrigin = origin;
+        }
+        return stroke.cachedPath;
+    }
+    const auto shape = liquidShape(stroke, minRad);
+    stroke.cachedPath = liquidRibbon(shape, zoom);
+    stroke.cachedOrigin = origin;
+    stroke.cachedShapeHash = h;
+    return stroke.cachedPath;
+}
+const QPainterPath& cachedCurvePath(const Stroke& stroke) {
+    const quint64 h = computeRelativeStrokeHash(stroke);
+    const QPointF origin = pos(stroke.points.front());
+    if (stroke.cachedShapeHash == h && !stroke.cachedPath.isEmpty()) {
+        const QPointF delta = origin - stroke.cachedOrigin;
+        if (std::abs(delta.x()) > 1e-6 || std::abs(delta.y()) > 1e-6) {
+            stroke.cachedPath.translate(delta);
+            stroke.cachedOrigin = origin;
+        }
+        return stroke.cachedPath;
+    }
+    stroke.cachedPath = curve(stroke.points);
+    stroke.cachedOrigin = origin;
+    stroke.cachedShapeHash = h;
+    return stroke.cachedPath;
+}
+// Textura tileable cacheada para puntas granuladas (2 = Lápiz grafito, 3 = Tiza).
+QBrush texturedStrokeBrush(const Stroke& stroke) {
+    if (stroke.tool != ToolType::Pen || (stroke.tipStyle != 2 && stroke.tipStyle != 3))
+        return QBrush(stroke.color);
+    static QHash<quint64, QBrush> cache;
+    const quint64 key = (quint64(stroke.tipStyle) << 32) | quint64(stroke.color.rgba());
+    if (auto it = cache.constFind(key); it != cache.constEnd())
+        return *it;
+    if (cache.size() >= 64)
+        cache.clear();
+
+    constexpr int kTex = 128;
+    QImage img(kTex, kTex, QImage::Format_ARGB32_Premultiplied);
+    auto hash2 = [](int x, int y, quint32 seed) -> double {
+        quint32 h = quint32(x) * 374761393u + quint32(y) * 668265263u + seed * 1442695041u;
+        h = (h ^ (h >> 13)) * 1274126177u;
+        h ^= (h >> 16);
+        return double(h & 0xFFFFu) / 65535.0;
+    };
+    const int baseR = stroke.color.red();
+    const int baseG = stroke.color.green();
+    const int baseB = stroke.color.blue();
+    const int baseA = stroke.color.alpha();
+    const bool isChalk = (stroke.tipStyle == 3);
+
+    for (int y = 0; y < kTex; ++y) {
+        auto* row = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < kTex; ++x) {
+            const double fine = hash2(x, y, isChalk ? 7u : 3u);
+            const double coarse = hash2(x / 2, y / 2, isChalk ? 19u : 11u);
+            double mask = 1.0;
+            if (isChalk) {
+                // Tiza: polvo fino y núcleo brillante con micro-poros (sin manchas grandes).
+                const double n = 0.85 * fine + 0.15 * coarse;
+                if (n < 0.12)
+                    mask = 0.24 + n * 2.0;
+                else if (n < 0.37)
+                    mask = 0.58 + (n - 0.12) * 0.96;
+                else
+                    mask = 0.85 + (n - 0.37) * 0.24;
+            } else {
+                // Grafito: grano microscópico fino y sedoso.
+                const double n = 0.86 * fine + 0.14 * coarse;
+                mask = 0.64 + 0.36 * n;
+            }
+            const int a = std::clamp(int(std::lround(baseA * mask)), 0, 255);
+            const int pr = (baseR * a + 127) / 255;
+            const int pg = (baseG * a + 127) / 255;
+            const int pb = (baseB * a + 127) / 255;
+            row[x] = qRgba(pr, pg, pb, a);
+        }
+    }
+    QBrush brush(img);
+    const double scale = isChalk ? 0.30 : 0.26;
+    brush.setTransform(QTransform::fromScale(scale, scale));
+    cache.insert(key, brush);
+    return brush;
+}
 void drawLiquidInk(QPainter& painter,const Stroke& stroke) {
-    const auto shape=liquidShape(stroke,screenMinRadius(painter.worldTransform().m11()));
     // One fill composites opacity exactly once, including tight cursive crossings.
-    painter.setPen(Qt::NoPen);painter.setBrush(stroke.color);
-    painter.drawPath(liquidRibbon(shape,painter.worldTransform().m11()));
+    const QPainterPath path = cachedLiquidPath(stroke, painter.worldTransform().m11());
+    if (stroke.tool == ToolType::Pen && stroke.tipStyle == 3) {
+        // Halo polvoriento muy tenue alrededor del trazo de tiza.
+        QColor dust = stroke.color;
+        dust.setAlpha(std::max(1, int(std::lround(stroke.color.alpha() * 0.18))));
+        QPen dustPen(dust, std::max(0.8, stroke.size * 0.26), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        painter.setPen(dustPen);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(path);
+    }
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(texturedStrokeBrush(stroke));
+    painter.drawPath(path);
 }
 void arrowHead(QPainter& painter, QPointF tip, QPointF previous, double size, QColor color) {
     QPointF v=tip-previous; const double n=length(v); if (n<1e-8) return;
@@ -246,7 +403,7 @@ void arrowHead(QPainter& painter, QPointF tip, QPointF previous, double size, QC
 }
 bool LiveInkRenderer::eligible(const Stroke& s) {
     return (s.tool==ToolType::Pen||s.tool==ToolType::Ballpoint)&&s.linePattern==LinePattern::Solid
-        &&s.tipStyle!=3&&s.opacity>=0.999&&s.color.alpha()==255&&s.points.size()>=2;
+        &&s.tipStyle!=2&&s.tipStyle!=3&&s.opacity>=0.999&&s.color.alpha()==255&&s.points.size()>=2;
 }
 void LiveInkRenderer::reset() { m_frozen=-1;m_vp={};m_pixels={};m_dpr=1; }
 bool LiveInkRenderer::usable(const Viewport& vp,const QSize& pixels) const {
@@ -321,8 +478,8 @@ QRectF computeBounds(const QVector<StrokePoint>& points,double padding) {
     return QRectF(QPointF(l-padding,t-padding),QPointF(r+padding,b+padding));
 }
 static double strokeHitPad(const Stroke& stroke) {
-    if (stroke.tool == ToolType::Pen && stroke.tipStyle == 2) return 0.85;
-    if (stroke.tool == ToolType::Pen && stroke.tipStyle == 3) return 0.95;
+    if (stroke.tool == ToolType::Pen && stroke.tipStyle == 2) return 0.75;
+    if (stroke.tool == ToolType::Pen && stroke.tipStyle == 3) return 0.80;
     return 0.7;
 }
 bool hitTestStroke(const Stroke& stroke,const QPointF& p,double radius) {
@@ -372,11 +529,14 @@ std::optional<QVector<Stroke>> eraseStrokePartially(const Stroke& stroke,const Q
     if (!touched) return std::nullopt;
     return result;
 }
-void drawStroke(QPainter& painter,const Stroke& stroke) {
+void drawStroke(QPainter& painter, const Stroke& stroke, bool lightBackground) {
     if (stroke.points.isEmpty() || stroke.tool==ToolType::Eraser || stroke.tool==ToolType::Hand) return;
     painter.save();painter.setRenderHint(QPainter::Antialiasing,true);
-    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    const double baseOp = (stroke.tool==ToolType::Highlighter ? 0.35 : (stroke.tipStyle == 3 ? 0.80 : 1.0));
+    const bool multiplyHl = (stroke.tool == ToolType::Highlighter && lightBackground);
+    painter.setCompositionMode(multiplyHl ? QPainter::CompositionMode_Multiply : QPainter::CompositionMode_SourceOver);
+    const double baseOp = (stroke.tool==ToolType::Highlighter
+                               ? (stroke.opacity >= 0.99 ? 0.24 : 1.0)
+                               : (stroke.tipStyle == 2 ? 0.78 : (stroke.tipStyle == 3 ? 0.94 : 1.0)));
     painter.setOpacity(std::clamp(stroke.opacity,0.0,1.0)*baseOp);
     const double size=std::max(0.01,stroke.size);
     if ((stroke.tool==ToolType::Pen || stroke.tool==ToolType::Ballpoint) && stroke.linePattern==LinePattern::Solid) {
@@ -391,7 +551,7 @@ void drawStroke(QPainter& painter,const Stroke& stroke) {
         if (stroke.points.size()==1) painter.drawPoint(pos(stroke.points.front()));
         else if (stroke.tool == ToolType::Highlighter && stroke.tipStyle == 2)
             painter.drawLine(pos(stroke.points.front()), pos(stroke.points.back()));
-        else painter.drawPath(curve(stroke.points));
+        else painter.drawPath(cachedCurvePath(stroke));
         if (stroke.linePattern==LinePattern::Arrow || stroke.linePattern==LinePattern::DoubleArrow) {
             const auto& p=stroke.points;
             qsizetype last=p.size()-2;
@@ -424,5 +584,8 @@ void drawBackgroundTemplate(QPainter& painter,BackgroundTemplate tpl,const Theme
     }
     painter.restore();
 }
-double inkPressureFactor(double pressure,PressureProfile profile) { return pressureFactor(pressure,profile); }
+double inkPressureFactor(double pressure, PressureProfile profile) {
+    const double s = (profile == PressureProfile::Light) ? 0.35 : (profile == PressureProfile::Firm ? 0.85 : 0.50);
+    return pressureMix(0.95, 0.20 + 1.18 * std::clamp(pressure, 0.0, 1.0), s);
+}
 } // namespace finily

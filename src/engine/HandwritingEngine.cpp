@@ -1309,36 +1309,227 @@ void HandwritingEngine::buildBuiltinTemplates() {
     };
     addTemplate("→", true, arrowCanon, arrowCanon);
 
-    // ==================== LETRAS PARA "PASAR A TEXTO" ====================
-    addTemplate("A", false,
-                {joinPolylines({linePolyline(0.20, 0.86, 0.50, 0.14), linePolyline(0.50, 0.14, 0.80, 0.86)}),
-                 linePolyline(0.30, 0.60, 0.70, 0.60)},
-                {joinPolylines({linePolyline(0.20, 0.86, 0.50, 0.14), linePolyline(0.50, 0.14, 0.80, 0.86)}),
-                 linePolyline(0.30, 0.60, 0.70, 0.60)});
-    addTemplate("C", false, {arcPolyline(0.54, 0.50, 0.30, 0.36, -45, -315, 18)},
-                {arcPolyline(0.54, 0.50, 0.30, 0.36, -45, -315, 18)});
-    addTemplate("E", false,
-                {joinPolylines({linePolyline(0.74, 0.16, 0.28, 0.16), linePolyline(0.28, 0.16, 0.28, 0.84),
-                                linePolyline(0.28, 0.84, 0.76, 0.84)}),
-                 linePolyline(0.28, 0.50, 0.68, 0.50)},
-                {joinPolylines({linePolyline(0.74, 0.16, 0.28, 0.16), linePolyline(0.28, 0.16, 0.28, 0.84),
-                                linePolyline(0.28, 0.84, 0.76, 0.84)}),
-                 linePolyline(0.28, 0.50, 0.68, 0.50)});
-    addTemplate("x", false,
-                {quadBezier({0.20, 0.28}, {0.42, 0.20}, {0.50, 0.52}, 10),
-                 quadBezier({0.80, 0.24}, {0.50, 0.54}, {0.22, 0.84}, 10)},
-                {linePolyline(0.22, 0.22, 0.78, 0.82), linePolyline(0.78, 0.22, 0.22, 0.82)});
-    addTemplate("x", false,
-                {linePolyline(0.22, 0.22, 0.78, 0.82), linePolyline(0.78, 0.22, 0.22, 0.82)},
-                {linePolyline(0.22, 0.22, 0.78, 0.82), linePolyline(0.78, 0.22, 0.22, 0.82)});
-    addTemplate("y", false,
-                {linePolyline(0.22, 0.18, 0.50, 0.52), linePolyline(0.78, 0.18, 0.34, 0.88)},
-                {linePolyline(0.22, 0.18, 0.50, 0.52), linePolyline(0.78, 0.18, 0.34, 0.88)});
-    addTemplate("z", false,
-                {joinPolylines({linePolyline(0.22, 0.18, 0.78, 0.18), linePolyline(0.78, 0.18, 0.22, 0.84),
-                                linePolyline(0.22, 0.84, 0.78, 0.84)})},
-                {joinPolylines({linePolyline(0.22, 0.18, 0.78, 0.18), linePolyline(0.78, 0.18, 0.22, 0.84),
-                                linePolyline(0.22, 0.84, 0.78, 0.84)})});
+    // ==================== LETRAS COMPLETAS (A-Z, a-z, ñ) PARA "PASAR A TEXTO" ====================
+    auto addLetter = [&](const QString& lbl, const QVector<QVector<QPointF>>& sample) {
+        addTemplate(lbl, false, sample, sample);
+    };
+
+    // Vocales y consonantes (ambos sentidos de giro y variantes manuscritas)
+    addLetter("a", {joinPolylines({arcPolyline(0.46, 0.56, 0.24, 0.24, -40, -330, 14),
+                                   linePolyline(0.70, 0.34, 0.72, 0.84)})});
+    addLetter("a", {arcPolyline(0.46, 0.56, 0.24, 0.24, -40, -330, 14),
+                    linePolyline(0.70, 0.32, 0.72, 0.84)});
+    addLetter("a", {joinPolylines({arcPolyline(0.46, 0.56, 0.24, 0.24, 20, -310, 14),
+                                   linePolyline(0.70, 0.40, 0.74, 0.86)})});
+    addLetter("A", {joinPolylines({linePolyline(0.20, 0.86, 0.50, 0.14), linePolyline(0.50, 0.14, 0.80, 0.86)}),
+                    linePolyline(0.30, 0.60, 0.70, 0.60)});
+    addLetter("A", {linePolyline(0.50, 0.14, 0.20, 0.86),
+                    linePolyline(0.50, 0.14, 0.80, 0.86),
+                    linePolyline(0.30, 0.60, 0.70, 0.60)});
+
+    addLetter("b", {joinPolylines({linePolyline(0.28, 0.12, 0.28, 0.84),
+                                   arcPolyline(0.50, 0.62, 0.24, 0.22, -145, 145, 16)})});
+    addLetter("b", {linePolyline(0.28, 0.12, 0.28, 0.84),
+                    arcPolyline(0.50, 0.62, 0.24, 0.22, -135, 140, 16)});
+    addLetter("B", {linePolyline(0.26, 0.14, 0.26, 0.86),
+                    joinPolylines({arcPolyline(0.46, 0.32, 0.22, 0.18, -110, 95, 12),
+                                   arcPolyline(0.48, 0.68, 0.24, 0.18, -95, 115, 12)})});
+
+    addLetter("c", {arcPolyline(0.56, 0.52, 0.28, 0.34, -42, -315, 18)});
+    addLetter("c", {arcPolyline(0.56, 0.52, 0.28, 0.34, -55, -300, 18)});
+
+    addLetter("d", {joinPolylines({arcPolyline(0.46, 0.62, 0.24, 0.22, -45, -315, 14),
+                                   linePolyline(0.70, 0.12, 0.70, 0.86)})});
+    addLetter("d", {arcPolyline(0.46, 0.62, 0.24, 0.22, -45, -315, 14),
+                    linePolyline(0.70, 0.12, 0.70, 0.86)});
+    addLetter("d", {joinPolylines({linePolyline(0.70, 0.12, 0.70, 0.86),
+                                   arcPolyline(0.46, 0.62, 0.24, 0.22, 35, -305, 14)})});
+    addLetter("D", {linePolyline(0.26, 0.14, 0.26, 0.86),
+                    arcPolyline(0.36, 0.50, 0.36, 0.36, -90, 90, 16)});
+    addLetter("D", {joinPolylines({linePolyline(0.26, 0.14, 0.26, 0.86),
+                                   arcPolyline(0.36, 0.50, 0.36, 0.36, 90, -90, 16)})});
+
+    addLetter("e", {joinPolylines({linePolyline(0.24, 0.52, 0.76, 0.50),
+                                   arcPolyline(0.50, 0.52, 0.26, 0.32, 0, -315, 18)})});
+    addLetter("e", {joinPolylines({linePolyline(0.28, 0.54, 0.74, 0.46),
+                                   arcPolyline(0.50, 0.52, 0.26, 0.32, -20, -315, 18)})});
+    addLetter("E", {joinPolylines({linePolyline(0.74, 0.16, 0.28, 0.16), linePolyline(0.28, 0.16, 0.28, 0.84),
+                                   linePolyline(0.28, 0.84, 0.76, 0.84)}),
+                    linePolyline(0.28, 0.50, 0.68, 0.50)});
+    addLetter("E", {linePolyline(0.28, 0.16, 0.28, 0.84),
+                    linePolyline(0.28, 0.16, 0.74, 0.16),
+                    linePolyline(0.28, 0.50, 0.68, 0.50),
+                    linePolyline(0.28, 0.84, 0.76, 0.84)});
+
+    addLetter("f", {joinPolylines({arcPolyline(0.58, 0.26, 0.16, 0.14, -20, -180, 10),
+                                   linePolyline(0.42, 0.26, 0.42, 0.88)}),
+                    linePolyline(0.24, 0.48, 0.68, 0.48)});
+    addLetter("F", {joinPolylines({linePolyline(0.74, 0.16, 0.28, 0.16), linePolyline(0.28, 0.16, 0.28, 0.86)}),
+                    linePolyline(0.28, 0.50, 0.68, 0.50)});
+
+    addLetter("g", {joinPolylines({arcPolyline(0.48, 0.36, 0.24, 0.20, -40, -330, 14),
+                                   linePolyline(0.72, 0.20, 0.72, 0.74),
+                                   arcPolyline(0.48, 0.74, 0.24, 0.16, 0, 165, 10)})});
+    addLetter("g", {arcPolyline(0.48, 0.36, 0.24, 0.20, -40, -330, 14),
+                    joinPolylines({linePolyline(0.72, 0.20, 0.72, 0.74),
+                                   arcPolyline(0.48, 0.74, 0.24, 0.16, 0, 165, 10)})});
+    addLetter("G", {joinPolylines({arcPolyline(0.52, 0.50, 0.30, 0.36, -45, -330, 18),
+                                   linePolyline(0.78, 0.62, 0.78, 0.50),
+                                   linePolyline(0.78, 0.50, 0.54, 0.50)})});
+
+    addLetter("h", {joinPolylines({linePolyline(0.26, 0.12, 0.26, 0.86),
+                                   linePolyline(0.26, 0.62, 0.30, 0.50),
+                                   arcPolyline(0.52, 0.58, 0.22, 0.16, -165, 0, 10),
+                                   linePolyline(0.74, 0.58, 0.74, 0.86)})});
+    addLetter("h", {linePolyline(0.26, 0.12, 0.26, 0.86),
+                    joinPolylines({arcPolyline(0.52, 0.58, 0.22, 0.16, -165, 0, 10),
+                                   linePolyline(0.74, 0.58, 0.74, 0.86)})});
+    addLetter("H", {linePolyline(0.26, 0.14, 0.26, 0.86),
+                    linePolyline(0.74, 0.14, 0.74, 0.86),
+                    linePolyline(0.26, 0.50, 0.74, 0.50)});
+    addLetter("H", {linePolyline(0.26, 0.14, 0.26, 0.86),
+                    linePolyline(0.26, 0.50, 0.74, 0.50),
+                    linePolyline(0.74, 0.14, 0.74, 0.86)});
+
+    addLetter("i", {linePolyline(0.50, 0.36, 0.50, 0.86),
+                    linePolyline(0.49, 0.14, 0.51, 0.16, 3)});
+    addLetter("I", {linePolyline(0.50, 0.14, 0.50, 0.86)});
+
+    addLetter("j", {joinPolylines({linePolyline(0.58, 0.34, 0.58, 0.74),
+                                   arcPolyline(0.42, 0.74, 0.16, 0.14, 0, 165, 10)}),
+                    linePolyline(0.57, 0.14, 0.59, 0.16, 3)});
+    addLetter("J", {joinPolylines({linePolyline(0.64, 0.14, 0.64, 0.68),
+                                   arcPolyline(0.44, 0.68, 0.20, 0.18, 0, 170, 12)})});
+
+    addLetter("k", {linePolyline(0.26, 0.12, 0.26, 0.86),
+                    joinPolylines({linePolyline(0.72, 0.38, 0.28, 0.62),
+                                   linePolyline(0.34, 0.58, 0.74, 0.86)})});
+    addLetter("k", {linePolyline(0.26, 0.12, 0.26, 0.86),
+                    linePolyline(0.72, 0.38, 0.28, 0.62),
+                    linePolyline(0.34, 0.58, 0.74, 0.86)});
+
+    addLetter("l", {linePolyline(0.50, 0.12, 0.50, 0.88)});
+    addLetter("l", {joinPolylines({linePolyline(0.46, 0.12, 0.46, 0.78),
+                                   quadBezier({0.46, 0.78}, {0.48, 0.88}, {0.62, 0.86}, 6)})});
+    addLetter("L", {joinPolylines({linePolyline(0.28, 0.14, 0.28, 0.86), linePolyline(0.28, 0.86, 0.76, 0.86)})});
+    addLetter("L", {linePolyline(0.28, 0.14, 0.28, 0.86), linePolyline(0.28, 0.86, 0.76, 0.86)});
+
+    addLetter("m", {joinPolylines({linePolyline(0.16, 0.36, 0.16, 0.84),
+                                   arcPolyline(0.33, 0.48, 0.17, 0.16, -165, 0, 8),
+                                   linePolyline(0.50, 0.48, 0.50, 0.84),
+                                   arcPolyline(0.67, 0.48, 0.17, 0.16, -165, 0, 8),
+                                   linePolyline(0.84, 0.48, 0.84, 0.84)})});
+    addLetter("m", {joinPolylines({linePolyline(0.16, 0.84, 0.16, 0.44),
+                                   arcPolyline(0.33, 0.48, 0.17, 0.16, -165, 0, 8),
+                                   linePolyline(0.50, 0.48, 0.50, 0.84),
+                                   linePolyline(0.50, 0.84, 0.50, 0.48),
+                                   arcPolyline(0.67, 0.48, 0.17, 0.16, -165, 0, 8),
+                                   linePolyline(0.84, 0.48, 0.84, 0.84)})});
+    addLetter("M", {joinPolylines({linePolyline(0.18, 0.86, 0.24, 0.16),
+                                   linePolyline(0.24, 0.16, 0.50, 0.58),
+                                   linePolyline(0.50, 0.58, 0.76, 0.16),
+                                   linePolyline(0.76, 0.16, 0.82, 0.86)})});
+
+    addLetter("n", {joinPolylines({linePolyline(0.24, 0.34, 0.24, 0.84),
+                                   linePolyline(0.24, 0.62, 0.28, 0.46),
+                                   arcPolyline(0.52, 0.48, 0.24, 0.18, -165, 0, 10),
+                                   linePolyline(0.76, 0.48, 0.76, 0.84)})});
+    addLetter("n", {joinPolylines({linePolyline(0.24, 0.84, 0.24, 0.44),
+                                   arcPolyline(0.52, 0.48, 0.24, 0.18, -165, 0, 10),
+                                   linePolyline(0.76, 0.48, 0.76, 0.84)})});
+    addLetter("N", {joinPolylines({linePolyline(0.24, 0.86, 0.24, 0.16),
+                                   linePolyline(0.24, 0.16, 0.76, 0.86),
+                                   linePolyline(0.76, 0.86, 0.76, 0.16)})});
+    addLetter("ñ", {joinPolylines({linePolyline(0.24, 0.40, 0.24, 0.86),
+                                   arcPolyline(0.52, 0.52, 0.24, 0.18, -165, 0, 10),
+                                   linePolyline(0.76, 0.52, 0.76, 0.86)}),
+                    linePolyline(0.28, 0.18, 0.72, 0.18)});
+
+    addLetter("o", {arcPolyline(0.50, 0.50, 0.32, 0.34, -90, 270, 20)});
+    addLetter("o", {arcPolyline(0.50, 0.50, 0.32, 0.34, -90, -450, 20)});
+    addLetter("o", {arcPolyline(0.50, 0.50, 0.32, 0.34, 0, -360, 20)});
+
+    addLetter("p", {joinPolylines({linePolyline(0.26, 0.22, 0.26, 0.88),
+                                   linePolyline(0.26, 0.52, 0.28, 0.32),
+                                   arcPolyline(0.50, 0.38, 0.24, 0.20, -145, 145, 16)})});
+    addLetter("p", {linePolyline(0.26, 0.22, 0.26, 0.88),
+                    arcPolyline(0.50, 0.38, 0.24, 0.20, -135, 140, 16)});
+    addLetter("P", {linePolyline(0.26, 0.14, 0.26, 0.86),
+                    arcPolyline(0.46, 0.34, 0.26, 0.20, -110, 110, 14)});
+
+    addLetter("q", {joinPolylines({arcPolyline(0.46, 0.38, 0.24, 0.20, -40, -330, 14),
+                                   linePolyline(0.70, 0.22, 0.70, 0.88)})});
+    addLetter("q", {arcPolyline(0.46, 0.38, 0.24, 0.20, -40, -330, 14),
+                    linePolyline(0.70, 0.22, 0.70, 0.88)});
+    // Variante de 'q' en español con rayita horizontal cruzando el tallo descendente
+    addLetter("q", {joinPolylines({arcPolyline(0.46, 0.36, 0.24, 0.18, -40, -330, 14),
+                                   linePolyline(0.68, 0.22, 0.60, 0.88)}),
+                    linePolyline(0.38, 0.68, 0.84, 0.68)});
+
+    addLetter("r", {joinPolylines({linePolyline(0.28, 0.32, 0.28, 0.84),
+                                   linePolyline(0.28, 0.54, 0.34, 0.38),
+                                   arcPolyline(0.54, 0.42, 0.20, 0.14, -165, -20, 8)})});
+    addLetter("r", {joinPolylines({linePolyline(0.28, 0.84, 0.28, 0.38),
+                                   arcPolyline(0.54, 0.42, 0.20, 0.14, -165, -20, 8)})});
+    addLetter("R", {linePolyline(0.26, 0.14, 0.26, 0.86),
+                    joinPolylines({arcPolyline(0.46, 0.34, 0.24, 0.18, -110, 105, 12),
+                                   linePolyline(0.46, 0.52, 0.76, 0.86)})});
+
+    addLetter("s", {joinPolylines({arcPolyline(0.52, 0.32, 0.22, 0.16, -25, -245, 12),
+                                   arcPolyline(0.48, 0.68, 0.24, 0.18, -75, 155, 14)})});
+    addLetter("s", {joinPolylines({quadBezier({0.72, 0.24}, {0.36, 0.12}, {0.28, 0.36}, 8),
+                                   quadBezier({0.28, 0.36}, {0.72, 0.56}, {0.72, 0.74}, 8),
+                                   quadBezier({0.72, 0.74}, {0.48, 0.90}, {0.24, 0.78}, 8)})});
+
+    addLetter("t", {linePolyline(0.48, 0.14, 0.48, 0.86),
+                    linePolyline(0.22, 0.42, 0.76, 0.42)});
+    addLetter("t", {joinPolylines({linePolyline(0.44, 0.14, 0.44, 0.76),
+                                   quadBezier({0.44, 0.76}, {0.46, 0.86}, {0.64, 0.84}, 6)}),
+                    linePolyline(0.22, 0.42, 0.74, 0.42)});
+    addLetter("t", {linePolyline(0.22, 0.42, 0.76, 0.42),
+                    linePolyline(0.48, 0.14, 0.48, 0.86)});
+    addLetter("T", {linePolyline(0.20, 0.16, 0.80, 0.16),
+                    linePolyline(0.50, 0.16, 0.50, 0.86)});
+    addLetter("T", {linePolyline(0.50, 0.16, 0.50, 0.86),
+                    linePolyline(0.20, 0.16, 0.80, 0.16)});
+
+    addLetter("u", {joinPolylines({linePolyline(0.24, 0.26, 0.24, 0.66),
+                                   arcPolyline(0.48, 0.64, 0.24, 0.20, 180, 0, 12),
+                                   linePolyline(0.72, 0.64, 0.72, 0.26),
+                                   linePolyline(0.72, 0.26, 0.74, 0.84)})});
+    addLetter("u", {joinPolylines({linePolyline(0.24, 0.22, 0.24, 0.66),
+                                   arcPolyline(0.50, 0.64, 0.26, 0.22, 180, 0, 12),
+                                   linePolyline(0.76, 0.66, 0.76, 0.22)})});
+
+    addLetter("v", {joinPolylines({linePolyline(0.22, 0.22, 0.50, 0.84),
+                                   linePolyline(0.50, 0.84, 0.78, 0.22)})});
+
+    addLetter("w", {joinPolylines({linePolyline(0.14, 0.24, 0.30, 0.84),
+                                   linePolyline(0.30, 0.84, 0.50, 0.42),
+                                   linePolyline(0.50, 0.42, 0.70, 0.84),
+                                   linePolyline(0.70, 0.84, 0.86, 0.24)})});
+
+    addLetter("x", {quadBezier({0.20, 0.28}, {0.42, 0.20}, {0.50, 0.52}, 10),
+                    quadBezier({0.80, 0.24}, {0.50, 0.54}, {0.22, 0.84}, 10)});
+    addLetter("x", {linePolyline(0.22, 0.22, 0.78, 0.82),
+                    linePolyline(0.78, 0.22, 0.22, 0.82)});
+
+    addLetter("y", {linePolyline(0.22, 0.20, 0.50, 0.54),
+                    linePolyline(0.78, 0.20, 0.32, 0.88)});
+    addLetter("y", {joinPolylines({linePolyline(0.24, 0.20, 0.24, 0.48),
+                                   arcPolyline(0.48, 0.48, 0.24, 0.14, 180, 0, 10),
+                                   linePolyline(0.72, 0.20, 0.72, 0.76),
+                                   arcPolyline(0.48, 0.76, 0.24, 0.14, 0, 165, 10)})});
+
+    addLetter("z", {joinPolylines({linePolyline(0.22, 0.20, 0.78, 0.20),
+                                   linePolyline(0.78, 0.20, 0.22, 0.84),
+                                   linePolyline(0.22, 0.84, 0.78, 0.84)})});
+
+    addLetter("?", {joinPolylines({arcPolyline(0.48, 0.28, 0.22, 0.16, -155, 45, 12),
+                                   quadBezier({0.66, 0.38}, {0.48, 0.48}, {0.48, 0.64}, 8)}),
+                    linePolyline(0.47, 0.84, 0.49, 0.86, 3)});
+    addLetter("!", {linePolyline(0.50, 0.14, 0.50, 0.66),
+                    linePolyline(0.49, 0.84, 0.51, 0.86, 3)});
 }
 
 void HandwritingEngine::loadCustomTemplates() {
@@ -1533,9 +1724,38 @@ RecognitionResult HandwritingEngine::recognizeCluster(const QVector<QVector<QPoi
             return geo;
     }
 
-    // 3. MOTOR NEURONAL REAL (CNN 26 clases, 98.80% en MNIST 10k + rechazo OTHER!)
+    // 3. Si es "Pasar a texto" (mathAndDigitsOnly == false), evaluar plantillas de letras A-Z, a-z, ñ
+    // y clasificar rasgos geométricos del carácter ANTES de la CNN numérica (que solo conoce dígitos/signos!).
+    if (!mathAndDigitsOnly && !inputDir.isEmpty()) {
+        double bestLetterDist = std::numeric_limits<double>::max();
+        const GlyphTemplate* bestLetterTpl = nullptr;
+        for (const auto& tpl : m_templates) {
+            if (tpl.isCustom || tpl.isMathOrDigit || tpl.strokeCount != rawStrokes.size())
+                continue;
+            const double ratioDiff = std::abs(std::log(inputAspect / std::max(tpl.aspectRatio, 0.1)));
+            if (ratioDiff > 1.05)
+                continue;
+            const double d = directedStrokeDistance(inputDir, tpl.directedStrokes) + 0.038 * ratioDiff;
+            if (d < bestLetterDist) {
+                bestLetterDist = d;
+                bestLetterTpl = &tpl;
+            }
+        }
+        if (bestLetterTpl && bestLetterDist <= 0.25) {
+            RecognitionResult res;
+            res.matched = true;
+            res.label = bestLetterTpl->label;
+            res.score = std::clamp(1.0 - bestLetterDist / 0.45, 0.0, 1.0);
+            res.canonicalInWorld = false;
+            res.canonicalStrokes = bestLetterTpl->canonicalStrokes;
+            return res;
+        }
+    }
+
+    // 4. MOTOR NEURONAL REAL (CNN 26 clases, 98.80% en MNIST 10k + rechazo OTHER!)
     const CnnPrediction pred = classifyWithCnn(rawStrokes);
-    if (pred.label != QLatin1String("OTHER") && pred.prob >= 0.80) {
+    const double cnnThresh = mathAndDigitsOnly ? 0.80 : 0.90;
+    if (pred.label != QLatin1String("OTHER") && pred.prob >= cnnThresh) {
         // Evitar que la CNN convierta un '+' o 2 trazos cruzados en un dígito '5'/'6'
         if (rawStrokes.size() >= 2 && (pred.label == QLatin1String("5") || pred.label == QLatin1String("6")))
             return {};
@@ -1549,8 +1769,7 @@ RecognitionResult HandwritingEngine::recognizeCluster(const QVector<QVector<QPoi
             return res;
     }
 
-    // 4. Fallback para símbolos matemáticos no incluidos en la CNN (α, β, π, →)
-    // y letras en "Pasar a texto" (mathAndDigitsOnly == false).
+    // 5. Fallback para símbolos matemáticos extra (α, β, π, →) y mejor letra cercana
     if (!inputDir.isEmpty()) {
         auto isExtraMathSymbol = [](const QString& lbl) {
             return lbl == QLatin1String("α") || lbl == QLatin1String("β")
@@ -1567,20 +1786,20 @@ RecognitionResult HandwritingEngine::recognizeCluster(const QVector<QVector<QPoi
             if (!mathAndDigitsOnly && tpl.isMathOrDigit && !extraMath)
                 continue;
             const double ratioDiff = std::abs(std::log(inputAspect / std::max(tpl.aspectRatio, 0.1)));
-            if (ratioDiff > 0.95)
+            if (ratioDiff > 1.15)
                 continue;
-            const double d = directedStrokeDistance(inputDir, tpl.directedStrokes) + 0.045 * ratioDiff;
+            const double d = directedStrokeDistance(inputDir, tpl.directedStrokes) + 0.042 * ratioDiff;
             if (d < bestDist) {
                 bestDist = d;
                 bestTpl = &tpl;
             }
         }
-        const double limit = mathAndDigitsOnly ? 0.19 : 0.22;
+        const double limit = mathAndDigitsOnly ? 0.19 : 0.34;
         if (bestTpl && bestDist <= limit) {
             RecognitionResult res;
             res.matched = true;
             res.label = bestTpl->label;
-            res.score = std::clamp(1.0 - bestDist / 0.46, 0.0, 1.0);
+            res.score = std::clamp(1.0 - bestDist / 0.50, 0.0, 1.0);
             res.canonicalInWorld = false;
             res.canonicalStrokes = bestTpl->canonicalStrokes;
             return res;
@@ -1831,20 +2050,27 @@ QString HandwritingEngine::recognizeStrokesToText(const QVector<Stroke>& strokes
     QVector<Item> items;
     for (const auto& s : strokes) {
         if (selectedIds.contains(s.id) && !s.points.isEmpty())
-            items.append({&s, s.bounds});
+            items.append({&s, s.bounds.isEmpty() ? computeBounds(s.points) : s.bounds});
     }
     if (items.isEmpty())
         return {};
 
-    QVector<double> heights;
-    heights.reserve(items.size());
-    for (const auto& it : items)
-        heights.append(std::max(it.box.height(), 10.0));
-    std::sort(heights.begin(), heights.end());
-    const double medianH = heights[heights.size() / 2];
+    auto median = [](QVector<double> values) -> double {
+        if (values.isEmpty()) return 24.0;
+        std::sort(values.begin(), values.end());
+        const qsizetype mid = values.size() / 2;
+        return (values.size() % 2) ? values[mid] : (values[mid - 1] + values[mid]) * 0.5;
+    };
 
-    std::sort(items.begin(), items.end(),
-              [](const Item& a, const Item& b) { return a.box.center().y() < b.box.center().y(); });
+    QVector<double> allHeights;
+    for (const auto& it : items) {
+        if (it.box.height() > 5.0)
+            allHeights.append(it.box.height());
+    }
+    const double baseH = std::clamp(allHeights.isEmpty() ? 24.0 : median(allHeights), 10.0, 160.0);
+
+    std::stable_sort(items.begin(), items.end(),
+                     [](const Item& a, const Item& b) { return a.box.center().y() < b.box.center().y(); });
 
     QVector<QVector<Item>> lines;
     for (const auto& it : items) {
@@ -1854,7 +2080,7 @@ QString HandwritingEngine::recognizeStrokesToText(const QVector<Stroke>& strokes
             for (const auto& li : line)
                 avgY += li.box.center().y();
             avgY /= line.size();
-            if (std::abs(it.box.center().y() - avgY) <= std::max(medianH * 0.75, 22.0)) {
+            if (std::abs(it.box.center().y() - avgY) <= std::max(baseH * 1.25, 22.0)) {
                 line.append(it);
                 placed = true;
                 break;
@@ -1866,45 +2092,262 @@ QString HandwritingEngine::recognizeStrokesToText(const QVector<Stroke>& strokes
 
     QStringList outputLines;
     for (auto& line : lines) {
-        std::sort(line.begin(), line.end(),
-                  [](const Item& a, const Item& b) { return a.box.left() < b.box.left(); });
+        std::stable_sort(line.begin(), line.end(),
+                         [](const Item& a, const Item& b) { return a.box.left() < b.box.left(); });
 
         struct Cluster {
-            QVector<QVector<QPointF>> rawStrokes;
-            QRectF box;
+            QVector<QVector<QPointF>> bodyStrokes;
+            QVector<QVector<QPointF>> crossbars;
+            QVector<QVector<QPointF>> dots;
+            QRectF coreBox;
+            QRectF fullBox;
+            bool isMidOperator = false;
+            bool isStandaloneDots = false;
         };
-        QVector<Cluster> clusters;
+
+        QVector<Item> bodies;
+        QVector<Item> bars;
+        QVector<Item> dots;
         for (const auto& it : line) {
+            const double w = it.box.width();
+            const double h = it.box.height();
+            if (std::max(w, h) <= baseH * 0.38) {
+                dots.append(it);
+            } else if (w > h * 1.80 && h <= baseH * 0.45) {
+                bars.append(it);
+            } else {
+                bodies.append(it);
+            }
+        }
+
+        QVector<Cluster> clusters;
+        // 1. Agrupar trazos de cuerpo principal (sin la barra de la 't' ni puntos)
+        for (const auto& it : bodies) {
             bool merged = false;
-            if (!clusters.isEmpty()) {
-                auto& prev = clusters.back();
-                const double overlapX = std::min(prev.box.right(), it.box.right())
-                                        - std::max(prev.box.left(), it.box.left());
-                const double minW = std::max(1.0, std::min(prev.box.width(), it.box.width()));
-                const bool touches = prev.box.adjusted(-4, -6, 4, 6).intersects(it.box);
-                if ((overlapX / minW > 0.25 || touches)
-                    && prev.rawStrokes.size() < 3
-                    && prev.box.united(it.box).width() < std::max(medianH * 1.45, 55.0)) {
-                    prev.rawStrokes.append(extractRawPoints(*it.stroke));
-                    prev.box = prev.box.united(it.box);
+            for (auto& cl : clusters) {
+                const double overlapX = std::min(cl.coreBox.right(), it.box.right())
+                                      - std::max(cl.coreBox.left(), it.box.left());
+                const double minW = std::max(1.0, std::min(cl.coreBox.width(), it.box.width()));
+                const QRectF united = cl.coreBox.united(it.box);
+                if (overlapX > minW * 0.42 && cl.bodyStrokes.size() < 3 && united.width() <= baseH * 1.10) {
+                    cl.bodyStrokes.append(extractRawPoints(*it.stroke));
+                    cl.coreBox = united;
+                    cl.fullBox = cl.fullBox.united(it.box);
                     merged = true;
+                    break;
                 }
             }
-            if (!merged)
-                clusters.append({{extractRawPoints(*it.stroke)}, it.box});
+            if (!merged) {
+                Cluster cl;
+                cl.bodyStrokes.append(extractRawPoints(*it.stroke));
+                cl.coreBox = it.box;
+                cl.fullBox = it.box;
+                clusters.append(std::move(cl));
+            }
         }
+
+        // 2. Asociar barras horizontales ('t', 'f', 'ñ', '-', '=') sin ensanchar coreBox
+        for (const auto& bar : bars) {
+            const double barCx = bar.box.center().x();
+            int bestIdx = -1;
+            double bestDist = 1e9;
+            for (int i = 0; i < clusters.size(); ++i) {
+                const auto& cl = clusters[i];
+                if (cl.isMidOperator) continue;
+                const bool vertOk = (bar.box.center().y() >= cl.coreBox.top() - baseH * 0.48)
+                                 && (bar.box.center().y() <= cl.coreBox.bottom() + baseH * 0.15);
+                const bool horzOk = (bar.box.left() <= cl.coreBox.right() + 5.0)
+                                 && (bar.box.right() >= cl.coreBox.left() - 5.0);
+                if (!vertOk || !horzOk) continue;
+                const double d = std::abs(barCx - cl.coreBox.center().x());
+                if (d < bestDist && d <= std::max(baseH * 0.55, cl.coreBox.width() * 0.85)) {
+                    bestDist = d;
+                    bestIdx = i;
+                }
+            }
+            if (bestIdx >= 0) {
+                clusters[bestIdx].crossbars.append(extractRawPoints(*bar.stroke));
+                clusters[bestIdx].fullBox = clusters[bestIdx].fullBox.united(bar.box);
+            } else {
+                bool mergedOp = false;
+                for (auto& cl : clusters) {
+                    if (cl.isMidOperator) {
+                        const double overlapX = std::min(cl.coreBox.right(), bar.box.right())
+                                              - std::max(cl.coreBox.left(), bar.box.left());
+                        const double minW = std::max(1.0, std::min(cl.coreBox.width(), bar.box.width()));
+                        if (overlapX > minW * 0.35) {
+                            cl.crossbars.append(extractRawPoints(*bar.stroke));
+                            cl.coreBox = cl.coreBox.united(bar.box);
+                            cl.fullBox = cl.fullBox.united(bar.box);
+                            mergedOp = true;
+                            break;
+                        }
+                    }
+                }
+                if (!mergedOp) {
+                    Cluster cl;
+                    cl.crossbars.append(extractRawPoints(*bar.stroke));
+                    cl.coreBox = bar.box;
+                    cl.fullBox = bar.box;
+                    cl.isMidOperator = true;
+                    clusters.append(std::move(cl));
+                }
+            }
+        }
+
+        // 3. Asociar puntos ('i', 'j', '?', '!', ':', '.')
+        for (const auto& dot : dots) {
+            const double dotCx = dot.box.center().x();
+            int bestIdx = -1;
+            double bestDist = 1e9;
+            for (int i = 0; i < clusters.size(); ++i) {
+                if (clusters[i].isMidOperator) continue;
+                const double d = std::abs(dotCx - clusters[i].coreBox.center().x());
+                const double reach = std::max(baseH * 0.38, clusters[i].coreBox.width() * 0.65);
+                if (d <= reach && d < bestDist) {
+                    bestDist = d;
+                    bestIdx = i;
+                }
+            }
+            if (bestIdx >= 0) {
+                clusters[bestIdx].dots.append(extractRawPoints(*dot.stroke));
+                clusters[bestIdx].fullBox = clusters[bestIdx].fullBox.united(dot.box);
+            } else {
+                Cluster cl;
+                cl.dots.append(extractRawPoints(*dot.stroke));
+                cl.coreBox = dot.box;
+                cl.fullBox = dot.box;
+                cl.isStandaloneDots = true;
+                clusters.append(std::move(cl));
+            }
+        }
+
+        std::stable_sort(clusters.begin(), clusters.end(),
+                         [](const Cluster& a, const Cluster& b) { return a.coreBox.left() < b.coreBox.left(); });
+
+        // Calcular x-height y línea base del renglón para distinguir minúsculas, altas (h,l,b,d,t) y descendentes (g,p,q,y,j)
+        QVector<double> bodyH, bodyBottoms;
+        for (const auto& cl : clusters) {
+            if (!cl.isMidOperator && !cl.isStandaloneDots && cl.coreBox.height() >= baseH * 0.35) {
+                bodyH.append(cl.coreBox.height());
+                bodyBottoms.append(cl.coreBox.bottom());
+            }
+        }
+        std::sort(bodyH.begin(), bodyH.end());
+        QVector<double> shortHalf;
+        for (qsizetype i = 0; i < std::max<qsizetype>(1, (bodyH.size() + 1) / 2); ++i) {
+            if (!bodyH.isEmpty()) shortHalf.append(bodyH[i]);
+        }
+        const double xHeight = shortHalf.isEmpty() ? baseH : median(shortHalf);
+        const double baselineY = bodyBottoms.isEmpty() ? 0.0 : median(bodyBottoms);
+
+        auto classifyClusterToChar = [&](const Cluster& cl, const QRectF& leftBox, bool hasRight) -> QString {
+            // 1. Puntuación de puntos independientes ('.', ',', ':')
+            if (cl.isStandaloneDots) {
+                if (cl.dots.size() >= 2) return QStringLiteral(":");
+                return QStringLiteral(".");
+            }
+            // 2. Operadores horizontales ('-', '=', '÷')
+            if (cl.isMidOperator) {
+                if (cl.crossbars.size() >= 2) return QStringLiteral("=");
+                if (cl.dots.size() >= 2) return QStringLiteral("÷");
+                return QStringLiteral("-");
+            }
+            // 3. Letras con punto ('i', 'j', '?', '!')
+            if (!cl.dots.isEmpty() && cl.bodyStrokes.size() == 1) {
+                const QRectF dotBox = polylineBox(cl.dots.front());
+                const bool dotBelow = dotBox.center().y() > cl.coreBox.bottom() - 2.0;
+                if (dotBelow) {
+                    return (cl.coreBox.width() > cl.coreBox.height() * 0.36) ? QStringLiteral("?") : QStringLiteral("!");
+                }
+                const bool isDesc = (cl.coreBox.bottom() > baselineY + xHeight * 0.25);
+                return isDesc ? QStringLiteral("j") : QStringLiteral("i");
+            }
+            // 4. Letras con barra horizontal ('t', 'f', 'ñ', 'q' con cruce, '+')
+            if (!cl.crossbars.isEmpty() && cl.bodyStrokes.size() == 1) {
+                const QRectF barBox = polylineBox(cl.crossbars.front());
+                if (barBox.center().y() < cl.coreBox.top() + cl.coreBox.height() * 0.15) {
+                    if (cl.coreBox.width() > cl.coreBox.height() * 0.65)
+                        return QStringLiteral("ñ");
+                    return QStringLiteral("T");
+                }
+                // Si la barra cruza en la mitad inferior y la mitad superior tiene el óvalo ancho de la 'q'
+                if (barBox.center().y() > cl.coreBox.top() + cl.coreBox.height() * 0.52
+                    && cl.coreBox.width() > cl.coreBox.height() * 0.42) {
+                    return QStringLiteral("q");
+                }
+                if (cl.coreBox.height() < xHeight * 1.15 && std::abs(cl.coreBox.width() - barBox.width()) < xHeight * 0.35
+                    && isVerticalLine(cl.bodyStrokes.front())) {
+                    return QStringLiteral("+");
+                }
+                return QStringLiteral("t");
+            }
+
+            // 5. Combinar trazos del clúster y consultar plantillas + analizador topológico de letras
+            QVector<QVector<QPointF>> allStrokes = cl.bodyStrokes;
+            for (const auto& b : cl.crossbars) allStrokes.append(b);
+            for (const auto& d : cl.dots) allStrokes.append(d);
+
+            const bool isTall = cl.coreBox.height() > xHeight * 1.32 && (cl.coreBox.bottom() <= baselineY + xHeight * 0.25);
+            const bool isDesc = cl.coreBox.bottom() > baselineY + xHeight * 0.28;
+
+            // 5.1 Analizador geométrico directo para trazos de 1 solo trazo (diferencia o, c, e, a, u, n, m, r, s, l, h, b, d, p, q, g, v, w)
+            if (cl.bodyStrokes.size() == 1 && cl.crossbars.isEmpty() && cl.dots.isEmpty()) {
+                const auto& pts = cl.bodyStrokes.front();
+                const QRectF b = cl.coreBox;
+                const double w = std::max(1.0, b.width());
+                const double h = std::max(1.0, b.height());
+                const double aspect = w / h;
+
+                // Palo vertical simple ('l', '1', 'I')
+                if (aspect < 0.34 && isVerticalLine(pts)) {
+                    return QStringLiteral("l");
+                }
+
+                // Lazo cerrado ('o', 'a', 'e', 'd', 'b', 'p', 'q', 'g')
+                const double startEndGap = dist2D(pts.front(), pts.back());
+                const double len = polylineLength(pts);
+                if (startEndGap <= std::max(w, h) * 0.45 && len >= (w + h) * 1.30 && !isTall && !isDesc) {
+                    // Distinguir 'e' (empieza en el interior/centro-izquierda y sale abajo-derecha) vs 'o' vs 'a'
+                    const double startRelY = (pts.front().y() - b.top()) / h;
+                    const double startRelX = (pts.front().x() - b.left()) / w;
+                    const double endRelY = (pts.back().y() - b.top()) / h;
+                    const double endRelX = (pts.back().x() - b.left()) / w;
+                    if (startRelY >= 0.30 && startRelY <= 0.72 && startRelX <= 0.65 && endRelY >= 0.58)
+                        return QStringLiteral("e");
+                    if (endRelX >= 0.68 && endRelY >= 0.72 && startEndGap > std::min(w, h) * 0.18)
+                        return QStringLiteral("a");
+                    return QStringLiteral("o");
+                }
+            }
+
+            const RecognitionResult rec = recognizeCluster(allStrokes, false, leftBox, hasRight);
+            if (rec.matched) {
+                QString lbl = rec.label;
+                // Ajustar ambigüedades dígito/letra cuando estamos en medio de una palabra
+                if (lbl == QLatin1String("0")) lbl = QStringLiteral("o");
+                else if (lbl == QLatin1String("1")) lbl = QStringLiteral("l");
+                else if (lbl == QLatin1String("5") && !isTall) lbl = QStringLiteral("s");
+                else if (lbl == QLatin1String("C") && !isTall) lbl = QStringLiteral("c");
+                else if (lbl == QLatin1String("O") && !isTall) lbl = QStringLiteral("o");
+                else if (lbl == QLatin1String("S") && !isTall) lbl = QStringLiteral("s");
+                else if (lbl == QLatin1String("U") && !isTall) lbl = QStringLiteral("u");
+                else if (lbl == QLatin1String("V") && !isTall) lbl = QStringLiteral("v");
+                return lbl;
+            }
+            return QStringLiteral("?");
+        };
 
         QString lineText;
         for (int ci = 0; ci < clusters.size(); ++ci) {
-            const QRectF leftBox = (ci > 0) ? clusters[ci - 1].box : QRectF();
+            const QRectF leftBox = (ci > 0) ? clusters[ci - 1].coreBox : QRectF();
             const bool hasRight = (ci + 1 < clusters.size());
             if (ci > 0) {
-                const double gap = clusters[ci].box.left() - clusters[ci - 1].box.right();
-                if (gap > std::max(medianH * 0.55, 16.0))
+                const double gap = clusters[ci].coreBox.left() - clusters[ci - 1].coreBox.right();
+                if (gap > std::max(xHeight * 0.48, 13.0))
                     lineText += QLatin1Char(' ');
             }
-            const RecognitionResult rec = recognizeCluster(clusters[ci].rawStrokes, false, leftBox, hasRight);
-            lineText += rec.matched ? rec.label : QStringLiteral("?");
+            lineText += classifyClusterToChar(clusters[ci], leftBox, hasRight);
         }
         if (!lineText.trimmed().isEmpty())
             outputLines.append(lineText.trimmed());

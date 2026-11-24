@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QHash>
 #include <QImage>
+#include <QPainterPath>
 #include <QPointF>
 #include <QRectF>
 #include <QString>
@@ -128,11 +129,15 @@ struct Stroke {
     double opacity = 1.0;
     LinePattern linePattern = LinePattern::Solid;
     PressureProfile pressureProfile = PressureProfile::Light;
+    double pressureSensitivity = 0.5; // 0.0 (sin presión) .. 1.0 (máxima intensidad)
     bool hasHardwarePressure = false;
-    int tipStyle = 0; // Lápiz: 0=Bolígrafo, 1=Pluma, 2=Plumón, 3=Pincel | Resaltador: 0=Biselado, 1=Redondo, 2=Recto
+    int tipStyle = 0; // Lápiz: 0=Bolígrafo, 1=Pluma, 2=Lápiz grafito, 3=Tiza | Resaltador: 0=Biselado, 1=Redondo, 2=Recto
     QVector<StrokePoint> points;
     QRectF bounds;
     QString groupId;
+    mutable QPainterPath cachedPath;
+    mutable QPointF cachedOrigin;
+    mutable quint64 cachedShapeHash = 0;
 };
 
 struct ShapeAttachment {
@@ -169,6 +174,7 @@ struct ShapeItem {
     bool closed = false;
     QRectF bounds;
     ShadePattern shadePattern = ShadePattern::Soft;
+    int shadeLayer = 0; // 0 = base, 1..2 = capas superpuestas (desplazadas/alternadas)
     QVector<int> shadeContourStarts; // Offsets of additional subpaths in vertices.
     QString groupId;
     QVector<ShapeAttachment> attachments;

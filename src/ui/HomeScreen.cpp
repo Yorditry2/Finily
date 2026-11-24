@@ -1,4 +1,5 @@
 #include "ui/HomeScreen.h"
+#include "engine/DocumentSerializer.h"
 
 #include <QAction>
 #include <QButtonGroup>
@@ -63,13 +64,35 @@ struct NotebookMeta {
     int pages = 1;
     bool hasPdf = false;
     QDateTime modified;
+    QImage preview;
 };
 
-NotebookMeta readNotebookMeta(const QFileInfo& info) {
+struct CachedNotebookMeta {
+    QDateTime modified;
+    qint64 size = -1;
     NotebookMeta meta;
-    meta.path = info.absoluteFilePath();
+};
+
+QHash<QString, CachedNotebookMeta>& notebookMetaCache() {
+    static QHash<QString, CachedNotebookMeta> cache;
+    return cache;
+}
+
+NotebookMeta readNotebookMeta(const QFileInfo& info) {
+    const QString absPath = info.absoluteFilePath();
+    const QDateTime mod = info.lastModified();
+    const qint64 fsize = info.size();
+    auto& cache = notebookMetaCache();
+    auto it = cache.find(absPath);
+    if (it != cache.end() && it->modified == mod && it->size == fsize) {
+        it->meta.title = info.completeBaseName();
+        return it->meta;
+    }
+
+    NotebookMeta meta;
+    meta.path = absPath;
     meta.title = info.completeBaseName();
-    meta.modified = info.lastModified();
+    meta.modified = mod;
 
     QFile file(meta.path);
     if (!file.open(QIODevice::ReadOnly))
@@ -125,6 +148,8 @@ NotebookMeta readNotebookMeta(const QFileInfo& info) {
     }
     meta.pages = std::max(1, int(pages));
     meta.hasPdf = pdfPages > 0;
+    meta.preview = loadOrGenerateCoverThumbnail(meta.path, meta.modified);
+    cache.insert(absPath, CachedNotebookMeta{mod, fsize, meta});
     return meta;
 }
 
@@ -550,50 +575,82 @@ protected:
         painter.fillRect(cover, sheen);
         painter.restore();
 
-        // Etiqueta de papel (como la de un cuaderno real) con el título a
-        // mano alzada y una muestra redonda de la hoja: color + plantilla.
-        const QRectF label(cover.left() + 26, cover.top() + 34, cover.width() - 58, 66);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(0, 0, 0, 20));
-        painter.drawRoundedRect(label.translated(0, 1.5), 6, 6);
-        painter.setBrush(QColor("#fdfcf8"));
-        painter.drawRoundedRect(label, 6, 6);
-        painter.setPen(QPen(QColor(120, 140, 180, 60), 0.8));
-        for (qreal y = label.top() + 22; y < label.bottom() - 6; y += 13)
-            painter.drawLine(QPointF(label.left() + 8, y), QPointF(label.right() - 8, y));
-        QFont labelFont = painter.font();
-        labelFont.setPixelSize(11);
-        labelFont.setWeight(QFont::DemiBold);
-        painter.setFont(labelFont);
-        painter.setPen(QColor("#2b2b33"));
-        const QRectF textBox = label.adjusted(8, 7, -8, -16);
-        const QString elided = QFontMetrics(labelFont).elidedText(m_meta.title, Qt::ElideRight,
-                                                                  int(textBox.width() * 2 - 12));
-        painter.drawText(textBox, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, elided);
-
-        const ThemeConfig theme = getThemeConfig(m_meta.theme);
-        const QRectF swatch(label.right() - 18, label.bottom() - 18, 13, 13);
-        painter.save();
-        QPainterPath swatchClip;
-        swatchClip.addEllipse(swatch);
-        painter.setClipPath(swatchClip);
-        painter.fillRect(swatch, theme.background);
-        paintTemplatePattern(painter, swatch.adjusted(-6, -6, 6, 6), theme, m_meta.tpl);
-        painter.restore();
-        painter.setPen(QPen(QColor(0, 0, 0, 40), 0.8));
-        painter.setBrush(Qt::NoBrush);
-        painter.drawEllipse(swatch);
-        if (m_meta.hasPdf) {
-            QFont tag = painter.font();
-            tag.setPixelSize(9);
-            tag.setWeight(QFont::Bold);
-            painter.setFont(tag);
-            const QRectF chip(label.left() + 6, label.bottom() - 17, 26, 13);
+        if (!m_meta.preview.isNull()) {
+            // Vista previa real de la primera página enmarcada dentro de la tapa pastel
+            const QRectF previewRect(cover.left() + 18.0, cover.top() + 10.0,
+                                     cover.width() - 26.0, cover.height() - 34.0);
             painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor("#ef4444"));
-            painter.drawRoundedRect(chip, 4, 4);
-            painter.setPen(Qt::white);
-            painter.drawText(chip, Qt::AlignCenter, QStringLiteral("PDF"));
+            painter.setBrush(QColor(0, 0, 0, 28));
+            painter.drawRoundedRect(previewRect.translated(0, 1.5), 7.0, 7.0);
+
+            painter.save();
+            QPainterPath clip;
+            clip.addRoundedRect(previewRect, 7.0, 7.0);
+            painter.setClipPath(clip);
+            painter.drawImage(previewRect, m_meta.preview);
+            painter.restore();
+
+            painter.setPen(QPen(darkCover ? QColor(255, 255, 255, 45) : QColor(0, 0, 0, 28), 1.0));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRoundedRect(previewRect, 7.0, 7.0);
+
+            if (m_meta.hasPdf) {
+                QFont tag = painter.font();
+                tag.setPixelSize(9);
+                tag.setWeight(QFont::Bold);
+                painter.setFont(tag);
+                const QRectF chip(previewRect.right() - 31.0, previewRect.top() + 5.0, 26.0, 13.0);
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor("#ef4444"));
+                painter.drawRoundedRect(chip, 4, 4);
+                painter.setPen(Qt::white);
+                painter.drawText(chip, Qt::AlignCenter, QStringLiteral("PDF"));
+            }
+        } else {
+            // Etiqueta de papel (cuando el cuaderno está recién creado y vacío)
+            const QRectF label(cover.left() + 26, cover.top() + 34, cover.width() - 58, 66);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(0, 0, 0, 20));
+            painter.drawRoundedRect(label.translated(0, 1.5), 6, 6);
+            painter.setBrush(QColor("#fdfcf8"));
+            painter.drawRoundedRect(label, 6, 6);
+            painter.setPen(QPen(QColor(120, 140, 180, 60), 0.8));
+            for (qreal y = label.top() + 22; y < label.bottom() - 6; y += 13)
+                painter.drawLine(QPointF(label.left() + 8, y), QPointF(label.right() - 8, y));
+            QFont labelFont = painter.font();
+            labelFont.setPixelSize(11);
+            labelFont.setWeight(QFont::DemiBold);
+            painter.setFont(labelFont);
+            painter.setPen(QColor("#2b2b33"));
+            const QRectF textBox = label.adjusted(8, 7, -8, -16);
+            const QString elided = QFontMetrics(labelFont).elidedText(m_meta.title, Qt::ElideRight,
+                                                                      int(textBox.width() * 2 - 12));
+            painter.drawText(textBox, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, elided);
+
+            const ThemeConfig theme = getThemeConfig(m_meta.theme);
+            const QRectF swatch(label.right() - 18, label.bottom() - 18, 13, 13);
+            painter.save();
+            QPainterPath swatchClip;
+            swatchClip.addEllipse(swatch);
+            painter.setClipPath(swatchClip);
+            painter.fillRect(swatch, theme.background);
+            paintTemplatePattern(painter, swatch.adjusted(-6, -6, 6, 6), theme, m_meta.tpl);
+            painter.restore();
+            painter.setPen(QPen(QColor(0, 0, 0, 40), 0.8));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(swatch);
+            if (m_meta.hasPdf) {
+                QFont tag = painter.font();
+                tag.setPixelSize(9);
+                tag.setWeight(QFont::Bold);
+                painter.setFont(tag);
+                const QRectF chip(label.left() + 6, label.bottom() - 17, 26, 13);
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor("#ef4444"));
+                painter.drawRoundedRect(chip, 4, 4);
+                painter.setPen(Qt::white);
+                painter.drawText(chip, Qt::AlignCenter, QStringLiteral("PDF"));
+            }
         }
 
         // Número de páginas, discreto en la esquina inferior.
@@ -643,8 +700,14 @@ protected:
     }
 
     void mouseReleaseEvent(QMouseEvent* event) override {
-        if (event->button() == Qt::LeftButton && rect().contains(event->pos()))
+        if (event->button() == Qt::LeftButton && rect().contains(event->pos())) {
+            const QRectF titleArea(4, kCoverH - 2, width() - 8, 26);
+            if (titleArea.contains(event->position())) {
+                emit renameRequested();
+                return;
+            }
             emit openRequested(m_meta.path);
+        }
         QWidget::mouseReleaseEvent(event);
     }
 
@@ -1005,8 +1068,18 @@ void HomeScreen::refreshLibrary() {
 
     const QString autosave = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
                              + QStringLiteral("/autosave.json");
-    if (m_draftBtn)
-        m_draftBtn->setVisible(QFileInfo::exists(autosave));
+    if (m_draftBtn) {
+        bool showDraft = false;
+        if (QFileInfo::exists(autosave)) {
+            const QJsonObject root = loadDocumentFromFile(autosave);
+            const QString sessionPath = root.value("sessionFilePath").toString();
+            const bool sessionDirty = root.value("sessionDirty").toBool(false);
+            // Solo mostrar "Continuar borrador" si hay trabajo en un borrador sin archivo
+            // o cambios sin guardar de una sesión previa.
+            showDraft = !root.isEmpty() && (sessionPath.isEmpty() || sessionDirty);
+        }
+        m_draftBtn->setVisible(showDraft);
+    }
 
     applySearchFilter(m_search ? m_search->text() : QString());
 }
@@ -1330,6 +1403,8 @@ void HomeScreen::renameNotebook(NotebookCard* card) {
         settings.setValue(coverKey(newPath), cover);
         settings.remove(coverKey(card->filePath()));
     }
+    moveCoverThumbnail(card->filePath(), newPath);
+    notebookMetaCache().remove(card->filePath());
     refreshLibrary();
 }
 
@@ -1351,6 +1426,8 @@ void HomeScreen::deleteNotebook(NotebookCard* card) {
             return;
         }
         QSettings("Finily", "Finily").remove(coverKey(card->filePath()));
+        removeCoverThumbnail(card->filePath());
+        notebookMetaCache().remove(card->filePath());
         refreshLibrary();
     }
 }

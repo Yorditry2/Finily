@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 
+#include "engine/DocumentSerializer.h"
 #include "ui/CanvasWidget.h"
 #include "ui/FloatingToolbar.h"
 #include "ui/HomeScreen.h"
@@ -72,6 +73,8 @@ MainWindow::MainWindow() {
                     const QString path = HomeScreen::uniqueNotebookPath(directory, name);
                     if (m_canvas->createNotebook(path, theme, tpl, format)) {
                         showEditorPage();
+                        m_canvas->resetViewport();
+                        m_toolbar->refreshFromCanvas();
                         m_canvas->setFocus();
                         return;
                     }
@@ -83,11 +86,12 @@ MainWindow::MainWindow() {
     connect(m_homeScreen, &HomeScreen::openNotebookRequested, this, [this](const QString& path) {
         if (!m_canvas)
             return;
+        showEditorPage();
         if (!m_canvas->loadFromFile(path)) {
+            showHomePage();
             QMessageBox::warning(this, tr("Abrir cuaderno"), tr("No se pudo abrir el cuaderno."));
             return;
         }
-        showEditorPage();
         m_toolbar->refreshFromCanvas();
         m_canvas->setFocus();
     });
@@ -170,6 +174,7 @@ MainWindow::MainWindow() {
             } else {
                 if (!m_canvas->saveToFile(oldPath) || !QFile::rename(oldPath, target))
                     break;
+                moveCoverThumbnail(oldPath, target);
                 m_canvas->setCurrentFilePath(target);
                 m_canvas->saveAutosave();
             }
@@ -472,6 +477,7 @@ void MainWindow::installShortcuts() {
     addShortcut(QKeySequence("Ctrl+Shift+G"), [this] { m_canvas->ungroupSelection(); });
     addShortcut(QKeySequence("Ctrl+O"), [this] { m_toolbar->importPdfDialog(); });
     addShortcut(QKeySequence("Ctrl+E"), [this] { m_toolbar->exportPdfDialog(); });
+    addShortcut(QKeySequence("Ctrl+K"), [this] { m_toolbar->openStickersPopover(); });
 
     // Cuaderno .finily
     addShortcut(QKeySequence("Ctrl+N"), [this] { m_toolbar->newDocumentAction(); });
