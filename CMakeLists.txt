@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(finily VERSION 0.2.0 LANGUAGES CXX)
+project(finily VERSION 0.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 
 option(FINILY_BUILD_TESTS "Build automated unit tests" ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Pdf Svg)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Widgets Pdf Svg)
 
 add_library(finily_engine STATIC
     src/core/Types.h
@@ -31,10 +31,12 @@ add_library(finily_engine STATIC
     src/engine/PdfEngine.cpp
     src/engine/StickerLibrary.h
     src/engine/StickerLibrary.cpp
+    src/engine/UpdateManager.h
+    src/engine/UpdateManager.cpp
 )
 
 target_include_directories(finily_engine PUBLIC src)
-target_link_libraries(finily_engine PUBLIC Qt6::Core Qt6::Gui Qt6::Pdf Qt6::Svg)
+target_link_libraries(finily_engine PUBLIC Qt6::Core Qt6::Gui Qt6::Network Qt6::Pdf Qt6::Svg)
 
 add_executable(finily
     src/main.cpp

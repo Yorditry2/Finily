@@ -3,6 +3,7 @@
 #include "ui/CanvasWidget.h"
 #include "engine/StickerLibrary.h"
 
+#include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QColorDialog>
@@ -1527,7 +1528,30 @@ void FloatingToolbar::buildFilePopover() {
     }
     pressureColumn->addLayout(cursorRow);
     column->addWidget(penCfgBox);
+
+    column->addWidget(makeDivider(m_filePopover));
+    m_updateBtn = new QToolButton(m_filePopover);
+    m_updateBtn->setFixedSize(272, 34);
+    m_updateBtn->setText(QStringLiteral("Buscar actualizaciones…  (v%1)").arg(QApplication::applicationVersion()));
+    m_updateBtn->setToolTip("Comprueba si existe una nueva versión de Finily en GitHub");
+    polishButton(m_updateBtn);
+    connect(m_updateBtn, &QToolButton::clicked, this, [this] {
+        closePopovers();
+        emit checkForUpdatesRequested();
+    });
+    column->addWidget(m_updateBtn);
+
     column->addStretch(1);
+}
+
+void FloatingToolbar::setUpdateAvailable(const QString& version) {
+    if (!m_updateBtn)
+        return;
+    if (version.trimmed().isEmpty()) {
+        m_updateBtn->setText(QStringLiteral("Buscar actualizaciones…  (v%1)").arg(QApplication::applicationVersion()));
+    } else {
+        m_updateBtn->setText(QStringLiteral("Actualizar a v%1…").arg(version));
+    }
 }
 
 void FloatingToolbar::rememberRecentImage(const QString& path) {

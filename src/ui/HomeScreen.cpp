@@ -881,7 +881,60 @@ void HomeScreen::buildGallery() {
     root->setContentsMargins(40, 26, 40, 0);
     root->setSpacing(0);
     root->addWidget(m_sidebar);
-    root->addSpacing(30);
+
+    // Banner discreto de actualización (oculto por defecto).
+    m_updateBanner = new QWidget(this);
+    m_updateBanner->setObjectName("finilyUpdateBanner");
+    m_updateBanner->setAttribute(Qt::WA_StyledBackground, true);
+    m_updateBanner->setFixedHeight(46);
+    auto* bannerRow = new QHBoxLayout(m_updateBanner);
+    bannerRow->setContentsMargins(16, 6, 12, 6);
+    bannerRow->setSpacing(10);
+    m_updateLabel = new QLabel(m_updateBanner);
+    m_updateLabel->setObjectName("finilyUpdateText");
+    bannerRow->addWidget(m_updateLabel, 1);
+
+    m_updateNotesBtn = new QToolButton(m_updateBanner);
+    m_updateNotesBtn->setObjectName("finilyUpdateGhost");
+    m_updateNotesBtn->setText(QStringLiteral("Ver cambios"));
+    m_updateNotesBtn->setFixedHeight(30);
+    m_updateNotesBtn->setCursor(Qt::PointingHandCursor);
+    m_updateNotesBtn->setFocusPolicy(Qt::NoFocus);
+    connect(m_updateNotesBtn, &QToolButton::clicked, this, &HomeScreen::updateReleaseNotesRequested);
+    bannerRow->addWidget(m_updateNotesBtn);
+
+    m_updatePrimaryBtn = new QToolButton(m_updateBanner);
+    m_updatePrimaryBtn->setObjectName("finilyUpdatePrimary");
+    m_updatePrimaryBtn->setFixedHeight(30);
+    m_updatePrimaryBtn->setCursor(Qt::PointingHandCursor);
+    m_updatePrimaryBtn->setFocusPolicy(Qt::NoFocus);
+    connect(m_updatePrimaryBtn, &QToolButton::clicked, this, &HomeScreen::updateInstallRequested);
+    bannerRow->addWidget(m_updatePrimaryBtn);
+
+    m_updateCancelBtn = new QToolButton(m_updateBanner);
+    m_updateCancelBtn->setObjectName("finilyUpdateGhost");
+    m_updateCancelBtn->setText(QStringLiteral("Cancelar"));
+    m_updateCancelBtn->setFixedHeight(30);
+    m_updateCancelBtn->setCursor(Qt::PointingHandCursor);
+    m_updateCancelBtn->setFocusPolicy(Qt::NoFocus);
+    connect(m_updateCancelBtn, &QToolButton::clicked, this, &HomeScreen::updateCancelRequested);
+    m_updateCancelBtn->hide();
+    bannerRow->addWidget(m_updateCancelBtn);
+
+    m_updateDismissBtn = new QToolButton(m_updateBanner);
+    m_updateDismissBtn->setObjectName("finilyUpdateClose");
+    m_updateDismissBtn->setText(QStringLiteral("×"));
+    m_updateDismissBtn->setToolTip(QStringLiteral("Omitir esta versión"));
+    m_updateDismissBtn->setFixedSize(26, 26);
+    m_updateDismissBtn->setCursor(Qt::PointingHandCursor);
+    m_updateDismissBtn->setFocusPolicy(Qt::NoFocus);
+    connect(m_updateDismissBtn, &QToolButton::clicked, this, &HomeScreen::updateDismissed);
+    bannerRow->addWidget(m_updateDismissBtn);
+
+    m_updateBanner->hide();
+    root->addSpacing(12);
+    root->addWidget(m_updateBanner);
+    root->addSpacing(18);
 
     // Título grande + subtítulo con el recuento.
     m_sectionTitle = new QLabel(QStringLiteral("Mis cuadernos"), this);
@@ -988,6 +1041,25 @@ QScrollBar:vertical { background: transparent; width: 10px; margin: 4px 2px 4px 
 QScrollBar::handle:vertical { background: %5; border-radius: 4px; min-height: 30px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
+QWidget#finilyUpdateBanner {
+    background: %4; border: 1px solid %5; border-radius: 14px;
+}
+QLabel#finilyUpdateText { color: %2; font-size: 13px; font-weight: 600; }
+QToolButton#finilyUpdatePrimary {
+    background: %3; color: #ffffff; border: none; border-radius: 12px;
+    padding: 0px 14px; font-size: 12px; font-weight: 600;
+}
+QToolButton#finilyUpdatePrimary:disabled { background: %5; color: %1; }
+QToolButton#finilyUpdateGhost {
+    background: %6; color: %2; border: 1px solid %5; border-radius: 12px;
+    padding: 0px 12px; font-size: 12px; font-weight: 600;
+}
+QToolButton#finilyUpdateGhost:hover { border: 1px solid %3; }
+QToolButton#finilyUpdateClose {
+    background: transparent; color: %1; border: none; border-radius: 12px;
+    font-size: 15px; font-weight: 700;
+}
+QToolButton#finilyUpdateClose:hover { color: %2; }
 )")
                       .arg(pal.muted.name(QColor::HexArgb))
                       .arg(pal.text.name(QColor::HexArgb))
@@ -1021,6 +1093,42 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: trans
         if (card)
             card->setPalette(pal, m_dark);
     update();
+}
+
+void HomeScreen::showUpdateBanner(const QString& version, bool canInstallInApp) {
+    m_updateCanInstall = canInstallInApp;
+    if (m_updateLabel)
+        m_updateLabel->setText(tr("Finily v%1 disponible").arg(version));
+    resetUpdateBannerState();
+    if (m_updateBanner)
+        m_updateBanner->show();
+    QTimer::singleShot(0, this, &HomeScreen::relayoutGrid);
+}
+
+void HomeScreen::setUpdateDownloadProgress(int percent) {
+    const int clamped = std::clamp(percent, 0, 100);
+    if (m_updatePrimaryBtn) {
+        m_updatePrimaryBtn->setEnabled(false);
+        m_updatePrimaryBtn->setText(clamped >= 100 ? tr("Verificando SHA-256…")
+                                                   : tr("Descargando %1%…").arg(clamped));
+    }
+    if (m_updateCancelBtn)
+        m_updateCancelBtn->show();
+}
+
+void HomeScreen::resetUpdateBannerState() {
+    if (m_updatePrimaryBtn) {
+        m_updatePrimaryBtn->setEnabled(true);
+        m_updatePrimaryBtn->setText(m_updateCanInstall ? tr("Actualizar ahora") : tr("Ver descarga"));
+    }
+    if (m_updateCancelBtn)
+        m_updateCancelBtn->hide();
+}
+
+void HomeScreen::hideUpdateBanner() {
+    if (m_updateBanner)
+        m_updateBanner->hide();
+    QTimer::singleShot(0, this, &HomeScreen::relayoutGrid);
 }
 
 void HomeScreen::setDarkMode(bool dark) {

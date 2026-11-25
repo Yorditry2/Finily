@@ -5,7 +5,9 @@
 #include "ui/FloatingToolbar.h"
 #include "ui/HomeScreen.h"
 
+#include <QApplication>
 #include <QCloseEvent>
+#include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
@@ -13,8 +15,13 @@
 #include <QFileInfo>
 #include <QKeySequence>
 #include <QMessageBox>
+#include <QProcess>
+#include <QProgressDialog>
+#include <QPushButton>
 #include <QShortcut>
 #include <QStackedWidget>
+#include <QTimer>
+#include <QUrl>
 #include <QWidget>
 
 #include <functional>
@@ -192,8 +199,179 @@ MainWindow::MainWindow() {
     setupWacomPadListener();
 #endif
 
+    // --- Comprobador / actualizador integrado ---
+    m_updater = new UpdateManager(this);
+#ifdef Q_OS_WIN
+    constexpr bool kCanInstallInApp = true;
+#else
+    constexpr bool kCanInstallInApp = false;
+#endif
+
+    connect(m_toolbar, &FloatingToolbar::checkForUpdatesRequested, this, [this] {
+        if (!m_updater)
+            return;
+        if (m_toolbar)
+            m_toolbar->showToast(tr("Buscando actualizaciones…"));
+        m_updater->checkForUpdates(true);
+    });
+    connect(m_updater, &UpdateManager::updateAvailable, this,
+            [this, kCanInstallInApp](const UpdateInfo& info, bool manual) {
+                m_availableUpdate = info;
+                const bool canDirect =
+                    kCanInstallInApp && !info.installerUrl.isEmpty() && !info.installerSha256.isEmpty();
+                if (m_toolbar)
+                    m_toolbar->setUpdateAvailable(info.version);
+                if (m_homeScreen)
+                    m_homeScreen->showUpdateBanner(info.version, canDirect);
+                if (manual) {
+                    QMessageBox box(this);
+                    box.setWindowTitle(tr("Actualización disponible"));
+                    box.setIcon(QMessageBox::Information);
+                    box.setText(tr("Hay una nueva versión disponible: Finily v%1 (tienes v%2).")
+                                    .arg(info.version, QApplication::applicationVersion()));
+                    QPushButton* primaryBtn = box.addButton(
+                        canDirect ? tr("Actualizar ahora") : tr("Abrir página de descargas"),
+                        QMessageBox::AcceptRole);
+                    QPushButton* notesBtn = box.addButton(tr("Ver cambios"), QMessageBox::ActionRole);
+                    box.addButton(tr("Más tarde"), QMessageBox::RejectRole);
+                    box.exec();
+                    if (box.clickedButton() == primaryBtn)
+                        startUpdateInstall();
+                    else if (box.clickedButton() == notesBtn)
+                        QDesktopServices::openUrl(QUrl(info.releaseUrl));
+                }
+            });
+    connect(m_updater, &UpdateManager::upToDate, this, [this](bool manual) {
+        if (!manual)
+            return;
+        const QString msg = tr("Finily v%1 está actualizado ✓").arg(QApplication::applicationVersion());
+        if (m_stack && m_stack->currentWidget() == m_container && m_toolbar)
+            m_toolbar->showToast(msg);
+        else
+            QMessageBox::information(this, tr("Buscar actualizaciones"), msg);
+    });
+    connect(m_updater, &UpdateManager::checkFailed, this, [this](const QString& error, bool manual) {
+        if (!manual)
+            return;
+        const QString msg = tr("No se pudo comprobar actualizaciones: %1").arg(error);
+        if (m_stack && m_stack->currentWidget() == m_container && m_toolbar)
+            m_toolbar->showToast(tr("No se pudo comprobar actualizaciones"));
+        else
+            QMessageBox::warning(this, tr("Buscar actualizaciones"), msg);
+    });
+    connect(m_homeScreen, &HomeScreen::updateInstallRequested, this, &MainWindow::startUpdateInstall);
+    connect(m_homeScreen, &HomeScreen::updateCancelRequested, this, [this] {
+        if (m_updater)
+            m_updater->cancelDownload();
+    });
+    connect(m_homeScreen, &HomeScreen::updateReleaseNotesRequested, this, [this] {
+        if (!m_availableUpdate.releaseUrl.isEmpty())
+            QDesktopServices::openUrl(QUrl(m_availableUpdate.releaseUrl));
+    });
+    connect(m_homeScreen, &HomeScreen::updateDismissed, this, [this] {
+        if (m_updater && m_availableUpdate.valid)
+            m_updater->skipVersion(m_availableUpdate.version);
+        if (m_homeScreen)
+            m_homeScreen->hideUpdateBanner();
+    });
+    connect(m_updater, &UpdateManager::downloadProgress, this, [this](qint64 received, qint64 total) {
+        const int percent = total > 0 ? int((received * 100) / total) : 0;
+        if (m_homeScreen)
+            m_homeScreen->setUpdateDownloadProgress(percent);
+        if (m_updateProgress) {
+            if (total > 0) {
+                m_updateProgress->setRange(0, 100);
+                m_updateProgress->setValue(std::clamp(percent, 0, 100));
+            } else {
+                m_updateProgress->setRange(0, 0);
+            }
+        }
+    });
+    connect(m_updater, &UpdateManager::downloadCancelled, this, [this] {
+        if (m_updateProgress) {
+            m_updateProgress->close();
+            m_updateProgress->deleteLater();
+            m_updateProgress = nullptr;
+        }
+        if (m_homeScreen)
+            m_homeScreen->resetUpdateBannerState();
+    });
+    connect(m_updater, &UpdateManager::downloadFailed, this, [this](const QString& error) {
+        if (m_updateProgress) {
+            m_updateProgress->close();
+            m_updateProgress->deleteLater();
+            m_updateProgress = nullptr;
+        }
+        if (m_homeScreen)
+            m_homeScreen->resetUpdateBannerState();
+        QMessageBox::warning(this, tr("Error al descargar actualización"), error);
+    });
+    connect(m_updater, &UpdateManager::installerReady, this,
+            [this](const QString& installerPath, const UpdateInfo& info) {
+                if (m_updateProgress) {
+                    m_updateProgress->close();
+                    m_updateProgress->deleteLater();
+                    m_updateProgress = nullptr;
+                }
+                if (m_homeScreen)
+                    m_homeScreen->resetUpdateBannerState();
+                if (m_canvas) {
+                    if (!m_canvas->currentFilePath().isEmpty() && m_canvas->hasUnsavedChanges())
+                        m_canvas->saveToFile(m_canvas->currentFilePath());
+                    m_canvas->flushAutosave();
+                }
+                if (QProcess::startDetached(installerPath, {})) {
+                    QApplication::quit();
+                } else {
+                    QMessageBox::warning(this, tr("Actualizar Finily"),
+                                         tr("No se pudo iniciar el instalador descargado en:\n%1\n"
+                                            "Puedes abrirlo manualmente o visitar:\n%2")
+                                             .arg(installerPath, info.releaseUrl));
+                }
+            });
+
+    QTimer::singleShot(3000, this, [this] {
+        if (m_updater)
+            m_updater->checkForUpdates(false);
+    });
+
     // La sesión anterior ya la restauró el constructor de CanvasWidget.
     m_toolbar->refreshFromCanvas();
+}
+
+void MainWindow::startUpdateInstall() {
+    if (!m_availableUpdate.valid)
+        return;
+#ifdef Q_OS_WIN
+    if (m_updater && !m_availableUpdate.installerUrl.isEmpty()
+        && !m_availableUpdate.installerSha256.isEmpty()) {
+        if (m_updater->isDownloading())
+            return;
+        const bool onHome = (m_stack && m_stack->currentWidget() == m_homeScreen);
+        if (onHome && m_homeScreen) {
+            m_homeScreen->setUpdateDownloadProgress(0);
+        } else {
+            if (m_updateProgress)
+                m_updateProgress->deleteLater();
+            m_updateProgress = new QProgressDialog(
+                tr("Descargando Finily v%1…").arg(m_availableUpdate.version),
+                tr("Cancelar"), 0, 100, this);
+            m_updateProgress->setWindowTitle(tr("Actualizar Finily"));
+            m_updateProgress->setWindowModality(Qt::WindowModal);
+            m_updateProgress->setAutoClose(false);
+            m_updateProgress->setAutoReset(false);
+            m_updateProgress->setValue(0);
+            connect(m_updateProgress, &QProgressDialog::canceled, this, [this] {
+                if (m_updater)
+                    m_updater->cancelDownload();
+            });
+            m_updateProgress->show();
+        }
+        m_updater->downloadUpdate(m_availableUpdate);
+        return;
+    }
+#endif
+    QDesktopServices::openUrl(QUrl(m_availableUpdate.releaseUrl));
 }
 
 MainWindow::~MainWindow() {

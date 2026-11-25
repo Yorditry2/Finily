@@ -4,7 +4,9 @@
 #include "engine/InkEngine.h"
 #include "engine/LassoEngine.h"
 #include "engine/LiveStroke.h"
+#include "engine/UpdateManager.h"
 
+#include <QCryptographicHash>
 #include <QImage>
 #include <QJsonObject>
 #include <QPainter>
@@ -227,6 +229,83 @@ private slots:
         const PageData restored = deserializePage(loaded.value("pages").toArray().at(0).toObject(), pdfSources);
         QCOMPARE(restored.texts.size(), 1);
         QCOMPARE(restored.texts[0].text, QStringLiteral("Primero"));
+    }
+
+    void updateManifestParsesAndRejectsUntrustedUrls() {
+        const QByteArray validJson = QByteArrayLiteral(
+            "{\"version\":\"0.2.1\","
+            "\"tag\":\"v0.2.1\","
+            "\"published_at\":\"2026-11-24T20:00:00Z\","
+            "\"release_url\":\"https://github.com/Yorditry2/Finily/releases/tag/v0.2.1\","
+            "\"windows\":{"
+            "\"asset\":\"Finily-Setup-x64.exe\","
+            "\"url\":\"https://github.com/Yorditry2/Finily/releases/download/v0.2.1/Finily-Setup-x64.exe\","
+            "\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
+            "}}");
+        const auto parsed = parseUpdateManifest(validJson);
+        QVERIFY(parsed.has_value());
+        QVERIFY(parsed->valid);
+        QCOMPARE(parsed->version, QStringLiteral("0.2.1"));
+        QCOMPARE(parsed->installerAsset, QStringLiteral("Finily-Setup-x64.exe"));
+        QCOMPARE(parsed->installerSha256.size(), 64);
+
+        const QByteArray httpRelease = QByteArrayLiteral(
+            "{\"version\":\"0.2.1\","
+            "\"release_url\":\"http://github.com/Yorditry2/Finily/releases/tag/v0.2.1\"}");
+        QVERIFY(!parseUpdateManifest(httpRelease).has_value());
+
+        const QByteArray evilHost = QByteArrayLiteral(
+            "{\"version\":\"0.2.1\","
+            "\"release_url\":\"https://github.com/Yorditry2/Finily/releases/tag/v0.2.1\","
+            "\"windows\":{"
+            "\"asset\":\"Finily-Setup-x64.exe\","
+            "\"url\":\"https://evil.example.com/Finily-Setup-x64.exe\","
+            "\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
+            "}}");
+        QVERIFY(!parseUpdateManifest(evilHost).has_value());
+
+        const QByteArray badAssetPath = QByteArrayLiteral(
+            "{\"version\":\"0.2.1\","
+            "\"release_url\":\"https://github.com/Yorditry2/Finily/releases/tag/v0.2.1\","
+            "\"windows\":{"
+            "\"asset\":\"../Finily-Setup-x64.exe\","
+            "\"url\":\"https://github.com/Yorditry2/Finily/releases/download/v0.2.1/Finily-Setup-x64.exe\","
+            "\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
+            "}}");
+        QVERIFY(!parseUpdateManifest(badAssetPath).has_value());
+
+        const QByteArray badSha = QByteArrayLiteral(
+            "{\"version\":\"0.2.1\","
+            "\"release_url\":\"https://github.com/Yorditry2/Finily/releases/tag/v0.2.1\","
+            "\"windows\":{"
+            "\"asset\":\"Finily-Setup-x64.exe\","
+            "\"url\":\"https://github.com/Yorditry2/Finily/releases/download/v0.2.1/Finily-Setup-x64.exe\","
+            "\"sha256\":\"not-a-valid-sha256\""
+            "}}");
+        QVERIFY(!parseUpdateManifest(badSha).has_value());
+    }
+
+    void updateVersionComparisonHandlesSemver() {
+        QVERIFY(isNewerVersion(QStringLiteral("0.2.1"), QStringLiteral("0.2.0")));
+        QVERIFY(isNewerVersion(QStringLiteral("0.10.0"), QStringLiteral("0.2.0")));
+        QVERIFY(isNewerVersion(QStringLiteral("v0.3.0"), QStringLiteral("0.2.0")));
+        QVERIFY(isNewerVersion(QStringLiteral("0.2.0"), QStringLiteral("0.2.0-preview.1")));
+        QVERIFY(!isNewerVersion(QStringLiteral("0.2.0"), QStringLiteral("0.2.0")));
+        QVERIFY(!isNewerVersion(QStringLiteral("0.1.9"), QStringLiteral("0.2.0")));
+    }
+
+    void updateSha256ComputesExpectedHash() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString filePath = dir.filePath(QStringLiteral("payload.bin"));
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write("finily-test"), 11);
+        file.close();
+
+        const QString expected =
+            QString::fromLatin1(QCryptographicHash::hash("finily-test", QCryptographicHash::Sha256).toHex());
+        QCOMPARE(computeFileSha256(filePath), expected);
     }
 };
 

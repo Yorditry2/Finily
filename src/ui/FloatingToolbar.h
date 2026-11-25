@@ -84,11 +84,13 @@ public:
     // Toast flotante estilo StarNote: pill centrada que aparece con fundido,
     // se sostiene 1.2 s y se desvanece sola (también alimenta updateOverlayMask).
     void showToast(const QString& message);
+    void setUpdateAvailable(const QString& version);
 
 signals:
     // Botón 'Inicio' de la pill: volver a la biblioteca de cuadernos.
     void homeRequested();
     void renameRequested(const QString& newName);
+    void checkForUpdatesRequested();
 
 public slots:
     void setDocumentTitle(const QString& title, bool unsaved);
@@ -355,6 +357,7 @@ private:
     QVector<QPair<QToolButton*, QString>> m_iconSpecs;
     QVector<QPair<QToolButton*, QString>> m_ctxIconSpecs;
     QVector<QPair<QToolButton*, LinePattern>> m_patternSpecs;
+    QToolButton* m_updateBtn = nullptr;
 };
 
 } // namespace finily

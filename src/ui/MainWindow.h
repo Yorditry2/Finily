@@ -1,7 +1,10 @@
 #pragma once
 
+#include "engine/UpdateManager.h"
+
 #include <QMainWindow>
 
+class QProgressDialog;
 #ifdef Q_OS_LINUX
 class QSocketNotifier;
 #endif
@@ -45,12 +48,16 @@ private:
     void updateWindowTitle();
     void showEditorPage();
     void showHomePage();
+    void startUpdateInstall();
 
     QStackedWidget* m_stack = nullptr;
     QWidget* m_container = nullptr; // página 1: contenedor plano del editor
     HomeScreen* m_homeScreen = nullptr;
     CanvasWidget* m_canvas = nullptr;
     FloatingToolbar* m_toolbar = nullptr;
+    UpdateManager* m_updater = nullptr;
+    UpdateInfo m_availableUpdate;
+    QProgressDialog* m_updateProgress = nullptr;
 #ifdef Q_OS_LINUX
     int m_padFd = -1;
     QSocketNotifier* m_padNotifier = nullptr;

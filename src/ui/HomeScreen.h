@@ -37,6 +37,12 @@ public:
     // Reescanea la biblioteca (se llama al volver desde el editor).
     void refreshLibrary();
 
+    // Banner discreto de actualización disponible.
+    void showUpdateBanner(const QString& version, bool canInstallInApp);
+    void setUpdateDownloadProgress(int percent);
+    void resetUpdateBannerState();
+    void hideUpdateBanner();
+
 signals:
     void createNotebookRequested(const QString& name, finily::ThemeId theme,
                                  finily::BackgroundTemplate tpl, finily::PageFormat format);
@@ -44,6 +50,10 @@ signals:
     void importPdfFromHomeRequested();
     void openExternalFileRequested();
     void continueDraftRequested();
+    void updateInstallRequested();
+    void updateCancelRequested();
+    void updateReleaseNotesRequested();
+    void updateDismissed();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -89,6 +99,15 @@ private:
     QWidget* m_emptyState = nullptr;
     QLabel* m_emptyLabel = nullptr;
     QVector<NotebookCard*> m_cards;
+
+    // Banner de actualización
+    QWidget* m_updateBanner = nullptr;
+    QLabel* m_updateLabel = nullptr;
+    QToolButton* m_updateNotesBtn = nullptr;
+    QToolButton* m_updatePrimaryBtn = nullptr;
+    QToolButton* m_updateCancelBtn = nullptr;
+    QToolButton* m_updateDismissBtn = nullptr;
+    bool m_updateCanInstall = false;
 
     Filter m_filter = Filter::Todos;
     bool m_dark = false;
