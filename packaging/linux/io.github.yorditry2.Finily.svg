@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="finily-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6d7bf2"/>
+      <stop offset="100%" stop-color="#4338ca"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="34" ry="34" fill="url(#finily-bg)"/>
+  <g fill="none" stroke="#ffffff" stroke-opacity="0.95" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 79.5 34.5 C 68.5 27.0 56.0 30.8 56.0 47.2 L 56.0 93.5"/>
+    <path d="M 43.0 56.5 L 74.0 56.5"/>
+  </g>
+</svg>

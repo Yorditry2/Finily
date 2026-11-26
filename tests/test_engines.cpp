@@ -285,6 +285,42 @@ private slots:
         QVERIFY(!parseUpdateManifest(badSha).has_value());
     }
 
+    void updateManifestParsesFlatpakAndRejectsUntrustedUrls() {
+        const QByteArray validFlatpakJson = QByteArrayLiteral(
+            "{\"version\":\"0.2.2\","
+            "\"tag\":\"v0.2.2\","
+            "\"published_at\":\"2026-11-26T03:00:00Z\","
+            "\"release_url\":\"https://github.com/Yorditry2/Finily/releases/tag/v0.2.2\","
+            "\"windows\":{"
+            "\"asset\":\"Finily-Setup-x64.exe\","
+            "\"url\":\"https://github.com/Yorditry2/Finily/releases/download/v0.2.2/Finily-Setup-x64.exe\","
+            "\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
+            "},"
+            "\"flatpak\":{"
+            "\"app_id\":\"io.github.yorditry2.Finily\","
+            "\"asset\":\"Finily-x86_64.flatpak\","
+            "\"url\":\"https://github.com/Yorditry2/Finily/releases/download/v0.2.2/Finily-x86_64.flatpak\","
+            "\"sha256\":\"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\""
+            "}}");
+        const auto parsed = parseUpdateManifest(validFlatpakJson);
+        QVERIFY(parsed.has_value());
+        QVERIFY(parsed->valid);
+        QCOMPARE(parsed->flatpakAppId, QStringLiteral("io.github.yorditry2.Finily"));
+        QCOMPARE(parsed->flatpakAsset, QStringLiteral("Finily-x86_64.flatpak"));
+        QCOMPARE(parsed->flatpakSha256.size(), 64);
+
+        const QByteArray untrustedFlatpak = QByteArrayLiteral(
+            "{\"version\":\"0.2.2\","
+            "\"release_url\":\"https://github.com/Yorditry2/Finily/releases/tag/v0.2.2\","
+            "\"flatpak\":{"
+            "\"app_id\":\"io.github.yorditry2.Finily\","
+            "\"asset\":\"Finily-x86_64.flatpak\","
+            "\"url\":\"https://evil.example.com/Finily-x86_64.flatpak\","
+            "\"sha256\":\"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\""
+            "}}");
+        QVERIFY(!parseUpdateManifest(untrustedFlatpak).has_value());
+    }
+
     void updateVersionComparisonHandlesSemver() {
         QVERIFY(isNewerVersion(QStringLiteral("0.2.1"), QStringLiteral("0.2.0")));
         QVERIFY(isNewerVersion(QStringLiteral("0.10.0"), QStringLiteral("0.2.0")));

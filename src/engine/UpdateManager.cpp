@@ -54,6 +54,35 @@ bool isValidSha256Hex(const QString& value) {
     return true;
 }
 
+struct ParsedPackageAsset {
+    QString asset;
+    QString url;
+    QString sha256;
+};
+
+bool parsePackageAsset(const QJsonValue& val, ParsedPackageAsset& out) {
+    if (!val.isObject())
+        return false;
+    const QJsonObject pkgObj = val.toObject();
+    const QString asset = pkgObj.value(QLatin1String("asset")).toString().trimmed();
+    const QString url = pkgObj.value(QLatin1String("url")).toString().trimmed();
+    const QString sha = pkgObj.value(QLatin1String("sha256")).toString().trimmed().toLower();
+
+    if (asset.isEmpty() || asset == QLatin1String(".") || asset == QLatin1String("..")
+        || asset.contains(QLatin1Char('/')) || asset.contains(QLatin1Char('\\'))
+        || QFileInfo(asset).fileName() != asset)
+        return false;
+    if (!isTrustedUpdateUrl(QUrl(url)))
+        return false;
+    if (!isValidSha256Hex(sha))
+        return false;
+
+    out.asset = asset;
+    out.url = url;
+    out.sha256 = sha;
+    return true;
+}
+
 QNetworkRequest makeGitHubRequest(const QUrl& url) {
     QNetworkRequest req(url);
     const QString ver = QCoreApplication::applicationVersion().isEmpty()
@@ -117,26 +146,23 @@ std::optional<UpdateInfo> parseUpdateManifest(const QByteArray& jsonBytes) {
     info.releaseUrl = releaseUrl;
 
     if (obj.contains(QLatin1String("windows"))) {
-        const QJsonValue winVal = obj.value(QLatin1String("windows"));
-        if (!winVal.isObject())
+        ParsedPackageAsset winAsset;
+        if (!parsePackageAsset(obj.value(QLatin1String("windows")), winAsset))
             return std::nullopt;
-        const QJsonObject winObj = winVal.toObject();
-        const QString asset = winObj.value(QLatin1String("asset")).toString().trimmed();
-        const QString url = winObj.value(QLatin1String("url")).toString().trimmed();
-        const QString sha = winObj.value(QLatin1String("sha256")).toString().trimmed().toLower();
+        info.installerAsset = winAsset.asset;
+        info.installerUrl = winAsset.url;
+        info.installerSha256 = winAsset.sha256;
+    }
 
-        if (asset.isEmpty() || asset == QLatin1String(".") || asset == QLatin1String("..")
-            || asset.contains(QLatin1Char('/')) || asset.contains(QLatin1Char('\\'))
-            || QFileInfo(asset).fileName() != asset)
+    if (obj.contains(QLatin1String("flatpak"))) {
+        const QJsonValue fpVal = obj.value(QLatin1String("flatpak"));
+        ParsedPackageAsset fpAsset;
+        if (!parsePackageAsset(fpVal, fpAsset))
             return std::nullopt;
-        if (!isTrustedUpdateUrl(QUrl(url)))
-            return std::nullopt;
-        if (!isValidSha256Hex(sha))
-            return std::nullopt;
-
-        info.installerAsset = asset;
-        info.installerUrl = url;
-        info.installerSha256 = sha;
+        info.flatpakAppId = fpVal.toObject().value(QLatin1String("app_id")).toString().trimmed();
+        info.flatpakAsset = fpAsset.asset;
+        info.flatpakUrl = fpAsset.url;
+        info.flatpakSha256 = fpAsset.sha256;
     }
 
     info.valid = true;
@@ -270,6 +296,11 @@ void UpdateManager::checkForUpdates(bool manual) {
 }
 
 void UpdateManager::downloadUpdate(const UpdateInfo& info) {
+#ifndef Q_OS_WIN
+    Q_UNUSED(info);
+    emit downloadFailed(tr("La descarga automática del instalador solo está disponible en Windows."));
+    return;
+#else
     if (!info.valid || info.installerAsset.isEmpty()
         || !isTrustedUpdateUrl(QUrl(info.installerUrl))
         || !isValidSha256Hex(info.installerSha256)) {
@@ -383,6 +414,7 @@ void UpdateManager::downloadUpdate(const UpdateInfo& info) {
 
         emit installerReady(finalPath, infoCopy);
     });
+#endif
 }
 
 void UpdateManager::cancelDownload() {

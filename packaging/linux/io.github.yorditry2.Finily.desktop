@@ -1,0 +1,16 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Finily
+GenericName=Digital Whiteboard and PDF Annotator
+GenericName[es]=Pizarra digital y anotador de PDF
+Comment=Native digital whiteboard and PDF annotator for graphics tablets and mouse
+Comment[es]=Pizarra digital nativa y anotador de PDF para tableta gráfica o mouse
+Exec=finily %f
+Icon=io.github.yorditry2.Finily
+Terminal=false
+Categories=Graphics;2DGraphics;
+Keywords=whiteboard;pdf;notes;wacom;drawing;tablet;pizarra;apuntes;
+MimeType=application/x-finily;application/pdf;
+StartupNotify=true
+StartupWMClass=Finily

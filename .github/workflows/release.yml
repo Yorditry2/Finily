@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -19,7 +20,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build g++ \
-            qt6-base-dev qt6-svg-dev qt6-pdf-dev
+            qt6-base-dev qt6-svg-dev qt6-pdf-dev \
+            desktop-file-utils appstream
 
       - name: Configure
         run: cmake -B build -G Ninja -DFINILY_BUILD_TESTS=ON
@@ -29,6 +31,42 @@ jobs:
 
       - name: Run unit tests
         run: ctest --test-dir build --output-on-failure
+
+      - name: Stage Linux install and validate desktop metadata
+        run: |
+          cmake --install build --prefix /tmp/finily-stage
+          test -x /tmp/finily-stage/bin/finily
+          test -f /tmp/finily-stage/share/icons/hicolor/scalable/apps/io.github.yorditry2.Finily.svg
+          test -f /tmp/finily-stage/share/mime/packages/io.github.yorditry2.Finily.xml
+          desktop-file-validate /tmp/finily-stage/share/applications/io.github.yorditry2.Finily.desktop
+          appstreamcli validate --no-net --pedantic /tmp/finily-stage/share/metainfo/io.github.yorditry2.Finily.metainfo.xml
+
+  linux-flatpak:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.11
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: Finily-x86_64.flatpak
+          manifest-path: flatpak/io.github.yorditry2.Finily.yml
+          cache-key: flatpak-kde-6.11
+
+      - name: Package Flatpak bundle and checksum
+        run: |
+          mkdir -p dist-flatpak
+          mv Finily-x86_64.flatpak dist-flatpak/Finily-x86_64.flatpak
+          (cd dist-flatpak && sha256sum Finily-x86_64.flatpak > Finily-x86_64.flatpak.sha256)
+          cut -d' ' -f1 dist-flatpak/Finily-x86_64.flatpak.sha256 > dist-flatpak/flatpak.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-flatpak-assets
+          path: dist-flatpak/
 
   windows-installer:
     runs-on: windows-latest
@@ -89,7 +127,7 @@ jobs:
           path: dist/
 
   publish-release:
-    needs: [linux-tests, windows-installer]
+    needs: [linux-tests, linux-flatpak, windows-installer]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
@@ -97,6 +135,21 @@ jobs:
         with:
           name: windows-release-assets
           path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-flatpak-assets
+          path: dist
+
+      - name: Merge Linux Flatpak checksum and update manifest
+        run: |
+          cat dist/Finily-x86_64.flatpak.sha256 >> dist/SHA256SUMS.txt
+          FLATPAK_SHA="$(tr -d '[:space:]' < dist/flatpak.sha256)"
+          FLATPAK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Finily-x86_64.flatpak"
+          jq --arg sha "$FLATPAK_SHA" --arg url "$FLATPAK_URL" \
+            '. + {flatpak: {app_id: "io.github.yorditry2.Finily", asset: "Finily-x86_64.flatpak", url: $url, sha256: $sha}}' \
+            dist/update-manifest.json > dist/update-manifest.tmp.json
+          mv dist/update-manifest.tmp.json dist/update-manifest.json
 
       - name: Create or update GitHub Release
         env:
@@ -106,6 +159,7 @@ jobs:
             gh release upload "${GITHUB_REF_NAME}" \
               --repo "${GITHUB_REPOSITORY}" \
               dist/Finily-Setup-x64.exe \
+              dist/Finily-x86_64.flatpak \
               dist/SHA256SUMS.txt \
               dist/update-manifest.json \
               --clobber
@@ -113,6 +167,7 @@ jobs:
             gh release create "${GITHUB_REF_NAME}" \
               --repo "${GITHUB_REPOSITORY}" \
               dist/Finily-Setup-x64.exe \
+              dist/Finily-x86_64.flatpak \
               dist/SHA256SUMS.txt \
               dist/update-manifest.json \
               --title "Finily ${GITHUB_REF_NAME}" \

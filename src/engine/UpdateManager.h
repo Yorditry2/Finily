@@ -20,6 +20,10 @@ struct UpdateInfo {
     QString installerAsset;
     QString installerUrl;
     QString installerSha256;
+    QString flatpakAppId;
+    QString flatpakAsset;
+    QString flatpakUrl;
+    QString flatpakSha256;
     bool valid = false;
 };
 
