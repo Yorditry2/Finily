@@ -1,0 +1,29 @@
+id: io.github.yorditry2.Finily
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+base: io.qt.qtwebengine.BaseApp
+base-version: '6.11'
+command: finily
+
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  - --share=network
+  - --filesystem=xdg-documents/Finily:create
+
+cleanup-commands:
+  - /app/cleanup-BaseApp.sh
+
+modules:
+  - name: finily
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DFINILY_BUILD_TESTS=OFF
+      - -DCMAKE_PREFIX_PATH=/app
+    sources:
+      - type: dir
+        path: ..

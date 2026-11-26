@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-finily">
+    <comment>Finily notebook</comment>
+    <comment xml:lang="es">Cuaderno de Finily</comment>
+    <glob pattern="*.finily"/>
+    <sub-class-of type="application/json"/>
+  </mime-type>
+</mime-info>

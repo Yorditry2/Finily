@@ -789,11 +789,9 @@ QStringList HomeScreen::libraryDirectories() {
     const auto documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     if (!documents.isEmpty())
         directories.append(QDir(documents).filePath(QStringLiteral("Finily")));
-#ifdef Q_OS_WIN
     const auto localData = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
     if (!localData.isEmpty())
         directories.append(QDir(localData).filePath(QStringLiteral("Cuadernos")));
-#endif
     return directories;
 }
 

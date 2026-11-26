@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.yorditry2.Finily</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+
+  <name>Finily</name>
+  <summary>Digital whiteboard and PDF annotator for graphics tablets</summary>
+  <summary xml:lang="es">Pizarra digital y anotador de PDF para tabletas gráficas</summary>
+
+  <description>
+    <p>
+      Finily is a native digital whiteboard and PDF annotator built with C++20 and Qt 6, designed
+      for teaching, note-taking, and problem solving with graphics tablets (Wacom, Huion, XP-Pen)
+      or a mouse on Wayland and X11.
+    </p>
+    <p xml:lang="es">
+      Finily es una pizarra digital nativa y anotador de PDF construida con C++20 y Qt 6, diseñada
+      para clases, apuntes y resolución de ejercicios con tableta gráfica (Wacom, Huion, XP-Pen) o
+      mouse en Wayland y X11.
+    </p>
+    <ul>
+      <li>200 Hz pressure- and tilt-aware liquid ink with four pen tips and velocity stabilization</li>
+      <li xml:lang="es">Tinta líquida a 200 Hz con presión e inclinación, cuatro puntas y estabilizador por velocidad</li>
+      <li>Notebook library supporting infinite canvas, A4 sheets, and 16:9 slide formats</li>
+      <li xml:lang="es">Biblioteca de cuadernos con lienzo infinito, hoja A4 y diapositiva 16:9</li>
+      <li>Geometric shapes, hold-to-shape, lasso selection, equation mode, and vector PDF export</li>
+      <li xml:lang="es">Figuras geométricas, hold-to-shape, lazo, modo ecuación y exportación PDF vectorial</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.yorditry2.Finily.desktop</launchable>
+  <provides>
+    <binary>finily</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/Yorditry2/Finily</url>
+  <url type="bugtracker">https://github.com/Yorditry2/Finily/issues</url>
+  <url type="vcs-browser">https://github.com/Yorditry2/Finily</url>
+
+  <developer id="io.github.yorditry2">
+    <name>Yorditry2</name>
+  </developer>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#6d7bf2</color>
+    <color type="primary" scheme_preference="dark">#4338ca</color>
+  </branding>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.2.1" date="2026-11-24">
+      <description>
+        <p>Integrated update checker with SHA-256 verification and Linux desktop packaging improvements.</p>
+        <p xml:lang="es">Comprobador de actualizaciones integrado con verificación SHA-256 y soporte de empaquetado para Linux.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -32,10 +32,31 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <linux/joystick.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 #endif
 
 namespace finily {
+
+namespace {
+
+bool isFlatpakSandbox() {
+#ifdef Q_OS_LINUX
+    return QFileInfo::exists(QStringLiteral("/.flatpak-info"))
+        || qEnvironmentVariableIsSet("FLATPAK_ID");
+#else
+    return false;
+#endif
+}
+
+#ifdef Q_OS_LINUX
+bool isWacomPadName(const QString& name) {
+    return name.contains(QLatin1String("Wacom"), Qt::CaseInsensitive)
+        && name.contains(QLatin1String("Pad"), Qt::CaseInsensitive);
+}
+#endif
+
+} // namespace
 
 MainWindow::MainWindow() {
     setWindowTitle(tr("Finily"));
@@ -227,8 +248,18 @@ MainWindow::MainWindow() {
                     QMessageBox box(this);
                     box.setWindowTitle(tr("Actualización disponible"));
                     box.setIcon(QMessageBox::Information);
-                    box.setText(tr("Hay una nueva versión disponible: Finily v%1 (tienes v%2).")
-                                    .arg(info.version, QApplication::applicationVersion()));
+                    if (canDirect) {
+                        box.setText(tr("Hay una nueva versión disponible: Finily v%1 (tienes v%2).")
+                                        .arg(info.version, QApplication::applicationVersion()));
+                    } else if (isFlatpakSandbox()) {
+                        box.setText(tr("Hay una nueva versión disponible: Finily v%1 (tienes v%2).\n\n"
+                                       "En Flatpak las actualizaciones se realizan descargando el nuevo paquete "
+                                       ".flatpak desde Releases o desde tu gestor Flatpak.")
+                                        .arg(info.version, QApplication::applicationVersion()));
+                    } else {
+                        box.setText(tr("Hay una nueva versión disponible: Finily v%1 (tienes v%2).")
+                                        .arg(info.version, QApplication::applicationVersion()));
+                    }
                     QPushButton* primaryBtn = box.addButton(
                         canDirect ? tr("Actualizar ahora") : tr("Abrir página de descargas"),
                         QMessageBox::AcceptRole);
@@ -434,23 +465,41 @@ void MainWindow::showHomePage() {
 #ifdef Q_OS_LINUX
 void MainWindow::setupWacomPadListener() {
     // Auto-detecta el dispositivo /dev/input/js* de "Wacom ... Pad" (plug-and-play sin root).
-    QDir sysInput("/sys/class/input");
-    const QStringList entries = sysInput.entryList({"js*"}, QDir::Dirs | QDir::NoDotAndDotDot);
+    QDir sysInput(QStringLiteral("/sys/class/input"));
+    const QStringList entries = sysInput.entryList({QStringLiteral("js*")}, QDir::Dirs | QDir::NoDotAndDotDot);
     QString padDevicePath;
     for (const QString& entry : entries) {
-        QFile nameFile(QString("/sys/class/input/%1/device/name").arg(entry));
+        QFile nameFile(QStringLiteral("/sys/class/input/%1/device/name").arg(entry));
         if (nameFile.open(QIODevice::ReadOnly)) {
             const QString name = QString::fromUtf8(nameFile.readAll()).trimmed();
-            if (name.contains("Wacom", Qt::CaseInsensitive) && name.contains("Pad", Qt::CaseInsensitive)) {
-                padDevicePath = QString("/dev/input/%1").arg(entry);
+            if (isWacomPadName(name)) {
+                padDevicePath = QStringLiteral("/dev/input/%1").arg(entry);
                 break;
             }
         }
     }
-    if (padDevicePath.isEmpty())
-        return;
-
-    m_padFd = ::open(padDevicePath.toLocal8Bit().constData(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (!padDevicePath.isEmpty()) {
+        m_padFd = ::open(padDevicePath.toLocal8Bit().constData(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    } else {
+        // Respaldo dentro de sandbox (p. ej. Flatpak con --device=input) si /sys/class/input no está poblado.
+        QDir devInput(QStringLiteral("/dev/input"));
+        const QStringList jsNodes = devInput.entryList({QStringLiteral("js*")}, QDir::System | QDir::Readable);
+        for (const QString& node : jsNodes) {
+            const QString candidate = devInput.filePath(node);
+            const int fd = ::open(candidate.toLocal8Bit().constData(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+            if (fd < 0)
+                continue;
+            char nameBuf[256] = {};
+            if (::ioctl(fd, JSIOCGNAME(sizeof(nameBuf)), nameBuf) >= 0) {
+                const QString name = QString::fromUtf8(nameBuf).trimmed();
+                if (isWacomPadName(name)) {
+                    m_padFd = fd;
+                    break;
+                }
+            }
+            ::close(fd);
+        }
+    }
     if (m_padFd < 0)
         return;
 

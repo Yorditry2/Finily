@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QGuiApplication>
+#include <QIcon>
 #include <QStringList>
 
 int main(int argc, char* argv[]) {
@@ -22,6 +23,10 @@ int main(int argc, char* argv[]) {
     QApplication::setOrganizationName("Finily");
     QApplication::setOrganizationDomain("finily.app");
     QApplication::setApplicationVersion(QStringLiteral(FINILY_VERSION));
+#ifdef Q_OS_LINUX
+    QGuiApplication::setDesktopFileName(QStringLiteral(FINILY_APP_ID));
+    QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral(FINILY_APP_ID)));
+#endif
 
     // Inter si está instalada, con respaldo de la tipografía del sistema.
     QFont uiFont = QApplication::font();

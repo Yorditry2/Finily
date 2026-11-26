@@ -60,13 +60,28 @@ add_executable(finily
     src/ui/MainWindow.cpp
 )
 
-target_compile_definitions(finily PRIVATE FINILY_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(finily PRIVATE
+    FINILY_VERSION="${PROJECT_VERSION}"
+    FINILY_APP_ID="io.github.yorditry2.Finily"
+)
 target_link_libraries(finily PRIVATE finily_engine Qt6::Widgets)
+
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/finily-version.txt" "${PROJECT_VERSION}\n")
 
 if(WIN32)
     set_target_properties(finily PROPERTIES WIN32_EXECUTABLE TRUE)
     install(TARGETS finily RUNTIME DESTINATION .)
-    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/finily-version.txt" "${PROJECT_VERSION}\n")
+elseif(UNIX AND NOT APPLE)
+    include(GNUInstallDirs)
+    install(TARGETS finily RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    install(FILES packaging/linux/io.github.yorditry2.Finily.desktop
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+    install(FILES packaging/linux/io.github.yorditry2.Finily.svg
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
+    install(FILES packaging/linux/io.github.yorditry2.Finily.metainfo.xml
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")
+    install(FILES packaging/linux/io.github.yorditry2.Finily.xml
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages")
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
