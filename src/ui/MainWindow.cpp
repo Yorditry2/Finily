@@ -17,6 +17,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QKeySequence>
+#include <QLineEdit>
 #include <QProcess>
 #include <QShortcut>
 #include <QStackedWidget>
@@ -1260,11 +1261,17 @@ void MainWindow::installShortcuts() {
     // Todos los atajos del editor viven en el contenedor del editor con
     // WidgetWithChildrenShortcut: así escribir en la búsqueda de la biblioteca
     // o en el diálogo de nuevo cuaderno NUNCA dispara atajos del lienzo.
-    auto addShortcut = [this](const QKeySequence& sequence, const std::function<void()>& action) {
+    auto isEditingTextField = [this]() -> bool {
+        if (m_canvas && m_canvas->isInlineTextEditing())
+            return true;
+        return qobject_cast<QLineEdit*>(QApplication::focusWidget()) != nullptr;
+    };
+
+    auto addShortcut = [this, isEditingTextField](const QKeySequence& sequence, const std::function<void()>& action) {
         auto* shortcut = new QShortcut(sequence, m_container);
         shortcut->setContext(Qt::WidgetWithChildrenShortcut);
-        connect(shortcut, &QShortcut::activated, this, [this, action] {
-            if (m_toolbar && m_toolbar->hasModalOpen())
+        connect(shortcut, &QShortcut::activated, this, [this, action, isEditingTextField] {
+            if ((m_toolbar && m_toolbar->hasModalOpen()) || isEditingTextField())
                 return;
             action();
         });
@@ -1300,8 +1307,8 @@ void MainWindow::installShortcuts() {
     for (int i = 0; i < 5; ++i) {
         auto* sc = new QShortcut(QKeySequence(m_toolbar->presetShortcut(i)), m_container);
         sc->setContext(Qt::WidgetWithChildrenShortcut);
-        connect(sc, &QShortcut::activated, this, [this, i] {
-            if (m_toolbar && m_toolbar->hasModalOpen())
+        connect(sc, &QShortcut::activated, this, [this, i, isEditingTextField] {
+            if ((m_toolbar && m_toolbar->hasModalOpen()) || isEditingTextField())
                 return;
             m_toolbar->selectPreset(i);
         });

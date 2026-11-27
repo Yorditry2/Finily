@@ -406,7 +406,9 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     connect(m_notebookSheet, &GlassSheet::closed, this, [this] { updateOverlayMask(); });
 
     for (QWidget* w : {static_cast<QWidget*>(m_topBar), static_cast<QWidget*>(m_detachedDock),
-                       static_cast<QWidget*>(m_elementsPanel), static_cast<QWidget*>(m_pagesPanel)}) {
+                       static_cast<QWidget*>(m_elementsPanel), static_cast<QWidget*>(m_pagesPanel),
+                       static_cast<QWidget*>(m_contextCapsule), static_cast<QWidget*>(m_inlineTextBar),
+                       static_cast<QWidget*>(m_settingsModal), static_cast<QWidget*>(m_libraryModal)}) {
         if (w)
             w->installEventFilter(this);
     }
@@ -1180,9 +1182,10 @@ void FloatingToolbar::tabletEvent(QTabletEvent* event) {
 
 bool FloatingToolbar::eventFilter(QObject* watched, QEvent* event) {
     if (m_dropdownMenu && m_dropdownMenu->isVisible() && event->type() == QEvent::MouseButtonPress) {
-        if (watched == m_topBar || watched == m_detachedDock || watched == m_elementsPanel || watched == m_pagesPanel) {
+        if (auto* w = qobject_cast<QWidget*>(watched);
+            w == m_topBar || w == m_detachedDock || w == m_elementsPanel || w == m_pagesPanel
+            || w == m_contextCapsule || w == m_inlineTextBar || w == m_settingsModal || w == m_libraryModal) {
             auto* me = static_cast<QMouseEvent*>(event);
-            auto* w = static_cast<QWidget*>(watched);
             const QPoint pt = w->mapTo(this, me->pos());
             if (!m_dropdownMenu->geometry().contains(pt)) {
                 m_dropdownMenu->hide();

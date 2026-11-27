@@ -54,6 +54,7 @@ for group in platforms wayland-shell-integration wayland-graphics-integration-cl
   if [[ -d "$QT_PLUGINS_DIR/$group" ]]; then
     mkdir -p "$BUNDLE_DIR/plugins/$group"
     cp -a "$QT_PLUGINS_DIR/$group"/*.so "$BUNDLE_DIR/plugins/$group/" 2>/dev/null || true
+    rm -f "$BUNDLE_DIR/plugins/$group"/libqtvirtualkeyboardplugin.so 2>/dev/null || true
   fi
 done
 
@@ -61,7 +62,7 @@ should_exclude_lib() {
   local base="$1"
   case "$base" in
     linux-vdso.so*|ld-linux*.so*) return 0 ;;
-    libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|libutil.so*|libresolv.so*|libnss_*.so*) return 0 ;;
+    libc.so*|libm.so*|libmvec.so*|libdl.so*|libpthread.so*|librt.so*|libutil.so*|libresolv.so*|libnsl.so*|libnss_*.so*|libuuid.so*) return 0 ;;
     libstdc++.so*|libgcc_s.so*|libgomp.so*) return 0 ;;
     libGL*.so*|libEGL*.so*|libOpenGL*.so*|libvulkan*.so*|libdrm*.so*|libgbm*.so*) return 0 ;;
     libwayland-*.so*|libX11*.so*|libxcb.so*|libXau*.so*|libXdmcp*.so*|libXext*.so*|libXfixes*.so*|libXrender*.so*) return 0 ;;
@@ -70,6 +71,7 @@ should_exclude_lib() {
     libdbus-1*.so*|libsystemd*.so*|libudev*.so*|libcap*.so*|libmount*.so*|libblkid*.so*|libffi*.so*) return 0 ;;
     libssl*.so*|libcrypto*.so*|libgssapi_krb5*.so*|libkrb5*.so*|libk5crypto*.so*|libcom_err*.so*|libkeyutils*.so*) return 0 ;;
     libxkbcommon*.so*|libharfbuzz*.so*|libgraphite2*.so*|libpng16*.so*|libbrotli*.so*) return 0 ;;
+    libproxy*.so*|libpxbackend*.so*|libpcre2-8*.so*|libcurl*.so*|libduktape*.so*|libnghttp*.so*|libngtcp2*.so*|libssh2*.so*|libpsl*.so*|libidn2*.so*|libunistring*.so*|liburing*.so*) return 0 ;;
     *) return 1 ;;
   esac
 }

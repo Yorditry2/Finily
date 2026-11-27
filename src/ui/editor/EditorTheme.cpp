@@ -323,11 +323,19 @@ void EditorLineEdit::applyEditorTheme(bool dark) {
 bool EditorLineEdit::event(QEvent* e) {
     if (e->type() == QEvent::ShortcutOverride) {
         auto* ke = static_cast<QKeyEvent*>(e);
-        if (ke->modifiers() == Qt::NoModifier || ke->modifiers() == Qt::ShiftModifier) {
-            const int k = ke->key();
+        const int k = ke->key();
+        const auto mods = ke->modifiers();
+        if (mods == Qt::NoModifier || mods == Qt::ShiftModifier) {
             if ((k >= Qt::Key_A && k <= Qt::Key_Z) || (k >= Qt::Key_0 && k <= Qt::Key_9) ||
-                k == Qt::Key_Space || k == Qt::Key_Backspace || k == Qt::Key_Delete ||
+                k == Qt::Key_Space || k == Qt::Key_Tab || k == Qt::Key_Backtab ||
+                k == Qt::Key_Backspace || k == Qt::Key_Delete ||
                 k == Qt::Key_Return || k == Qt::Key_Enter || k == Qt::Key_Escape) {
+                ke->accept();
+                return true;
+            }
+        } else if (mods.testFlag(Qt::ControlModifier) && !mods.testFlag(Qt::AltModifier)) {
+            if (k == Qt::Key_C || k == Qt::Key_V || k == Qt::Key_X ||
+                k == Qt::Key_A || k == Qt::Key_Z || k == Qt::Key_Y) {
                 ke->accept();
                 return true;
             }

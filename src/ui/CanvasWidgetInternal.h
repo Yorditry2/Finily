@@ -68,8 +68,12 @@ protected:
         if (event->type() == QEvent::ShortcutOverride) {
             const auto* ke = static_cast<QKeyEvent*>(event);
             const auto k = ke->key();
+            const bool ctrlTextEdit = ke->modifiers().testFlag(Qt::ControlModifier)
+                && !ke->modifiers().testFlag(Qt::AltModifier)
+                && (k == Qt::Key_C || k == Qt::Key_V || k == Qt::Key_X
+                    || k == Qt::Key_A || k == Qt::Key_Z || k == Qt::Key_Y);
             if (k == Qt::Key_Escape || k == Qt::Key_Return || k == Qt::Key_Enter || k == Qt::Key_Tab
-                || k == Qt::Key_Backspace || k == Qt::Key_Delete
+                || k == Qt::Key_Backspace || k == Qt::Key_Delete || ctrlTextEdit
                 || (!ke->modifiers().testFlag(Qt::ControlModifier)
                     && !ke->modifiers().testFlag(Qt::AltModifier))) {
                 event->accept();
