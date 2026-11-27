@@ -155,7 +155,7 @@ signals:
     void undoRequested();
     void redoRequested();
     void homeRequested();
-    void addTabRequested();
+    void addTabRequested(const QRect& anchorRect);
     void closeTabRequested(int index);
     void tabSelected(int index);
     void tabRenamed(int index, const QString& newTitle);

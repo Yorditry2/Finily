@@ -156,6 +156,7 @@ GlassSheet::GlassSheet(QWidget* parent)
         m_pendingAccept = false;
         m_blurredBg = QImage();
         hide();
+        emit closed();
         if (!accepted)
             emit cancelled();
     });

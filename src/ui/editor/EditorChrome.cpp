@@ -986,7 +986,7 @@ void EditorTopBar::mouseReleaseEvent(QMouseEvent* event) {
     case HitKind::Home: emit homeRequested(); break;
     case HitKind::Tab: emit tabSelected(h.index); break;
     case HitKind::TabClose: emit closeTabRequested(h.index); break;
-    case HitKind::NewTab: emit addTabRequested(); break;
+    case HitKind::NewTab: emit addTabRequested(anchorInParent); break;
     case HitKind::Fullscreen: emit fullscreenRequested(); break;
     case HitKind::Undo: if (m_canUndo) emit undoRequested(); break;
     case HitKind::Redo: if (m_canRedo) emit redoRequested(); break;

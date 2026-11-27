@@ -35,6 +35,7 @@ public:
 
 signals:
     void cancelled();
+    void closed();
 
 protected:
     void configureHeader(const QString& title, const QString& confirmText);

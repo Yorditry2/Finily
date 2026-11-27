@@ -1,6 +1,7 @@
 #include "ui/FloatingToolbar.h"
 
 #include "core/Utils.h"
+#include "engine/LibraryStore.h"
 #include "ui/CanvasWidget.h"
 #include "ui/editor/EditorChrome.h"
 #include "ui/editor/EditorColorPopover.h"
@@ -8,7 +9,13 @@
 #include "ui/editor/EditorModals.h"
 #include "ui/editor/EditorSidePanels.h"
 #include "ui/editor/EditorToolPanels.h"
+#include "ui/home/HomeTheme.h"
+#include "ui/home/NewBoardSheet.h"
+#include "ui/home/NewNotebookSheet.h"
 
+#include <QFileInfo>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <QResizeEvent>
 #include <QTabletEvent>
@@ -82,7 +89,7 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     connect(m_topBar, &EditorTopBar::homeRequested, this, &FloatingToolbar::homeRequested);
     connect(m_topBar, &EditorTopBar::tabSelected, this, &FloatingToolbar::switchTabRequested);
     connect(m_topBar, &EditorTopBar::closeTabRequested, this, &FloatingToolbar::closeTabRequested);
-    connect(m_topBar, &EditorTopBar::addTabRequested, this, &FloatingToolbar::newTabRequested);
+    connect(m_topBar, &EditorTopBar::addTabRequested, this, &FloatingToolbar::showNewTabMenu);
     connect(m_topBar, &EditorTopBar::tabRenamed, this, [this](int idx, const QString& title) {
         emit switchTabRequested(idx);
         emit renameRequested(title);
@@ -335,6 +342,27 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
         updateOverlayMask();
     });
 
+    m_boardSheet = new NewBoardSheet(this);
+    connect(m_boardSheet, &NewBoardSheet::boardSubmitted, this, &FloatingToolbar::createDocumentRequested);
+    connect(m_boardSheet, &NewBoardSheet::tagCreateRequested, this, [this](const QString& name) {
+        const TagInfo created = LibraryStore::createTag(name);
+        if (!created.id.isEmpty())
+            m_boardSheet->setTags(LibraryStore::listTags());
+    });
+    connect(m_boardSheet, &GlassSheet::closed, this, [this] { updateOverlayMask(); });
+
+    m_notebookSheet = new NewNotebookSheet(this);
+    connect(m_notebookSheet, &NewNotebookSheet::notebookSubmitted, this, &FloatingToolbar::createDocumentRequested);
+    connect(m_notebookSheet, &NewNotebookSheet::tagCreateRequested, this, [this](const QString& name) {
+        const TagInfo created = LibraryStore::createTag(name);
+        if (!created.id.isEmpty())
+            m_notebookSheet->setTags(LibraryStore::listTags());
+    });
+    connect(m_notebookSheet, &GlassSheet::closed, this, [this] { updateOverlayMask(); });
+
+    for (QLineEdit* le : findChildren<QLineEdit*>())
+        le->installEventFilter(this);
+
     applyThemeToAll(false);
     refreshFromCanvas();
 }
@@ -517,6 +545,8 @@ void FloatingToolbar::openSettingsModal(const QString& section) {
     if (!m_settingsModal)
         return;
     closeTransientPopovers();
+    if (m_boardSheet && m_boardSheet->isVisible()) m_boardSheet->closeSheet(false);
+    if (m_notebookSheet && m_notebookSheet->isVisible()) m_notebookSheet->closeSheet(false);
     m_settingsModal->setGeometry(rect());
     m_settingsModal->syncFromCanvas(m_canvas, m_dockMode, int(m_pageNavDir));
     m_settingsModal->openSection(section);
@@ -527,6 +557,8 @@ void FloatingToolbar::openLibraryModal(const QString& section) {
     if (!m_libraryModal)
         return;
     closeTransientPopovers();
+    if (m_boardSheet && m_boardSheet->isVisible()) m_boardSheet->closeSheet(false);
+    if (m_notebookSheet && m_notebookSheet->isVisible()) m_notebookSheet->closeSheet(false);
     m_libraryModal->setGeometry(rect());
     m_libraryModal->setPresets(m_presets);
     m_libraryModal->syncFromCanvas(m_canvas);
@@ -544,8 +576,14 @@ void FloatingToolbar::openRadialColorPicker(const QPointF& nearScreenPos) {
 void FloatingToolbar::setNotebookTabs(const QVector<TabEntry>& tabs) {
     QVector<EditorTabItem> items;
     items.reserve(tabs.size());
-    for (const auto& t : tabs)
+    m_openTabPaths.clear();
+    for (const auto& t : tabs) {
         items.append({t.title, t.isBoard, t.isPdf, t.dirty, t.active});
+        if (!t.filePath.isEmpty()) {
+            const QString canon = QFileInfo(t.filePath).canonicalFilePath();
+            m_openTabPaths.append(canon.isEmpty() ? t.filePath : canon);
+        }
+    }
     if (m_topBar)
         m_topBar->setTabs(items);
 }
@@ -876,13 +914,19 @@ void FloatingToolbar::positionAll() {
         m_settingsModal->setGeometry(rect());
     if (m_libraryModal->isVisible())
         m_libraryModal->setGeometry(rect());
+    if (m_boardSheet && m_boardSheet->isVisible())
+        m_boardSheet->repositionOnResize();
+    if (m_notebookSheet && m_notebookSheet->isVisible())
+        m_notebookSheet->repositionOnResize();
 
     updateOverlayMask();
 }
 
 void FloatingToolbar::updateOverlayMask() {
     if (m_settingsModal->isVisible() || m_libraryModal->isVisible() ||
-        m_confirmCard->isVisible() || m_dropdownMenu->isVisible()) {
+        m_confirmCard->isVisible() || m_dropdownMenu->isVisible() ||
+        (m_boardSheet && m_boardSheet->isVisible()) ||
+        (m_notebookSheet && m_notebookSheet->isVisible())) {
         if (m_lastOverlayMask != QRegion(rect())) {
             m_lastOverlayMask = QRegion(rect());
             setMask(m_lastOverlayMask);
@@ -926,6 +970,18 @@ void FloatingToolbar::tabletEvent(QTabletEvent* event) {
 }
 
 bool FloatingToolbar::eventFilter(QObject* watched, QEvent* event) {
+    if (event->type() == QEvent::ShortcutOverride && qobject_cast<QLineEdit*>(watched)) {
+        auto* ke = static_cast<QKeyEvent*>(event);
+        if (ke->modifiers() == Qt::NoModifier || ke->modifiers() == Qt::ShiftModifier) {
+            const int k = ke->key();
+            if ((k >= Qt::Key_A && k <= Qt::Key_Z) || (k >= Qt::Key_0 && k <= Qt::Key_9) ||
+                k == Qt::Key_Space || k == Qt::Key_Backspace || k == Qt::Key_Delete ||
+                k == Qt::Key_Return || k == Qt::Key_Enter || k == Qt::Key_Escape) {
+                ke->accept();
+                return true;
+            }
+        }
+    }
     if (watched == m_canvas) {
         if (event->type() == QEvent::Resize) {
             setGeometry(m_canvas->rect());

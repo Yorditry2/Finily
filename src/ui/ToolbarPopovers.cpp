@@ -1,13 +1,20 @@
 #include "ui/FloatingToolbar.h"
 
 #include "core/Utils.h"
+#include "engine/LibraryStore.h"
 #include "ui/CanvasWidget.h"
 #include "ui/editor/EditorChrome.h"
 #include "ui/editor/EditorSidePanels.h"
+#include "ui/home/HomeTheme.h"
+#include "ui/home/NewBoardSheet.h"
+#include "ui/home/NewNotebookSheet.h"
 
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFontMetricsF>
 #include <QStringList>
+
+#include <algorithm>
 
 namespace finily {
 
@@ -36,6 +43,85 @@ void FloatingToolbar::showExportMenu(const QRect& anchorRect) {
         else if (id == 5) importPdfDialog();
     }, 248);
     updateOverlayMask();
+}
+
+void FloatingToolbar::showNewTabMenu(const QRect& anchorRect) {
+    if (!m_dropdownMenu)
+        return;
+    closeTransientPopovers();
+
+    QVector<EditorDropdownItem> items = {
+        {1, QStringLiteral("Nota rápida"), QStringLiteral("Ctrl+T"), QStringLiteral("plus"), QStringLiteral("ui")},
+        {2, QStringLiteral("Nueva pizarra infinita…"), {}, QStringLiteral("board"), QStringLiteral("ui")},
+        {3, QStringLiteral("Nuevo cuaderno…"), {}, QStringLiteral("book"), QStringLiteral("ui")},
+    };
+
+    QVector<NotebookMeta> docs = LibraryStore::listAllNotebooksRecursive();
+    std::sort(docs.begin(), docs.end(), [](const NotebookMeta& a, const NotebookMeta& b) {
+        return a.modified > b.modified;
+    });
+    const int recentCount = std::min(5, int(docs.size()));
+    const QFontMetricsF fm(editorFont(12.0, QFont::Medium));
+    QStringList recentPaths;
+    recentPaths.reserve(recentCount);
+    for (int i = 0; i < recentCount; ++i) {
+        const NotebookMeta& doc = docs.at(i);
+        recentPaths.append(doc.path);
+        const QString icon = doc.hasPdf ? QStringLiteral("pdf")
+                           : (doc.pageFormat == PageFormat::Infinite ? QStringLiteral("board") : QStringLiteral("book"));
+        const QString rawTitle = doc.title.isEmpty() ? QFileInfo(doc.path).completeBaseName() : doc.title;
+        const QString label = fm.elidedText(rawTitle, Qt::ElideRight, 210.0);
+        const QString canon = QFileInfo(doc.path).canonicalFilePath();
+        const bool alreadyOpen = m_openTabPaths.contains(canon.isEmpty() ? doc.path : canon);
+        items.append({100 + i, label, {}, icon, QStringLiteral("ui"), i == 0, false, alreadyOpen});
+    }
+
+    items.append({10, QStringLiteral("Abrir archivo .finily…"), QStringLiteral("Ctrl+Shift+O"), QStringLiteral("open"), QStringLiteral("ui"), true});
+    items.append({11, QStringLiteral("Importar PDF…"), QStringLiteral("Ctrl+O"), QStringLiteral("pdf"), QStringLiteral("ui")});
+    items.append({12, QStringLiteral("Ir a la biblioteca"), {}, QStringLiteral("home"), QStringLiteral("ui"), true});
+
+    const QPoint pos(anchorRect.left(), anchorRect.bottom() + 6);
+    m_dropdownMenu->openMenu(items, pos, size(), [this, recentPaths](int id) {
+        updateOverlayMask();
+        if (id == 1) {
+            emit newTabRequested();
+        } else if (id == 2 && m_boardSheet) {
+            m_boardSheet->setFolders(LibraryStore::listAllFoldersTree());
+            m_boardSheet->setTags(LibraryStore::listTags());
+            m_boardSheet->openCreate(QString(), homePaletteFor(m_darkUi), m_darkUi);
+            updateOverlayMask();
+        } else if (id == 3 && m_notebookSheet) {
+            m_notebookSheet->setFolders(LibraryStore::listAllFoldersTree());
+            m_notebookSheet->setTags(LibraryStore::listTags());
+            m_notebookSheet->openCreate(QString(), homePaletteFor(m_darkUi), m_darkUi);
+            updateOverlayMask();
+        } else if (id >= 100 && id - 100 < recentPaths.size()) {
+            emit openNotebookInNewTabRequested(recentPaths.at(id - 100));
+        } else if (id == 10) {
+            openNotebookInNewTabDialog();
+        } else if (id == 11) {
+            importPdfInNewTabDialog();
+        } else if (id == 12) {
+            emit homeRequested();
+        }
+    }, 268);
+    updateOverlayMask();
+}
+
+void FloatingToolbar::openNotebookInNewTabDialog() {
+    closeTransientPopovers();
+    const QString path = QFileDialog::getOpenFileName(
+        window(), tr("Abrir cuaderno en nueva pestaña"), QString(), tr("Cuaderno Finily (*.finily)"));
+    if (!path.isEmpty())
+        emit openNotebookInNewTabRequested(path);
+}
+
+void FloatingToolbar::importPdfInNewTabDialog() {
+    closeTransientPopovers();
+    const QString path = QFileDialog::getOpenFileName(
+        window(), tr("Importar PDF en nueva pestaña"), QString(), tr("Archivos PDF (*.pdf)"));
+    if (!path.isEmpty())
+        emit importPdfInNewTabRequested(path);
 }
 
 void FloatingToolbar::showTabMenu(int index, const QPoint& globalPos) {

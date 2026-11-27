@@ -258,6 +258,24 @@ void MainWindow::setupToolbarConnections() {
         return;
 
     connect(m_toolbar, &FloatingToolbar::newTabRequested, this, &MainWindow::openNewBlankTab);
+    connect(m_toolbar, &FloatingToolbar::createDocumentRequested, this, &MainWindow::launchNewDocument);
+    connect(m_toolbar, &FloatingToolbar::openNotebookInNewTabRequested, this, [this](const QString& path) {
+        if (!openNotebookInTab(path, true) && m_toolbar)
+            m_toolbar->showToast(tr("No se pudo abrir el cuaderno"));
+    });
+    connect(m_toolbar, &FloatingToolbar::importPdfInNewTabRequested, this, [this](const QString& path) {
+        if (!m_canvas)
+            return;
+        if (openInReusableOrNewTab([this, &path] { return m_canvas->importPdfFile(path, true); })) {
+            showEditorPage();
+            m_canvas->resetViewport();
+            if (m_toolbar)
+                m_toolbar->refreshFromCanvas();
+            m_canvas->setFocus();
+        } else if (m_toolbar) {
+            m_toolbar->showToast(tr("No se pudo importar el PDF"));
+        }
+    });
     connect(m_toolbar, &FloatingToolbar::switchTabRequested, this, &MainWindow::switchToTab);
     connect(m_toolbar, &FloatingToolbar::closeTabRequested, this, &MainWindow::closeTab);
     connect(m_toolbar, &FloatingToolbar::duplicateTabRequested, this, &MainWindow::duplicateTab);
@@ -1509,12 +1527,14 @@ void MainWindow::syncTabBarUi() {
                   return std::any_of(page.images.cbegin(), page.images.cend(),
                                      [](const ImageItem& img) { return img.isPdfPage; });
               });
-        entries.append({title, dirty, i == m_activeTab, isBoard, isPdf});
-        sig += QStringLiteral("|%1:%2:%3:%4")
+        const QString tabPath = (i == m_activeTab) ? m_canvas->currentFilePath() : s.filePath;
+        entries.append({title, dirty, i == m_activeTab, isBoard, isPdf, tabPath});
+        sig += QStringLiteral("|%1:%2:%3:%4:%5")
                    .arg(title)
                    .arg(dirty ? 1 : 0)
                    .arg(isBoard ? 1 : 0)
-                   .arg(isPdf ? 1 : 0);
+                   .arg(isPdf ? 1 : 0)
+                   .arg(tabPath);
     }
     if (sig != m_lastTabBarSig) {
         m_lastTabBarSig = sig;

@@ -36,6 +36,8 @@ class EditorSettingsModal;
 class EditorShapesPanel;
 class EditorToast;
 class EditorTopBar;
+class NewBoardSheet;
+class NewNotebookSheet;
 
 enum class ToolbarDockPos { Izquierda, Arriba, Abajo };
 enum class PageNavDirection { Horizontal, Vertical };
@@ -56,6 +58,7 @@ public:
         bool active = false;
         bool isBoard = false;
         bool isPdf = false;
+        QString filePath;
     };
 
     explicit FloatingToolbar(CanvasWidget* canvas, QWidget* parent = nullptr);
@@ -103,6 +106,9 @@ signals:
     void extractSelectedImageRequested();
     void configureAiApiRequested();
     void newTabRequested();
+    void createDocumentRequested(const finily::NewDocumentSpec& spec);
+    void openNotebookInNewTabRequested(const QString& filePath);
+    void importPdfInNewTabRequested(const QString& filePath);
     void switchTabRequested(int index);
     void closeTabRequested(int index);
     void duplicateTabRequested(int index);
@@ -136,6 +142,9 @@ private:
     void openFineWidthPopover(ToolType tool, const QRect& anchorRect);
     void openDropdown(QWidget* anchor, const QVector<EditorDropdownItem>& items, std::function<void(int)> cb);
     void showExportMenu(const QRect& anchorRect);
+    void showNewTabMenu(const QRect& anchorRect);
+    void openNotebookInNewTabDialog();
+    void importPdfInNewTabDialog();
     void showTabMenu(int index, const QPoint& globalPos);
     void showEdgeMarkCapsule(const QPointF& screenPos, const QPointF& worldPos);
 
@@ -157,6 +166,7 @@ private:
     QRect m_lastColorAnchor;
     QRect m_lastWidthAnchor;
     QString m_availableUpdateVersion;
+    QStringList m_openTabPaths;
 
     QVector<PenPreset> m_presets;
     bool m_presetsRestored = false;
@@ -190,6 +200,8 @@ private:
     EditorConfirmCard* m_confirmCard = nullptr;
     EditorSettingsModal* m_settingsModal = nullptr;
     EditorLibraryModal* m_libraryModal = nullptr;
+    NewBoardSheet* m_boardSheet = nullptr;
+    NewNotebookSheet* m_notebookSheet = nullptr;
 
     QWidget* m_openPopover = nullptr;
     QRect m_openPopoverAnchor;
