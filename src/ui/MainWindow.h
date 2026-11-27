@@ -1,12 +1,19 @@
 #pragma once
 
+#include "core/Types.h"
 #include "engine/UpdateManager.h"
+#include "engine/VisionExtractor.h"
 
 #include <QMainWindow>
+#include <QPointer>
+
+#include <functional>
 
 class QProgressDialog;
+class QShortcut;
 #ifdef Q_OS_LINUX
 class QSocketNotifier;
+class QTimer;
 #endif
 class QStackedWidget;
 
@@ -39,6 +46,20 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    void setupEditorPage();
+    void setupHomeConnections();
+    void setupToolbarConnections();
+    void setupVisionCallbacks();
+    void setupUpdateCallbacks();
+    void saveAllDirtyTabsBeforeExit();
+    bool openInReusableOrNewTab(const std::function<bool()>& loader);
+    void launchNewDocument(const NewDocumentSpec& spec);
+    void materializeEphemeralTabIfNeeded();
+    void discardActiveEphemeralTab();
+    bool isActiveTabEmptyEphemeral() const;
+    void updateOpenTabsForPathMapping(const std::function<QString(const QString&)>& mapper);
+    void closeOpenTabsMatching(const std::function<bool(const QString&)>& predicate);
+
     void installShortcuts();
 #ifdef Q_OS_LINUX
     void setupWacomPadListener();
@@ -49,18 +70,39 @@ private:
     void showEditorPage();
     void showHomePage();
     void startUpdateInstall();
+    bool configureAiApiDialog();
+    void vectorizeSelectedImage();
+    void startImageExtraction();
+    void syncActiveTabFromCanvas();
+    void syncTabBarUi();
+    void switchToTab(int index);
+    void openNewBlankTab();
+    void closeTab(int index);
+    bool openNotebookInTab(const QString& path);
 
     QStackedWidget* m_stack = nullptr;
     QWidget* m_container = nullptr; // página 1: contenedor plano del editor
     HomeScreen* m_homeScreen = nullptr;
     CanvasWidget* m_canvas = nullptr;
     FloatingToolbar* m_toolbar = nullptr;
+    QVector<NotebookSession> m_tabs;
+    int m_activeTab = 0;
+    QString m_lastTabBarSig;
+    bool m_materializingEphemeral = false;
     UpdateManager* m_updater = nullptr;
+    VisionExtractor* m_visionExtractor = nullptr;
+    QPointer<QProgressDialog> m_visionProgress;
+    QString m_visionTargetTabId;
+    int m_visionTargetPageIndex = -1;
     UpdateInfo m_availableUpdate;
-    QProgressDialog* m_updateProgress = nullptr;
+    QPointer<QProgressDialog> m_updateProgress;
+    QVector<QShortcut*> m_presetShortcuts;
+    QShortcut* m_pagePrevAltShortcut = nullptr;
+    QShortcut* m_pageNextAltShortcut = nullptr;
 #ifdef Q_OS_LINUX
     int m_padFd = -1;
     QSocketNotifier* m_padNotifier = nullptr;
+    QTimer* m_padReconnectTimer = nullptr;
 #endif
 };
 

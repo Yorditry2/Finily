@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finily — Tarjeta «Nueva carpeta»</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FFFFFF; --sidebar: #F6F6F4; --border: rgba(15,23,42,0.06); --border-pop: rgba(15,23,42,0.08);
+    --text: #18181B; --muted: #71717A; --icon: #3F3F46; --accent: #18181B; --accent-fg: #FFFFFF;
+    --soft: rgba(24,24,27,0.08); --neutral: #F6F6F4; --field: #F4F4F5;
+    --shadow-card: 0 20px 46px -12px rgba(15,23,42,0.18), 0 5px 14px -3px rgba(15,23,42,0.07);
+    --shadow-obj: 0 10px 22px -8px rgba(15,23,42,0.16), 0 3px 8px -3px rgba(15,23,42,0.07);
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', system-ui, sans-serif; font-size: 12px; line-height: 1.35; background: #E9E9E6; color: var(--text); -webkit-font-smoothing: antialiased; padding: 18px 16px 28px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  svg.i { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  .hint { font-size: 11px; color: var(--muted); text-align: center; max-width: 760px; }
+
+  .frame-wrap { width: 100%; max-width: 1180px; }
+  .frame { width: 1180px; height: 720px; transform-origin: top left; position: relative; border-radius: 14px; overflow: hidden; background: var(--bg); box-shadow: 0 30px 60px -20px rgba(15,23,42,.35); display: flex; }
+
+  .sb { width: 214px; background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 14px 10px 12px; flex-shrink: 0; }
+  .sb-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 14px; }
+  .sb-brand { font-size: 14px; font-weight: 700; letter-spacing: -0.02em; }
+  .sb-btn { width: 26px; height: 26px; border-radius: 8px; border: 0; background: transparent; color: var(--icon); display: inline-flex; align-items: center; justify-content: center; }
+  .nav { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 8px; color: var(--icon); font-weight: 500; font-size: 12.5px; }
+  .nav.on { background: var(--soft); color: var(--text); font-weight: 600; }
+  .nav .chev { margin-left: auto; color: var(--muted); display: inline-flex; }
+  .nav .chev svg { width: 13px; height: 13px; }
+  .tree { position: relative; margin-left: 15px; padding-left: 10px; }
+  .tree::before { content: ''; position: absolute; left: 0; top: 2px; bottom: 2px; width: 1px; background: rgba(24,24,27,.13); }
+  .tree .nav { font-size: 12px; padding: 5px 8px; }
+  .tdot { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+  .sb-foot { margin-top: auto; }
+  .sb-div { height: 1px; background: var(--border); margin: 8px 4px; }
+  .sb-icons { display: flex; gap: 4px; padding: 0 4px; }
+
+  .lib { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .hdr { height: 58px; display: flex; align-items: center; gap: 6px; padding: 0 22px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .hdr-title { font-size: 16px; font-weight: 600; letter-spacing: -0.02em; }
+  .hdr-sp { flex: 1; }
+  .icon-btn { width: 32px; height: 32px; border-radius: 9px; border: 0; background: transparent; color: var(--icon); display: inline-flex; align-items: center; justify-content: center; }
+  .pill-new { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px 0 11px; border-radius: 999px; border: 0; background: var(--accent); color: var(--accent-fg); font: inherit; font-weight: 600; font-size: 12.5px; margin-left: 4px; }
+  .grid { padding: 26px 28px; display: grid; grid-template-columns: repeat(5, 1fr); row-gap: 28px; align-items: end; padding-right: 380px; grid-template-columns: repeat(3, 1fr); }
+  .obj { display: flex; flex-direction: column; align-items: center; gap: 9px; }
+  .obj-name { font-size: 11.5px; font-weight: 500; text-align: center; }
+  .obj-date { font-size: 10px; color: var(--muted); text-align: center; }
+  .obj.ghost { opacity: .0; }
+
+  /* ---------- Tarjeta flotante derecha (mismo contenedor que «Nueva pizarra») ---------- */
+  .float-card { position: absolute; right: 18px; top: 72px; width: 344px; border-radius: 18px; background: #fff; border: 1px solid var(--border-pop); box-shadow: var(--shadow-card); overflow: hidden; display: flex; flex-direction: column; animation: cardIn 260ms var(--ease) both; }
+  @keyframes cardIn { from { opacity: 0; transform: translateX(14px) scale(.985); } to { opacity: 1; transform: none; } }
+
+  .fc-hero { height: 196px; padding: 13px 15px 14px; display: flex; flex-direction: column; justify-content: space-between; position: relative; background: var(--neutral); border-bottom: 1px solid rgba(15,23,42,.07); }
+  .fc-hero-top { display: flex; justify-content: space-between; align-items: center; position: relative; z-index: 1; }
+  .fc-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; padding: 3px 9px 3px 7px; border-radius: 999px; background: rgba(255,255,255,.8); color: var(--icon); box-shadow: 0 1px 2px rgba(15,23,42,.06); }
+  .fc-badge svg { width: 12px; height: 12px; }
+  .fc-close { width: 24px; height: 24px; border-radius: 50%; border: 0; background: rgba(255,255,255,.8); color: #52525b; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  .fc-close svg { width: 13px; height: 13px; }
+  .fc-folder { position: absolute; left: 50%; top: 40px; transform: translateX(-50%); transition: transform 220ms var(--ease); }
+  .fc-folder svg { display: block; }
+  .fc-folder.pop { animation: pop 260ms var(--ease); }
+  @keyframes pop { 0% { transform: translateX(-50%) scale(.96); } 60% { transform: translateX(-50%) scale(1.03); } 100% { transform: translateX(-50%) scale(1); } }
+  .fc-title-row { display: flex; align-items: center; gap: 8px; position: relative; z-index: 1; color: var(--muted); border-bottom: 1px solid rgba(15,23,42,.1); padding-bottom: 5px; }
+  .fc-title-row:focus-within { border-color: var(--accent); }
+  .fc-title-in { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 15px; font-weight: 600; letter-spacing: -0.015em; color: var(--text); }
+
+  .fc-body { padding: 15px 16px 16px; display: flex; flex-direction: column; gap: 16px; }
+  .sec { display: flex; flex-direction: column; gap: 9px; }
+  .kicker { font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+  .dots { display: flex; justify-content: space-between; }
+  .cdot { width: 28px; height: 28px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; position: relative; overflow: hidden; transition: transform 130ms ease, box-shadow 140ms ease; box-shadow: inset 0 0 0 1px rgba(15,23,42,.1); }
+  .cdot::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 38%; background: var(--flap); }
+  .cdot:hover { transform: scale(1.08); }
+  .cdot.on { box-shadow: 0 0 0 2px #fff, 0 0 0 3.8px var(--accent); }
+
+  .icons { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+  .ibtn { aspect-ratio: 1; border-radius: 10px; border: 1px solid transparent; background: var(--neutral); color: var(--icon); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 120ms ease, border-color 120ms ease, transform 120ms ease; }
+  .ibtn svg { width: 17px; height: 17px; }
+  .ibtn:hover { background: #EEEEEB; transform: translateY(-1px); }
+  .ibtn.on { background: #fff; border: 1.5px solid var(--accent); color: var(--text); }
+
+  .loc { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 10px; background: var(--field); border: 1px solid rgba(15,23,42,.06); cursor: pointer; font: inherit; color: var(--text); width: 100%; text-align: left; }
+  .loc svg { width: 14px; height: 14px; color: var(--muted); }
+  .loc .path { flex: 1; display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; }
+  .loc .path .m { color: var(--muted); }
+  .loc .path .sep svg { width: 11px; height: 11px; }
+  .cta { height: 38px; border-radius: 11px; border: 0; background: var(--accent); color: var(--accent-fg); font: inherit; font-weight: 600; font-size: 13px; cursor: pointer; width: 100%; }
+
+  /* menú de ubicación (hermano flotante a la izquierda, mismo patrón que el selector de color) */
+  .loc-pop { position: absolute; right: 374px; top: 452px; width: 240px; border-radius: 14px; background: #fff; border: 1px solid var(--border-pop); box-shadow: 0 22px 48px -12px rgba(15,23,42,.22), 0 6px 16px -4px rgba(15,23,42,.08); padding: 6px; opacity: 0; transform: translateX(10px) scale(.985); pointer-events: none; transition: opacity 180ms var(--ease), transform 210ms var(--ease); }
+  .loc-pop.open { opacity: 1; transform: none; pointer-events: auto; }
+  .lp-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; font-size: 12px; font-weight: 500; color: var(--icon); cursor: pointer; }
+  .lp-item:hover { background: var(--neutral); }
+  .lp-item.on { background: var(--soft); color: var(--text); font-weight: 600; }
+  .lp-item svg { width: 14px; height: 14px; }
+  .lp-item .tdot { margin: 0 2px; }
+  .lp-item .ck { margin-left: auto; }
+
+  .notes { max-width: 1180px; width: 100%; background: #fff; border-radius: 12px; padding: 14px 16px; font-size: 11.5px; color: #3f3f46; }
+  .notes h3 { font-size: 12px; font-weight: 700; margin-bottom: 6px; color: var(--text); }
+  .notes ul { padding-left: 16px; display: flex; flex-direction: column; gap: 3px; }
+</style>
+</head>
+<body>
+<p class="hint">Modo Claro · Mockup interactivo: escribe el nombre, cambia color e icono, y abre «Dentro de» para elegir la carpeta padre. Es la misma tarjeta de 344 px de «Nueva pizarra», sin velo sobre la biblioteca.</p>
+
+<div class="frame-wrap"><div class="frame" id="F">
+  <aside class="sb" id="sb"></aside>
+  <main class="lib">
+    <div class="hdr"><div class="hdr-title">Carpetas</div><div class="hdr-sp"></div>
+      <button class="icon-btn" data-i="search"></button><button class="icon-btn" data-i="filter"></button>
+      <button class="pill-new"><span data-i="plus"></span>Nuevo</button></div>
+    <div class="grid" id="lib"></div>
+  </main>
+
+  <div class="loc-pop" id="locPop"></div>
+
+  <section class="float-card" role="dialog" aria-label="Nueva carpeta">
+    <div class="fc-hero">
+      <div class="fc-hero-top">
+        <span class="fc-badge"><span data-i="folder"></span>Carpeta</span>
+        <button class="fc-close" aria-label="Cerrar"><span data-i="x"></span></button>
+      </div>
+      <div class="fc-folder" id="bigFolder"></div>
+      <label class="fc-title-row"><input class="fc-title-in" id="title" value="Nueva carpeta" aria-label="Nombre"><span data-i="pencil"></span></label>
+    </div>
+    <div class="fc-body">
+      <div class="sec"><span class="kicker">Color</span><div class="dots" id="dots"></div></div>
+      <div class="sec"><span class="kicker">Icono</span><div class="icons" id="icons"></div></div>
+      <div class="sec"><span class="kicker">Dentro de</span>
+        <button class="loc" id="locBtn"><span data-i="folder"></span><span class="path" id="locPath"></span><span data-i="chevD"></span></button>
+      </div>
+      <button class="cta">Crear carpeta</button>
+    </div>
+  </section>
+</div></div>
+
+<div class="notes"><h3>Decisiones de este boceto</h3><ul>
+  <li>Reutiliza la tarjeta de «Nueva pizarra» (344 px, radio 18 px, sin velo). La vista previa muestra la carpeta Bézier de 2 tonos tal como se verá en la grilla, sobre un fondo neutro liso (sin trama: la base debe ser neutra para que luego cada usuario la personalice).</li>
+  <li><b>Color:</b> 8 círculos de 2 tonos (la banda superior es la solapa). Los 8 quedan aprobados (Rosa, Arena, Salvia, Cielo, Lavanda, Durazno, Limón, Grafito): cubren cálidos, fríos y un neutro, y todos mantienen el mismo brillo para que ninguno grite.</li>
+  <li><b>Icono:</b> 13 iconos finos y la opción «sin icono» (primera). Sin texto ni emojis.</li>
+  <li><b>Dentro de:</b> la carpeta padre se elige en un menú hermano que se abre a la izquierda, con el mismo patrón que el selector de color, y muestra el árbol con sangría. Si se crea desde dentro de una carpeta, viene preseleccionada.</li>
+  <li>Sin etiquetas: las carpetas no llevan etiqueta (solo los documentos). Confirmar.</li>
+</ul></div>
+
+<script>
+const IC = {
+  docs: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  star: '<path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  tag: '<path d="M3 12V4h8l9 9-8 8z"/><circle cx="7.5" cy="8.5" r="1.2"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M4.2 7.5l2.1 1.2M17.7 15.3l2.1 1.2M4.2 16.5l2.1-1.2M17.7 8.7l2.1-1.2"/><circle cx="12" cy="12" r="7"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  filter: '<path d="M4 6h16M7 12h10M10 18h4"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  chevR: '<path d="M9 6l6 6-6 6"/>',
+  chevD: '<path d="M6 9l6 6 6-6"/>',
+  side: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/>',
+  pencil: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  root: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+};
+/* Iconos de carpeta (24×24, trazo fino) */
+const FOLDER_ICONS = {
+  none: '',
+  book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+  shape: '<polygon points="12 3 3 19 21 19 12 3"/>',
+  sun: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1l2.1-2.1M17 7l2.1-2.1"/>',
+  star: IC.star,
+  music: '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
+  flask: '<path d="M9 3h6M10 3v6L4.5 18.5A2 2 0 0 0 6.2 21.5h11.6a2 2 0 0 0 1.7-3L14 9V3"/><path d="M7 15h10"/>',
+  code: '<path d="M8 8l-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/>',
+  calc: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  heart: '<path d="M12 20s-7-4.4-9-9a4.8 4.8 0 0 1 9-3 4.8 4.8 0 0 1 9 3c-2 4.6-9 9-9 9z"/>',
+  case: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/>',
+  pencil: IC.pencil,
+  bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+};
+const NONE_ICON = '<circle cx="12" cy="12" r="8"/><path d="M6.5 17.5l11-11"/>';
+/* Paleta 2 tonos: cuerpo (2 paradas), solapa, trazo del icono */
+const COLORS = [
+  { id: 'rosa',    b1: '#F2A4B9', b2: '#E78FA8', flap: '#D57892', ink: '#8C3952' },
+  { id: 'arena',   b1: '#EDD1B8', b2: '#E1C0A2', flap: '#CCA887', ink: '#7A5739' },
+  { id: 'salvia',  b1: '#A6CEBB', b2: '#92BFA9', flap: '#77A38E', ink: '#315C48' },
+  { id: 'cielo',   b1: '#A9C7E8', b2: '#92B5DD', flap: '#7499C6', ink: '#2F5482' },
+  { id: 'lavanda', b1: '#C5B7E6', b2: '#B3A2DC', flap: '#9682C6', ink: '#4F3D85' },
+  { id: 'durazno', b1: '#F5BFA0', b2: '#EDA984', flap: '#D98B64', ink: '#8A4526' },
+  { id: 'limon',   b1: '#EDE09A', b2: '#E3D27C', flap: '#C9B65C', ink: '#6B5B17' },
+  { id: 'grafito', b1: '#B9BCC6', b2: '#A3A7B3', flap: '#868B99', ink: '#363A45' },
+];
+const TREE = [
+  { id: 'root', name: 'Carpetas', depth: 0 },
+  { id: 'apuntes', name: 'Apuntes', depth: 1, c: 'rosa' },
+  { id: 'sem1', name: 'Semestre 1', depth: 2, c: 'rosa' },
+  { id: 'diagramas', name: 'Diagramas', depth: 1, c: 'arena' },
+  { id: 'clases', name: 'Clases', depth: 1, c: 'salvia' },
+];
+const state = { color: 'salvia', icon: 'book', parent: 'root', title: 'Nueva carpeta' };
+const svgI = k => `<svg class="i" viewBox="0 0 24 24">${IC[k]}</svg>`;
+const col = id => COLORS.find(c => c.id === id);
+
+function folderSVG(c, iconKey, w) {
+  const id = 'g' + Math.random().toString(36).slice(2, 7);
+  const ic = FOLDER_ICONS[iconKey];
+  const icon = ic ? `<g transform="translate(49,45)" fill="none" stroke="${c.ink}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ic}</g>` : '';
+  return `<svg width="${w}" height="${w * 92 / 118}" viewBox="0 0 122 96" style="filter:drop-shadow(0 10px 18px rgba(15,23,42,.13)) drop-shadow(0 2px 5px rgba(15,23,42,.06))"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${c.b1}"/><stop offset="100%" stop-color="${c.b2}"/></linearGradient></defs><path d="M4 16 C4 9 9 4 16 4 L40 4 C45 4 48 6 52 10 L56 14 L108 14 C114 14 118 18 118 24 L118 82 C118 88 113 92 107 92 L15 92 C9 92 4 88 4 82 Z" fill="${c.flap}"/><rect x="4" y="21" width="114" height="71" rx="11" fill="url(#${id})"/><line x1="15" y1="22" x2="107" y2="22" stroke="#fff" stroke-opacity=".48" stroke-width="1"/>${icon}</svg>`;
+}
+
+function render(pop) {
+  const c = col(state.color);
+  const big = document.getElementById('bigFolder');
+  big.innerHTML = folderSVG(c, state.icon, 124);
+  if (pop) { big.classList.remove('pop'); void big.offsetWidth; big.classList.add('pop'); }
+  document.getElementById('dots').innerHTML = COLORS.map(k =>
+    `<button class="cdot${k.id === state.color ? ' on' : ''}" data-color="${k.id}" aria-label="${k.id}" style="background:linear-gradient(180deg,${k.b1},${k.b2});--flap:${k.flap}"></button>`).join('');
+  document.getElementById('icons').innerHTML = Object.keys(FOLDER_ICONS).map(k =>
+    `<button class="ibtn${k === state.icon ? ' on' : ''}" data-icon="${k}" aria-label="${k === 'none' ? 'Sin icono' : k}"><svg class="i" viewBox="0 0 24 24">${FOLDER_ICONS[k] || NONE_ICON}</svg></button>`).join('');
+  // ruta: Carpetas › Apuntes › Semestre 1
+  const chain = []; let idx = TREE.findIndex(t => t.id === state.parent);
+  for (let d = TREE[idx].depth; idx >= 0; idx--) if (TREE[idx].depth === d) { chain.unshift(TREE[idx].name); d--; }
+  const sep = `<span class="sep">${svgI('chevR')}</span>`;
+  document.getElementById('locPath').innerHTML = chain.map((n, i) => `<span class="${i < chain.length - 1 ? 'm' : ''}">${n}</span>`).join(sep);
+  document.getElementById('locPop').innerHTML = TREE.map(t =>
+    `<div class="lp-item${t.id === state.parent ? ' on' : ''}" data-parent="${t.id}" style="padding-left:${8 + t.depth * 18}px">${t.c ? `<span class="tdot" style="background:${col(t.c).b2}"></span>` : svgI('root')}${t.name}${t.id === state.parent ? `<span class="ck">${svgI('check')}</span>` : ''}</div>`).join('');
+  // grilla de fondo: la carpeta nueva aparece "fantasma" donde caerá
+  const items = [['rosa', 'book', 'Apuntes', 'Hoy · 14:30'], ['arena', 'shape', 'Diagramas', 'Ayer'], ['salvia', 'sun', 'Clases', '22 nov 2026']];
+  document.getElementById('lib').innerHTML = items.map(([k, i, n, d]) =>
+    `<div class="obj">${folderSVG(col(k), i, 118)}<div><div class="obj-name">${n}</div><div class="obj-date">${d}</div></div></div>`).join('');
+}
+
+function chrome() {
+  document.querySelectorAll('[data-i]').forEach(el => { el.outerHTML = svgI(el.dataset.i); });
+  document.getElementById('sb').innerHTML = `
+    <div class="sb-head"><span class="sb-brand">Finily</span><button class="sb-btn">${svgI('side')}</button></div>
+    <div class="nav">${svgI('docs')}Documentos</div>
+    <div class="nav">${svgI('star')}Favoritos</div>
+    <div class="nav on">${svgI('folder')}Carpetas<span class="chev">${svgI('chevD')}</span></div>
+    <div class="tree">
+      <div class="nav"><span class="tdot" style="background:#E78FA8"></span>Apuntes</div>
+      <div class="nav"><span class="tdot" style="background:#E1C0A2"></span>Diagramas</div>
+      <div class="nav"><span class="tdot" style="background:#92BFA9"></span>Clases</div>
+    </div>
+    <div class="nav">${svgI('tag')}Etiquetas<span class="chev">${svgI('chevR')}</span></div>
+    <div class="sb-foot"><div class="nav">${svgI('trash')}Papelera</div><div class="sb-div"></div>
+    <div class="sb-icons"><button class="sb-btn">${svgI('moon')}</button><button class="sb-btn">${svgI('gear')}</button></div></div>`;
+}
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-color],[data-icon],[data-parent],#locBtn');
+  const pop = document.getElementById('locPop');
+  if (!t) { if (!e.target.closest('#locPop')) pop.classList.remove('open'); return; }
+  if (t.id === 'locBtn') { pop.classList.toggle('open'); return; }
+  if (t.dataset.color) { state.color = t.dataset.color; render(true); }
+  else if (t.dataset.icon) { state.icon = t.dataset.icon; render(true); }
+  else if (t.dataset.parent) { state.parent = t.dataset.parent; pop.classList.remove('open'); render(false); }
+});
+
+function fit() {
+  const w = document.querySelector('.frame-wrap'), f = document.getElementById('F');
+  const s = Math.min(1, w.clientWidth / 1180);
+  f.style.transform = `scale(${s})`; w.style.height = 720 * s + 'px';
+}
+window.addEventListener('resize', fit);
+chrome(); render(false); fit();
+</script>
+</body>
+</html>

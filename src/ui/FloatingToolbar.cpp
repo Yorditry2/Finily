@@ -1,57 +1,44 @@
 #include "ui/FloatingToolbar.h"
-#include "ui/FloatingToolbarInternal.h"
 
+#include "core/Utils.h"
 #include "ui/CanvasWidget.h"
+#include "ui/FloatingToolbarInternal.h"
 #include "ui/IconLibrary.h"
 #include "ui/ToolbarIcons.h"
+#include "ui/popovers/FilePopover.h"
+#include "ui/popovers/PaperPopover.h"
+#include "ui/popovers/ShapesPopover.h"
+#include "ui/popovers/StickersPopover.h"
+#include "ui/popovers/StrokePopover.h"
+#include "ui/popovers/ThumbnailPanel.h"
 
-#include <QApplication>
 #include <QButtonGroup>
-#include <QColorDialog>
-#include <QCheckBox>
-#include <QComboBox>
+#include <QDialog>
 #include <QDialogButtonBox>
-#include <QDoubleSpinBox>
-#include <QFormLayout>
 #include <QEasingCurve>
 #include <QEvent>
-#include <QListWidget>
-#include <QMenu>
-#include <QMouseEvent>
-#include <QSignalBlocker>
-#include <QScrollBar>
-#include <functional>
-#include <QFileDialog>
-#include <QFileInfo>
-#include <QFrame>
+#include <QFontMetrics>
 #include <QGraphicsDropShadowEffect>
 #include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
-#include <QIcon>
 #include <QInputDialog>
+#include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMessageBox>
+#include <QMenu>
 #include <QPainter>
-#include <QPainterPath>
 #include <QPen>
 #include <QPixmap>
-#include <QPolygonF>
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QResizeEvent>
-#include <QSettings>
-#include <QSlider>
-#include <QStackedWidget>
 #include <QTabletEvent>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
-#include <QVariant>
-#include <QVariantAnimation>
 
 #include <algorithm>
-#include <numbers>
+#include <cmath>
 
 namespace finily {
 namespace {
@@ -61,9 +48,6 @@ QString rgba(const QColor& color, int alpha = -1) {
     return QString("rgba(%1, %2, %3, %4)").arg(color.red()).arg(color.green()).arg(color.blue()).arg(a);
 }
 
-// Las tintas por defecto de pizarra (claras) y de papel (oscuras) forman
-// parejas: al pasar de pizarra a papel la tiza blanca se vuelve tinta negra,
-// el amarillo se oscurece, etc. Así ningún color favorito queda invisible.
 QColor adaptInkToTheme(const QColor& color, bool dark) {
     static const QVector<QPair<QString, QString>> pairs = {
         {"#f8fafc", "#0f172a"}, {"#fde047", "#ca8a04"}, {"#38bdf8", "#0284c7"}, {"#f87171", "#dc2626"},
@@ -71,228 +55,35 @@ QColor adaptInkToTheme(const QColor& color, bool dark) {
     };
     const QString name = color.name();
     for (const auto& pair : pairs) {
-        if (dark && name == pair.second)
+        if (dark && name == pair.second) {
             return QColor(pair.first);
-        if (!dark && name == pair.first)
+        }
+        if (!dark && name == pair.first) {
             return QColor(pair.second);
+        }
     }
     return color;
 }
 
 } // namespace
 
-// Útil de escritura del estuche: un lápiz dibujado en vertical que asoma del
-// borde de la bandeja. El seleccionado sube (animado) como si lo tomaras; el
-// color de la banda/punta es la tinta actual. En el dock izquierdo se dibuja
-// girado 90° (la punta mira a la derecha).
-class PenTrayButton : public QToolButton {
-public:
-    enum class Kind { Fountain, Gel, Marker, Eraser };
-
-    PenTrayButton(Kind kind, QWidget* parent)
-        : QToolButton(parent), m_kind(kind) {
-        setCheckable(true);
-        setCursor(Qt::PointingHandCursor);
-        setFocusPolicy(Qt::NoFocus);
-        setAttribute(Qt::WA_Hover, true);
-        m_anim = new QVariantAnimation(this);
-        m_anim->setDuration(170);
-        m_anim->setEasingCurve(QEasingCurve::OutCubic);
-        connect(m_anim, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
-            m_lift = v.toDouble();
-            update();
-        });
-        connect(this, &QToolButton::toggled, this, [this] { animateTo(targetLift()); });
-    }
-
-    void setInk(const QColor& ink) {
-        if (m_ink == ink)
-            return;
-        m_ink = ink;
-        update();
-    }
-    void setDarkTheme(bool dark) {
-        if (m_dark == dark)
-            return;
-        m_dark = dark;
-        update();
-    }
-    void setSideways(bool sideways) {
-        if (m_sideways == sideways)
-            return;
-        m_sideways = sideways;
-        update();
-    }
-
-protected:
-    void enterEvent(QEnterEvent* e) override {
-        m_hover = true;
-        animateTo(targetLift());
-        QToolButton::enterEvent(e);
-    }
-    void leaveEvent(QEvent* e) override {
-        m_hover = false;
-        animateTo(targetLift());
-        QToolButton::leaveEvent(e);
-    }
-
-    void paintEvent(QPaintEvent*) override {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing, true);
-        // Sistema local: lápiz vertical con la punta arriba; W x H "sin girar".
-        qreal W = width(), H = height();
-        if (m_sideways) {
-            p.translate(width(), 0);
-            p.rotate(90);
-            std::swap(W, H);
-        }
-        const qreal cx = W / 2.0;
-        const qreal top = 16.0 - m_lift; // punta en reposo a 16 px del borde
-
-        const bool marker = m_kind == Kind::Marker;
-        const bool eraser = m_kind == Kind::Eraser;
-        const qreal bodyW = marker || eraser ? 20.0 : 15.0;
-        const qreal tipH = m_kind == Kind::Fountain ? 17.0 : m_kind == Kind::Gel ? 14.0 : marker ? 9.0 : 0.0;
-        const qreal bodyTop = top + tipH;
-        const QRectF body(cx - bodyW / 2, bodyTop, bodyW, H - bodyTop + 8);
-
-        // Sombra suave a la derecha.
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0, 0, 0, m_dark ? 70 : 28));
-        p.drawRoundedRect(body.translated(2.0, 2.0), 4, 4);
-
-        // Cuerpo cilíndrico (luz desde la izquierda).
-        QColor shell = m_dark ? QColor("#e9e9ee") : QColor("#fbfbfd");
-        if (eraser)
-            shell = QColor("#f4f1ea");
-        QLinearGradient cyl(body.left(), 0, body.right(), 0);
-        cyl.setColorAt(0.0, shell.darker(112));
-        cyl.setColorAt(0.28, shell.lighter(104));
-        cyl.setColorAt(0.55, shell);
-        cyl.setColorAt(1.0, shell.darker(122));
-        p.setBrush(cyl);
-        p.drawRoundedRect(body, eraser ? 6 : 3.5, eraser ? 6 : 3.5);
-
-        auto shaded = [&](const QColor& c) {
-            QLinearGradient g(body.left(), 0, body.right(), 0);
-            g.setColorAt(0.0, c.darker(118));
-            g.setColorAt(0.3, c.lighter(112));
-            g.setColorAt(1.0, c.darker(135));
-            return g;
-        };
-
-        if (eraser) {
-            // Goma rosada arriba + funda de color.
-            const QRectF rubber(body.left(), body.top() - 2, body.width(), 18);
-            p.setBrush(shaded(QColor("#f3a1b0")));
-            p.drawRoundedRect(rubber, 6, 6);
-            p.setBrush(shaded(QColor("#5b7cfa")));
-            p.drawRect(QRectF(body.left(), body.top() + 14, body.width(), H));
-            p.setBrush(QColor(255, 255, 255, 120));
-            p.drawRect(QRectF(body.left(), body.top() + 22, body.width(), 2));
-            return;
-        }
-
-        // Banda de color de tinta en el cuerpo.
-        QColor band = m_ink;
-        if (marker)
-            band.setAlpha(255);
-        p.setBrush(shaded(band));
-        // Contorno fino para que la tinta blanca/clara se distinga del cuerpo.
-        p.setPen(QPen(QColor(0, 0, 0, 55), 0.8));
-        p.drawRect(QRectF(body.left(), bodyTop + (marker ? 0 : 7), body.width(), marker ? 13 : 7));
-        p.setPen(Qt::NoPen);
-
-        QPainterPath tip;
-        switch (m_kind) {
-        case Kind::Fountain: {
-            // Grip oscuro + plumín metálico con hendidura.
-            p.setBrush(shaded(QColor("#3a3d46")));
-            p.drawRect(QRectF(body.left(), bodyTop, body.width(), 7));
-            tip.moveTo(cx - 6.5, bodyTop + 0.5);
-            tip.cubicTo(cx - 6.5, bodyTop - 7, cx - 1.5, top + 4, cx, top);
-            tip.cubicTo(cx + 1.5, top + 4, cx + 6.5, bodyTop - 7, cx + 6.5, bodyTop + 0.5);
-            tip.closeSubpath();
-            QLinearGradient metal(cx - 6.5, 0, cx + 6.5, 0);
-            metal.setColorAt(0.0, QColor("#b8892f"));
-            metal.setColorAt(0.4, QColor("#f3d27a"));
-            metal.setColorAt(1.0, QColor("#9a6f22"));
-            p.setBrush(metal);
-            p.drawPath(tip);
-            p.setPen(QPen(QColor(90, 60, 15, 200), 0.9));
-            p.drawLine(QPointF(cx, top + 2), QPointF(cx, bodyTop - 5));
-            p.setPen(Qt::NoPen);
-            p.setBrush(QColor(90, 60, 15, 200));
-            p.drawEllipse(QPointF(cx, bodyTop - 5), 1.3, 1.3);
-            break;
-        }
-        case Kind::Gel: {
-            tip.moveTo(cx - bodyW / 2 + 0.5, bodyTop + 0.5);
-            tip.lineTo(cx - 1.6, top + 3);
-            tip.lineTo(cx + 1.6, top + 3);
-            tip.lineTo(cx + bodyW / 2 - 0.5, bodyTop + 0.5);
-            tip.closeSubpath();
-            QLinearGradient cone(cx - bodyW / 2, 0, cx + bodyW / 2, 0);
-            cone.setColorAt(0.0, QColor("#a9adb8"));
-            cone.setColorAt(0.35, QColor("#eef0f4"));
-            cone.setColorAt(1.0, QColor("#8b909c"));
-            p.setBrush(cone);
-            p.drawPath(tip);
-            p.setBrush(m_ink);
-            p.drawEllipse(QPointF(cx, top + 2.5), 1.9, 2.4);
-            break;
-        }
-        case Kind::Marker: {
-            // Punta biselada translúcida.
-            QColor nib = m_ink;
-            nib.setAlpha(225);
-            tip.moveTo(cx - 6, bodyTop + 0.5);
-            tip.lineTo(cx - 6, top + 6);
-            tip.lineTo(cx + 6, top);
-            tip.lineTo(cx + 6, bodyTop + 0.5);
-            tip.closeSubpath();
-            p.setBrush(nib);
-            p.drawPath(tip);
-            p.setBrush(QColor(255, 255, 255, 70));
-            p.drawRect(QRectF(cx - 6, top + 6, 2.5, bodyTop - top - 6));
-            break;
-        }
-        case Kind::Eraser:
-            break;
-        }
-    }
-
-private:
-    qreal targetLift() const { return isChecked() ? 11.0 : (m_hover ? 4.0 : 0.0); }
-    void animateTo(qreal target) {
-        m_anim->stop();
-        m_anim->setStartValue(m_lift);
-        m_anim->setEndValue(target);
-        m_anim->start();
-    }
-
-    Kind m_kind;
-    QColor m_ink{"#1d4ed8"};
-    bool m_dark = false;
-    bool m_sideways = false;
-    bool m_hover = false;
-    qreal m_lift = 0.0;
-    QVariantAnimation* m_anim = nullptr;
-};
-
 FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
-    : QWidget(parent), m_canvas(canvas) {
-    setObjectName("finilyOverlay");
-    // NO usar WA_TransparentForMouseEvents: en Qt6 se hereda a TODOS los hijos y
-    // dejaría botones y sliders inciclables. La transparencia al lienzo se logra
-    // con setMask() en updateOverlayMask() (solo los rectángulos de los hijos
-    // visibles capturan eventos; el resto pasa al CanvasWidget).
+    : QWidget(parent)
+    , m_canvas(canvas) {
+    setObjectName(QStringLiteral("finilyOverlay"));
+    // Sin WA_TransparentForMouseEvents para no bloquear clics sobre controles hijos;
+    // la transparencia al lienzo se logra con setMask() en updateOverlayMask().
     setFocusPolicy(Qt::NoFocus);
 
     initPresets();
     loadPresets();
     m_palette = getPaletteForTheme(true);
     loadDockPosition();
+    {
+        const auto settings = appSettings();
+        const int dir = settings->value(QStringLiteral("ui/pageNavDirection"), 0).toInt();
+        m_pageNavDir = (dir == 1) ? PageNavDirection::Vertical : PageNavDirection::Horizontal;
+    }
 
     if (m_canvas) {
         m_canvas->installEventFilter(this);
@@ -304,40 +95,108 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     }
 
     buildUtilityPill();
+    buildTabBarPill();
     buildTopRight();
     buildDock();
     buildZoomPill();
     buildPagePill();
     buildRestoreButton();
-    buildStrokePopover();
-    buildPaperPopover();
-    buildShapesPopover();
-    buildStickersPopover();
-    buildFilePopover();
     buildContextPill();
     buildEdgeMarkPill();
-    buildThumbPanel();
 
-    // Toast flotante: cápsula de cristal + etiqueta centrada. El fundido usa
-    // una QGraphicsOpacityEffect sobre la cápsula (único efecto del widget).
+    // Popovers modulares (hijos directos del overlay, nunca Qt::Popup).
+    m_strokePopover = new StrokePopover(m_canvas, this);
+    m_strokePopover->setPalette(m_palette);
+    connect(m_strokePopover, &StrokePopover::colorPicked, this, &FloatingToolbar::setColor);
+    connect(m_strokePopover, &StrokePopover::favoritesMenuRequested, this,
+            [this](QWidget* anchor) { showFavoritesMenu(anchor); });
+    connect(m_strokePopover, &StrokePopover::layoutAdjusted, this, [this] {
+        positionOpenPopover();
+        updateOverlayMask();
+    });
+    connect(m_strokePopover, &StrokePopover::refreshToolbarRequested, this,
+            &FloatingToolbar::refreshFromCanvas);
+    connect(m_strokePopover, &StrokePopover::closeRequested, this, &FloatingToolbar::closePopovers);
+
+    m_paperPopover = new PaperPopover(m_canvas, this);
+    m_paperPopover->setToolbarState(m_dockPos, m_pageNavDir);
+    connect(m_paperPopover, &PaperPopover::dockPositionRequested, this, &FloatingToolbar::setDockPosition);
+    connect(m_paperPopover, &PaperPopover::pageNavDirectionRequested, this,
+            &FloatingToolbar::setPageNavDirection);
+    connect(m_paperPopover, &PaperPopover::closeRequested, this, &FloatingToolbar::closePopovers);
+    connect(m_paperPopover, &PaperPopover::refreshToolbarRequested, this,
+            &FloatingToolbar::refreshFromCanvas);
+
+    m_shapesPopover = new ShapesPopover(m_canvas, this);
+    connect(m_shapesPopover, &ShapesPopover::layoutAdjusted, this, [this] {
+        positionOpenPopover();
+        updateOverlayMask();
+    });
+    connect(m_shapesPopover, &ShapesPopover::refreshToolbarRequested, this,
+            &FloatingToolbar::refreshFromCanvas);
+    connect(m_shapesPopover, &ShapesPopover::closeRequested, this, &FloatingToolbar::closePopovers);
+
+    m_stickersPopover = new StickersPopover(m_canvas, this);
+    connect(m_stickersPopover, &StickersPopover::closeRequested, this, &FloatingToolbar::closePopovers);
+    connect(m_stickersPopover, &StickersPopover::refreshToolbarRequested, this,
+            &FloatingToolbar::refreshFromCanvas);
+    connect(m_stickersPopover, &StickersPopover::toastRequested, this, &FloatingToolbar::showToast);
+
+    m_filePopover = new FilePopover(m_canvas, this);
+    connect(m_filePopover, &FilePopover::newNotebookRequested, this, &FloatingToolbar::newDocumentAction);
+    connect(m_filePopover, &FilePopover::newTabRequested, this, [this] {
+        closePopovers();
+        emit newTabRequested();
+    });
+    connect(m_filePopover, &FilePopover::openNotebookRequested, this, &FloatingToolbar::openNotebookDialog);
+    connect(m_filePopover, &FilePopover::saveNotebookRequested, this, &FloatingToolbar::saveNotebookAction);
+    connect(m_filePopover, &FilePopover::saveNotebookAsRequested, this,
+            &FloatingToolbar::saveNotebookAsDialog);
+    connect(m_filePopover, &FilePopover::importPdfRequested, this, &FloatingToolbar::importPdfDialog);
+    connect(m_filePopover, &FilePopover::exportPdfRequested, this, &FloatingToolbar::exportPdfDialog);
+    connect(m_filePopover, &FilePopover::configureAiApiRequested, this, [this] {
+        closePopovers();
+        emit configureAiApiRequested();
+    });
+    connect(m_filePopover, &FilePopover::checkForUpdatesRequested, this, [this] {
+        closePopovers();
+        emit checkForUpdatesRequested();
+    });
+    connect(m_filePopover, &FilePopover::layoutAdjusted, this, [this] {
+        positionOpenPopover();
+        updateOverlayMask();
+    });
+    connect(m_filePopover, &FilePopover::closeRequested, this, &FloatingToolbar::closePopovers);
+    connect(m_filePopover, &FilePopover::refreshToolbarRequested, this, &FloatingToolbar::refreshFromCanvas);
+
+    m_thumbPanel = new ThumbnailPanel(m_canvas, this);
+    connect(m_thumbPanel, &ThumbnailPanel::closePopoversRequested, this, &FloatingToolbar::closePopovers);
+    connect(m_thumbPanel, &ThumbnailPanel::refreshToolbarRequested, this,
+            &FloatingToolbar::refreshFromCanvas);
+    connect(m_thumbPanel, &ThumbnailPanel::importPdfRequested, this, &FloatingToolbar::importPdfDialog);
+    connect(m_thumbPanel, &ThumbnailPanel::exportPdfRequested, this, &FloatingToolbar::exportPdfDialog);
+
+    // Toast flotante: usa QGraphicsOpacityEffect únicamente (sin shadow effect encima).
     m_toastPill = new GlassCapsule(this);
     m_toastPill->setCapsuleRadius(16);
     auto* toastLayout = new QVBoxLayout(m_toastPill);
     toastLayout->setContentsMargins(16, 9, 16, 9);
     toastLayout->setSpacing(0);
     m_toastLabel = new QLabel(m_toastPill);
-    m_toastLabel->setObjectName("finilyToast");
+    m_toastLabel->setObjectName(QStringLiteral("finilyToast"));
     m_toastLabel->setAlignment(Qt::AlignCenter);
     toastLayout->addWidget(m_toastLabel);
     m_toastPill->hide();
     m_toastTimer = new QTimer(this);
     m_toastTimer->setSingleShot(true);
     connect(m_toastTimer, &QTimer::timeout, this, [this] {
-        if (!m_toastPill || !m_toastPill->isVisible())
+        if (!m_toastPill || !m_toastPill->isVisible()) {
             return;
+        }
         auto* opacity = qobject_cast<QGraphicsOpacityEffect*>(m_toastPill->graphicsEffect());
-        if (!opacity)
+        if (!opacity) {
             return;
+        }
         if (m_toastAnim) {
             m_toastAnim->stop();
             m_toastAnim->deleteLater();
@@ -348,116 +207,130 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
         m_toastAnim->setEndValue(0.0);
         m_toastAnim->setEasingCurve(QEasingCurve::OutCubic);
         connect(m_toastAnim, &QPropertyAnimation::finished, this, [this] {
-            if (m_toastPill)
+            if (m_toastPill) {
                 m_toastPill->hide();
-            if (auto* effect = qobject_cast<QGraphicsOpacityEffect*>(m_toastPill ? m_toastPill->graphicsEffect() : nullptr))
+            }
+            auto* effect = qobject_cast<QGraphicsOpacityEffect*>(
+                m_toastPill ? m_toastPill->graphicsEffect() : nullptr);
+            if (effect) {
                 effect->setOpacity(1.0);
+            }
             updateOverlayMask();
         });
         m_toastAnim->start();
     });
 
-    // Cápsulas de cristal antialias (inmunes al estilo de sistema) + sombras
-    // suaves reales (blur 22, yOffset 6). El registro m_capsules permite
-    // recolorearlas todas al instante en applyThemeStylesheet().
     const ThemeConfig initialTheme = getThemeConfig(m_theme);
     const QVector<QPair<GlassCapsule*, int>> capsuleSpecs = {
-        {m_pill, 22},          {m_contextPill, 16}, {m_edgeMarkPill, 16}, {m_zoomPill, 18},
-        {m_pagePill, 18},      {m_toastPill, 16},   {m_strokePopover, 16},
+        {m_pill, 22},          {m_tabBarPill, 18},   {m_contextPill, 16}, {m_edgeMarkPill, 16},
+        {m_zoomPill, 18},      {m_pagePill, 18},     {m_toastPill, 16},   {m_strokePopover, 16},
         {m_paperPopover, 16},  {m_shapesPopover, 16}, {m_stickersPopover, 16}, {m_filePopover, 16},
-        {m_dock, 20},          {m_topRight, 22},    {m_thumbPanel, 16},
+        {m_dock, 20},          {m_topRight, 22},     {m_thumbPanel, 16},
     };
     for (const auto& capsule : capsuleSpecs) {
-        if (!capsule.first)
+        if (!capsule.first) {
             continue;
+        }
         capsule.first->setCapsuleRadius(capsule.second);
         capsule.first->setCapsuleTheme(initialTheme);
         m_capsules.append(capsule.first);
-        applyShadow(capsule.first);
+        if (capsule.first != m_toastPill) {
+            applyShadow(capsule.first);
+        }
     }
-
-    m_clearTimer = new QTimer(this);
-    m_clearTimer->setSingleShot(true);
-    connect(m_clearTimer, &QTimer::timeout, this, &FloatingToolbar::disarmClearButton);
 
     applyThemeStylesheet();
 
-    if (m_canvas)
+    if (m_canvas) {
         setGeometry(m_canvas->rect());
+    }
     positionChildren();
     refreshFromCanvas();
 }
 
 void FloatingToolbar::initPresets() {
     m_presets.clear();
-    m_presets.append(PenPreset{0, "Tiza principal", ToolType::Pen, QColor("#f8fafc"), 2.6, LinePattern::Solid});
-    m_presets.append(PenPreset{1, "Amarillo", ToolType::Pen, QColor("#fde047"), 2.6, LinePattern::Solid});
-    m_presets.append(PenPreset{2, "Celeste", ToolType::Pen, QColor("#38bdf8"), 2.6, LinePattern::Solid});
-    m_presets.append(PenPreset{3, "Rojo", ToolType::Pen, QColor("#f87171"), 2.6, LinePattern::Solid});
-    m_presets.append(PenPreset{4, "Resaltador", ToolType::Highlighter, QColor("#fde047"), 12.0, LinePattern::Solid});
+    m_presets.append(PenPreset{0, QStringLiteral("Tiza principal"), ToolType::Pen, QColor("#f8fafc"), 2.6,
+                               LinePattern::Solid, 1, 1.0, QStringLiteral("1")});
+    m_presets.append(PenPreset{1, QStringLiteral("Amarillo"), ToolType::Pen, QColor("#fde047"), 2.6,
+                               LinePattern::Solid, 1, 1.0, QStringLiteral("2")});
+    m_presets.append(PenPreset{2, QStringLiteral("Celeste"), ToolType::Pen, QColor("#38bdf8"), 2.6,
+                               LinePattern::Solid, 1, 1.0, QStringLiteral("3")});
+    m_presets.append(PenPreset{3, QStringLiteral("Rojo"), ToolType::Pen, QColor("#f87171"), 2.6,
+                               LinePattern::Solid, 1, 1.0, QStringLiteral("4")});
+    m_presets.append(PenPreset{4, QStringLiteral("Resaltador"), ToolType::Highlighter, QColor("#fde047"),
+                               12.0, LinePattern::Solid, 0, 0.25, QStringLiteral("5")});
     m_activePreset = 0;
     m_lastPresetsSig.clear();
 }
 
-// Restaura los 5 presets favoritos persistidos en QSettings("Finily", "Finily").
-// Solo marca m_presetsRestored si existía al menos una clave guardada, para no
-// desactivar innecesariamente la adaptación temática del preset inicial.
 void FloatingToolbar::loadPresets() {
-    QSettings settings("Finily", "Finily");
+    const auto settings = appSettings();
     const QString firstKey = QString("presets/%1/tool").arg(m_presets.first().index);
-    if (!settings.contains(firstKey))
+    if (!settings->contains(firstKey)) {
         return;
+    }
     for (int i = 0; i < m_presets.size(); ++i) {
         const QString prefix = QString("presets/%1/").arg(i);
         PenPreset& preset = m_presets[i];
-        const int tool = settings.value(prefix + "tool", int(preset.tool)).toInt();
-        if (tool >= int(ToolType::Pen) && tool <= int(ToolType::Hand))
+        const QString lbl = settings->value(prefix + "label", preset.label).toString().trimmed();
+        if (!lbl.isEmpty()) {
+            preset.label = lbl;
+        }
+        const int tool = settings->value(prefix + "tool", int(preset.tool)).toInt();
+        if (tool >= int(ToolType::Pen) && tool <= int(ToolType::Select)) {
             preset.tool = static_cast<ToolType>(tool);
-        const QString colorName = settings.value(prefix + "color", preset.color.name(QColor::HexArgb)).toString();
+        }
+        const QString colorName =
+            settings->value(prefix + "color", preset.color.name(QColor::HexArgb)).toString();
         const QColor color(colorName);
-        if (color.isValid())
+        if (color.isValid()) {
             preset.color = color;
-        const double size = settings.value(prefix + "size", preset.size).toDouble();
-        if (size > 0.0 && size <= 50.0)
+        }
+        const double size = settings->value(prefix + "size", preset.size).toDouble();
+        if (std::isfinite(size) && size > 0.0 && size <= 60.0) {
             preset.size = size;
-        const int pattern = settings.value(prefix + "linePattern", int(preset.linePattern)).toInt();
-        if (pattern >= int(LinePattern::Solid) && pattern <= int(LinePattern::Dimension))
+        }
+        const int pattern = settings->value(prefix + "linePattern", int(preset.linePattern)).toInt();
+        if (pattern >= int(LinePattern::Solid) && pattern <= int(LinePattern::Dimension)) {
             preset.linePattern = static_cast<LinePattern>(pattern);
+        }
+        preset.tipStyle = std::clamp(settings->value(prefix + "tipStyle", preset.tipStyle).toInt(), 0, 3);
+        preset.opacity =
+            std::clamp(settings->value(prefix + "opacity", preset.opacity).toDouble(), 0.10, 1.0);
+        preset.shortcut = settings->value(prefix + "shortcut", preset.shortcut).toString().trimmed();
     }
     m_presetsRestored = true;
 }
 
-// Persiste los 5 presets favoritos (herramienta, color, grosor y tipo de línea).
 void FloatingToolbar::savePresets() {
-    QSettings settings("Finily", "Finily");
+    auto settings = appSettings();
     for (int i = 0; i < m_presets.size(); ++i) {
         const QString prefix = QString("presets/%1/").arg(i);
         const PenPreset& preset = m_presets.at(i);
-        settings.setValue(prefix + "tool", int(preset.tool));
-        settings.setValue(prefix + "color", preset.color.name(QColor::HexArgb));
-        settings.setValue(prefix + "size", preset.size);
-        settings.setValue(prefix + "linePattern", int(preset.linePattern));
+        settings->setValue(prefix + "label", preset.label);
+        settings->setValue(prefix + "tool", int(preset.tool));
+        settings->setValue(prefix + "color", preset.color.name(QColor::HexArgb));
+        settings->setValue(prefix + "size", preset.size);
+        settings->setValue(prefix + "linePattern", int(preset.linePattern));
+        settings->setValue(prefix + "tipStyle", preset.tipStyle);
+        settings->setValue(prefix + "opacity", preset.opacity);
+        settings->setValue(prefix + "shortcut", preset.shortcut);
     }
-    settings.sync();
+    settings->sync();
 }
 
-// Pill compacta de utilidades (arriba-izquierda, x=14 y=12): Inicio | Deshacer
-// y Rehacer | Trazo, Papel, Archivo | modo interfaz limpia. Las herramientas
-// de dibujo viven en el dock de papelería (buildDock) para dejar el cromo
-// superior despejado.
 void FloatingToolbar::buildUtilityPill() {
     m_pill = new GlassCapsule(this);
-    m_pill->setObjectName("finilyPill");
+    m_pill->setObjectName(QStringLiteral("finilyPill"));
     auto* row = new QHBoxLayout(m_pill);
     row->setContentsMargins(10, 7, 10, 7);
     row->setSpacing(3);
 
-    // 'Inicio' (biblioteca): primer botón a la izquierda, separado por un
-    // divisor fino antes de Deshacer/Rehacer.
     m_homeBtn = new QToolButton(m_pill);
     m_homeBtn->setFixedSize(36, 36);
     m_homeBtn->setIconSize(QSize(22, 22));
-    m_homeBtn->setToolTip("Inicio");
+    m_homeBtn->setToolTip(QStringLiteral("Inicio"));
     m_homeBtn->setStatusTip(m_homeBtn->toolTip());
     polishButton(m_homeBtn);
     connect(m_homeBtn, &QToolButton::clicked, this, &FloatingToolbar::homeRequested);
@@ -468,10 +341,10 @@ void FloatingToolbar::buildUtilityPill() {
     m_titleDot->setFixedSize(6, 6);
     row->addSpacing(4);
     row->addWidget(m_titleDot, 0, Qt::AlignVCenter);
-    m_titleLabel = new QLabel("Sin título", m_pill);
+    m_titleLabel = new QLabel(QStringLiteral("Sin título"), m_pill);
     m_titleLabel->setMaximumWidth(200);
     m_titleLabel->setCursor(Qt::PointingHandCursor);
-    m_titleLabel->setToolTip("Haz clic para renombrar el cuaderno");
+    m_titleLabel->setToolTip(QStringLiteral("Haz clic para renombrar el cuaderno"));
     m_titleLabel->installEventFilter(this);
     row->addWidget(m_titleLabel);
     m_titleEdit = new QLineEdit(m_pill);
@@ -479,30 +352,33 @@ void FloatingToolbar::buildUtilityPill() {
     m_titleEdit->setFixedHeight(26);
     m_titleEdit->hide();
     connect(m_titleEdit, &QLineEdit::editingFinished, this, [this] {
-        if (!m_titleEdit || !m_titleEdit->isVisible())
+        if (!m_titleEdit || !m_titleEdit->isVisible()) {
             return;
+        }
         const QString next = m_titleEdit->text().trimmed();
         m_titleEdit->hide();
-        if (m_titleLabel)
+        if (m_titleLabel) {
             m_titleLabel->show();
+        }
         positionChildren();
-        if (!next.isEmpty() && (!m_titleLabel || next != m_titleLabel->text()))
+        if (!next.isEmpty() && (!m_titleLabel || next != m_titleLabel->text())) {
             emit renameRequested(next);
+        }
     });
     row->addWidget(m_titleEdit);
     row->addSpacing(4);
 
     row->addWidget(makeSeparator(m_pill));
 
-    // Deshacer / Rehacer
     m_undoBtn = new QToolButton(m_pill);
     m_undoBtn->setFixedSize(36, 36);
     m_undoBtn->setIconSize(QSize(22, 22));
-    m_undoBtn->setToolTip("Deshacer");
+    m_undoBtn->setToolTip(QStringLiteral("Deshacer"));
     polishButton(m_undoBtn);
     connect(m_undoBtn, &QToolButton::clicked, this, [this] {
-        if (m_canvas)
+        if (m_canvas) {
             m_canvas->undo();
+        }
         refreshFromCanvas();
     });
     m_studioUtilSpecs.append(qMakePair(m_undoBtn, QStringLiteral("undo")));
@@ -511,31 +387,21 @@ void FloatingToolbar::buildUtilityPill() {
     m_redoBtn = new QToolButton(m_pill);
     m_redoBtn->setFixedSize(36, 36);
     m_redoBtn->setIconSize(QSize(22, 22));
-    m_redoBtn->setToolTip("Rehacer");
+    m_redoBtn->setToolTip(QStringLiteral("Rehacer"));
     polishButton(m_redoBtn);
     connect(m_redoBtn, &QToolButton::clicked, this, [this] {
-        if (m_canvas)
+        if (m_canvas) {
             m_canvas->redo();
+        }
         refreshFromCanvas();
     });
     m_studioUtilSpecs.append(qMakePair(m_redoBtn, QStringLiteral("redo")));
     row->addWidget(m_redoBtn);
-
-    // Modo Ecuación (atajo M): botón oculto, la lógica sigue en refreshFromCanvas.
-    m_mathModeBtn = new QToolButton(m_pill);
-    m_mathModeBtn->setCheckable(true);
-    m_mathModeBtn->hide();
-    connect(m_mathModeBtn, &QToolButton::clicked, this, [this] {
-        if (m_canvas && m_mathModeBtn)
-            m_canvas->setMathBeautifyEnabled(m_mathModeBtn->isChecked());
-        refreshFromCanvas();
-    });
 }
 
-// Cápsula superior derecha: Presentar (interfaz limpia), Páginas y menú ⋯.
 void FloatingToolbar::buildTopRight() {
     m_topRight = new GlassCapsule(this);
-    m_topRight->setObjectName("finilyPill");
+    m_topRight->setObjectName(QStringLiteral("finilyPill"));
     auto* row = new QHBoxLayout(m_topRight);
     row->setContentsMargins(8, 7, 8, 7);
     row->setSpacing(3);
@@ -549,81 +415,154 @@ void FloatingToolbar::buildTopRight() {
         row->addWidget(b);
         return b;
     };
-    m_cleanBtn = mk("Presentar · oculta la interfaz (Tab)", "present");
+    m_cleanBtn = mk(QStringLiteral("Presentar · oculta la interfaz (Tab)"), QStringLiteral("present"));
     connect(m_cleanBtn, &QToolButton::clicked, this, &FloatingToolbar::toggleCleanUi);
-    m_paperBtn = mk("Papel y plantilla", "paper");
+    m_paperBtn = mk(QStringLiteral("Papel y plantilla"), QStringLiteral("paper"));
     connect(m_paperBtn, &QToolButton::clicked, this, [this] { openPopover(m_paperPopover, m_paperBtn); });
-    m_pagesBtn = mk("Páginas", "pages");
+    m_pagesBtn = mk(QStringLiteral("Páginas"), QStringLiteral("pages"));
     m_pagesBtn->setCheckable(true);
     connect(m_pagesBtn, &QToolButton::clicked, this, [this] {
         closePopovers();
         if (m_thumbPanel) {
             m_thumbPanel->setVisible(m_pagesBtn->isChecked());
-            if (m_pagesBtn->isChecked())
-                rebuildThumbs();
+            if (m_pagesBtn->isChecked()) {
+                m_thumbPanel->rebuild();
+            }
         }
         positionChildren();
     });
-    m_fileBtn = mk("Menú", "more");
+    m_fileBtn = mk(QStringLiteral("Menú"), QStringLiteral("more"));
     connect(m_fileBtn, &QToolButton::clicked, this, [this] { openPopover(m_filePopover, m_fileBtn); });
 }
 
-void FloatingToolbar::setDocumentTitle(const QString& title, bool unsaved) {
-    if (!m_titleLabel)
+void FloatingToolbar::updateTitleDot() {
+    if (!m_titleDot) {
         return;
-    m_titleLabel->setText(title);
-    m_titleLabel->setToolTip(title);
+    }
     const ThemeConfig theme = getThemeConfig(m_theme);
     m_titleDot->setStyleSheet(QString("background:%1;border-radius:3px;")
-                                  .arg(unsaved ? QStringLiteral("#f5b84b") : theme.accent.name()));
-    m_titleDot->setToolTip(unsaved ? "Cambios sin guardar" : "Guardado");
+                                  .arg(m_titleUnsaved ? QStringLiteral("#f5b84b") : theme.accent.name()));
+    m_titleDot->setToolTip(m_titleUnsaved ? QStringLiteral("Cambios sin guardar")
+                                          : QStringLiteral("Guardado"));
+}
+
+void FloatingToolbar::setDocumentTitle(const QString& title, bool unsaved) {
+    if (!m_titleLabel) {
+        return;
+    }
+    m_titleUnsaved = unsaved;
+    m_titleLabel->setText(title);
+    m_titleLabel->setToolTip(title);
+    updateTitleDot();
     positionChildren();
 }
 
-// Dock de herramientas 100% homologado (10 herramientas exclusivas, cero
-// duplicados): arriba los 4 útiles ilustrados SVG (Pluma fuente, Bolígrafo gel,
-// Resaltador, Borrador en bloque) con color de tinta dinámico y doble toque
-// inteligente para abrir "Trazo"; divisor fino; abajo las 6 herramientas
-// duotono SVG en la misma cuadrícula óptica 32x32 (Figuras, Polilínea, Lazo,
-// Texto, Láser, Mano).
+void FloatingToolbar::buildTabBarPill() {
+    m_tabBarPill = new GlassCapsule(this);
+    m_tabBarPill->setObjectName(QStringLiteral("finilyTabPill"));
+    m_tabBarLayout = new QHBoxLayout(m_tabBarPill);
+    m_tabBarLayout->setContentsMargins(6, 4, 6, 4);
+    m_tabBarLayout->setSpacing(3);
+    m_tabBarPill->hide();
+}
+
+void FloatingToolbar::setNotebookTabs(const QVector<TabEntry>& tabs) {
+    if (!m_tabBarPill || !m_tabBarLayout) {
+        return;
+    }
+    m_tabCount = int(tabs.size());
+    while (QLayoutItem* item = m_tabBarLayout->takeAt(0)) {
+        if (QWidget* w = item->widget()) {
+            w->deleteLater();
+        }
+        delete item;
+    }
+    if (tabs.size() <= 1) {
+        m_tabBarPill->hide();
+        positionChildren();
+        return;
+    }
+
+    for (int i = 0; i < tabs.size(); ++i) {
+        const TabEntry& t = tabs.at(i);
+        auto* btn = new QToolButton(m_tabBarPill);
+        btn->setObjectName(QStringLiteral("finilyShapeBtn"));
+        btn->setCheckable(true);
+        btn->setChecked(t.active);
+        btn->setFixedHeight(28);
+        btn->setMaximumWidth(148);
+        const QString baseTitle = t.title.trimmed().isEmpty() ? tr("Sin título") : t.title.trimmed();
+        const QString elided = QFontMetrics(btn->font()).elidedText(baseTitle, Qt::ElideRight, 118);
+        btn->setText((t.dirty ? QStringLiteral("• ") : QString()) + elided);
+        btn->setToolTip(baseTitle);
+        polishButton(btn);
+        connect(btn, &QToolButton::clicked, this, [this, i] { emit switchTabRequested(i); });
+        m_tabBarLayout->addWidget(btn);
+
+        auto* closeBtn = new QToolButton(m_tabBarPill);
+        closeBtn->setText(QStringLiteral("×"));
+        closeBtn->setFixedSize(20, 22);
+        closeBtn->setToolTip(tr("Cerrar pestaña (Ctrl+W)"));
+        polishButton(closeBtn);
+        connect(closeBtn, &QToolButton::clicked, this, [this, i] { emit closeTabRequested(i); });
+        m_tabBarLayout->addWidget(closeBtn);
+    }
+
+    auto* addBtn = new QToolButton(m_tabBarPill);
+    addBtn->setText(QStringLiteral("+"));
+    addBtn->setFixedSize(26, 26);
+    addBtn->setToolTip(tr("Nueva pestaña (Ctrl+T)"));
+    polishButton(addBtn);
+    connect(addBtn, &QToolButton::clicked, this, &FloatingToolbar::newTabRequested);
+    m_tabBarLayout->addWidget(addBtn);
+
+    m_tabBarPill->setVisible(!m_cleanUi);
+    if (!m_cleanUi) {
+        m_tabBarPill->raise();
+    }
+    positionChildren();
+}
+
 void FloatingToolbar::buildDock() {
     m_dock = new GlassCapsule(this);
-    m_dock->setObjectName("finilyDock");
+    m_dock->setObjectName(QStringLiteral("finilyDock"));
     m_dock->setCapsuleRadius(20);
 
     m_toolGroup = new QButtonGroup(this);
     m_toolGroup->setExclusive(true);
 
-    // Primer clic para activar, segundo clic para abrir los ajustes.
     const QVector<QPair<ToolType, QPair<QString, QString>>> writingTools = {
         {ToolType::Pen, qMakePair(QStringLiteral("Pluma (P)"), QStringLiteral("pen"))},
         {ToolType::Highlighter, qMakePair(QStringLiteral("Resaltador (H)"), QStringLiteral("highlighter"))},
         {ToolType::Eraser, qMakePair(QStringLiteral("Borrador (E)"), QStringLiteral("eraser"))},
-        {ToolType::Fill, qMakePair(tr("Relleno (F). Toca dentro de una figura cerrada. Segundo clic para elegir el estilo."),
-                                   QStringLiteral("paint-bucket"))},
+        {ToolType::Fill,
+         qMakePair(tr("Relleno (F). Toca dentro de una figura cerrada. Segundo clic para elegir el estilo."),
+                   QStringLiteral("paint-bucket"))},
     };
     for (const auto& entry : writingTools) {
         auto* button = new QToolButton(m_dock);
-        button->setObjectName("finilyTool");
+        button->setObjectName(QStringLiteral("finilyTool"));
         button->setFixedSize(42, 40);
         button->setIconSize(QSize(24, 24));
         button->setCheckable(true);
         polishButton(button);
-        m_iconSpecs.append(qMakePair(static_cast<QToolButton*>(button), entry.second.second));
+        m_iconSpecs.append(qMakePair(button, entry.second.second));
         button->setToolTip(entry.second.first);
         m_toolGroup->addButton(button);
         const ToolType tool = entry.first;
         connect(button, &QToolButton::clicked, this, [this, tool, button] {
-            if (!m_canvas)
+            if (!m_canvas) {
                 return;
+            }
             const ToolType active = m_canvas->tool();
-            const bool sameTool = (active == tool) || (tool == ToolType::Pen && active == ToolType::Ballpoint);
+            const bool sameTool =
+                (active == tool) || (tool == ToolType::Pen && active == ToolType::Ballpoint);
             if (sameTool) {
-                // Segundo clic sobre la herramienta ya activa: abrir/cerrar "Trazo"
-                if (m_openPopover == m_strokePopover)
+                if (m_openPopover == m_strokePopover) {
                     closePopovers();
-                else
+                } else {
                     openPopover(m_strokePopover, button);
+                }
             } else {
                 closePopovers();
                 selectTool(tool == ToolType::Pen && m_canvas->penTip() == 0 ? ToolType::Ballpoint : tool);
@@ -634,20 +573,23 @@ void FloatingToolbar::buildDock() {
     }
 
     m_dockDivider = new QWidget(m_dock);
-    m_dockDivider->setObjectName("finilySep");
+    m_dockDivider->setObjectName(QStringLiteral("finilySep"));
 
-    // 6 herramientas duotono SVG bajo el divisor.
     const QVector<QPair<ToolType, QPair<QString, QString>>> secondary = {
-        {ToolType::Select, qMakePair(tr("Seleccionar (U). Toca para seleccionar, arrastra para mover. Círculos: vértices. Cuadrados: tamaño."),
-                                     QStringLiteral("select-pointer"))},
-        {ToolType::Shape, qMakePair(tr("Figuras (S). Arrastra para dibujar. Mayús + arrastrar para editar."), QStringLiteral("shapes"))},
+        {ToolType::Select,
+         qMakePair(tr("Seleccionar (U). Toca para seleccionar, arrastra para mover. Círculos: vértices. "
+                      "Cuadrados: tamaño."),
+                   QStringLiteral("select-pointer"))},
+        {ToolType::Shape,
+         qMakePair(tr("Figuras (S). Arrastra para dibujar. Mayús + arrastrar para editar."),
+                   QStringLiteral("shapes"))},
         {ToolType::Lasso, qMakePair(QStringLiteral("Lazo (A)"), QStringLiteral("lasso"))},
         {ToolType::Text, qMakePair(QStringLiteral("Texto (T)"), QStringLiteral("text"))},
         {ToolType::Laser, qMakePair(QStringLiteral("Láser (K)"), QStringLiteral("laser"))},
     };
     for (const auto& entry : secondary) {
         auto* button = new QToolButton(m_dock);
-        button->setObjectName("finilyTool");
+        button->setObjectName(QStringLiteral("finilyTool"));
         button->setFixedSize(42, 40);
         button->setIconSize(QSize(24, 24));
         button->setCheckable(true);
@@ -658,13 +600,15 @@ void FloatingToolbar::buildDock() {
         if (tool == ToolType::Shape) {
             m_shapeBtn = button;
             connect(button, &QToolButton::clicked, this, [this] {
-                if (!m_canvas)
+                if (!m_canvas) {
                     return;
+                }
                 if (m_canvas->tool() == ToolType::Shape) {
-                    if (m_openPopover == m_shapesPopover)
+                    if (m_openPopover == m_shapesPopover) {
                         closePopovers();
-                    else
+                    } else {
                         openPopover(m_shapesPopover, m_shapeBtn);
+                    }
                 } else {
                     closePopovers();
                     selectTool(ToolType::Shape);
@@ -674,10 +618,11 @@ void FloatingToolbar::buildDock() {
         } else if (tool == ToolType::Lasso) {
             connect(button, &QToolButton::clicked, this, [this, button] {
                 if (m_canvas && m_canvas->tool() == ToolType::Lasso) {
-                    if (m_openPopover == m_strokePopover)
+                    if (m_openPopover == m_strokePopover) {
                         closePopovers();
-                    else
+                    } else {
                         openPopover(m_strokePopover, button);
+                    }
                 } else {
                     closePopovers();
                     selectTool(ToolType::Lasso);
@@ -694,7 +639,7 @@ void FloatingToolbar::buildDock() {
         m_secondaryIcons.append(entry.second.second);
         if (tool == ToolType::Shape) {
             m_stickersBtn = new QToolButton(m_dock);
-            m_stickersBtn->setObjectName("finilyTool");
+            m_stickersBtn->setObjectName(QStringLiteral("finilyTool"));
             m_stickersBtn->setFixedSize(42, 40);
             m_stickersBtn->setIconSize(QSize(24, 24));
             m_stickersBtn->setToolTip(QStringLiteral("Fórmulas y Stickers de Geometría (Ctrl+K)"));
@@ -706,36 +651,31 @@ void FloatingToolbar::buildDock() {
         }
     }
 
-    // 4 tintas rápidas del estuche: 1 toque cambia el color sin abrir menús.
     m_trayDivider = new QWidget(m_dock);
-    m_trayDivider->setObjectName("finilySep");
+    m_trayDivider->setObjectName(QStringLiteral("finilySep"));
     for (int i = 0; i < 4; ++i) {
         auto* dot = new ColorDotButton(m_dock);
         dot->setFixedSize(26, 26);
-        dot->setToolTip("Cambiar color rápido");
+        dot->setToolTip(QStringLiteral("Cambiar color rápido"));
         polishButton(dot);
         connect(dot, &QToolButton::clicked, this, [this, i] {
-            if (i < m_palette.size())
+            if (i < m_palette.size()) {
                 setColor(m_palette.at(i));
-            if (m_canvas && (m_canvas->tool() == ToolType::Eraser || m_canvas->tool() == ToolType::Hand
-                             || m_canvas->tool() == ToolType::Lasso || m_canvas->tool() == ToolType::Laser))
+            }
+            if (m_canvas
+                && (m_canvas->tool() == ToolType::Eraser || m_canvas->tool() == ToolType::Hand
+                    || m_canvas->tool() == ToolType::Lasso || m_canvas->tool() == ToolType::Laser)) {
                 selectTool(ToolType::Pen);
+            }
         });
         m_trayDots.append(dot);
     }
-    auto* colorBtn = new ColorDotButton(m_dock);
-    m_trayColorBtn = colorBtn;
-    m_trayMoreBtn = colorBtn;
-    colorBtn->setCheckable(false);
-    colorBtn->setFixedSize(38, 38);
-    colorBtn->hide();
 }
 
-// Coloca los hijos del dock según la orientación (vertical a la izquierda,
-// horizontal arriba/abajo) y fija el tamaño de la cápsula.
 void FloatingToolbar::layoutDock() {
-    if (!m_dock)
+    if (!m_dock) {
         return;
+    }
     const bool vertical = m_dockPos == DockPos::Izquierda;
     const int pad = 10;
     const int toolSize = 40;
@@ -744,18 +684,20 @@ void FloatingToolbar::layoutDock() {
     const int along = pad + m_writingBtns.size() * (toolSize + 2) + 12
                       + m_secondaryBtns.size() * (toolSize + 2) + 12
                       + m_trayDots.size() * (dotSize + 4) + pad;
-    if (vertical)
+    if (vertical) {
         m_dock->setFixedSize(crossLen, along);
-    else
+    } else {
         m_dock->setFixedSize(along, crossLen);
+    }
     m_dock->setCapsuleRadius(24);
 
     auto place = [&](QWidget* w, int pos, int len, int cross) {
         const int off = (crossLen - cross) / 2;
-        if (vertical)
+        if (vertical) {
             w->setGeometry(off, pos, cross, len);
-        else
+        } else {
             w->setGeometry(pos, off, len, cross);
+        }
         w->raise();
     };
 
@@ -765,10 +707,11 @@ void FloatingToolbar::layoutDock() {
         pos += toolSize + 2;
     }
     pos += 4;
-    if (vertical)
+    if (vertical) {
         m_dockDivider->setGeometry(22, pos, crossLen - 44, 1);
-    else
+    } else {
         m_dockDivider->setGeometry(pos, 22, 1, crossLen - 44);
+    }
     pos += 8;
     for (QToolButton* button : m_secondaryBtns) {
         place(button, pos, toolSize, toolSize);
@@ -776,22 +719,22 @@ void FloatingToolbar::layoutDock() {
     }
     pos += 4;
     if (m_trayDivider) {
-        if (vertical)
+        if (vertical) {
             m_trayDivider->setGeometry(20, pos, crossLen - 40, 1);
-        else
+        } else {
             m_trayDivider->setGeometry(pos, 20, 1, crossLen - 40);
+        }
     }
     pos += 8;
     for (ColorDotButton* dot : m_trayDots) {
         place(dot, pos, dotSize, dotSize);
         pos += dotSize + 4;
     }
-    m_dock->update();
 }
 
 void FloatingToolbar::buildZoomPill() {
     m_zoomPill = new GlassCapsule(this);
-    m_zoomPill->setObjectName("finilyZoom");
+    m_zoomPill->setObjectName(QStringLiteral("finilyZoom"));
     auto* row = new QHBoxLayout(m_zoomPill);
     row->setContentsMargins(8, 5, 8, 5);
     row->setSpacing(2);
@@ -799,25 +742,27 @@ void FloatingToolbar::buildZoomPill() {
     m_zoomOutBtn = new QToolButton(m_zoomPill);
     m_zoomOutBtn->setFixedSize(30, 30);
     m_zoomOutBtn->setIconSize(QSize(16, 16));
-    m_zoomOutBtn->setToolTip("Alejar");
+    m_zoomOutBtn->setToolTip(QStringLiteral("Alejar"));
     polishButton(m_zoomOutBtn);
     connect(m_zoomOutBtn, &QToolButton::clicked, this, [this] {
-        if (m_canvas)
+        if (m_canvas) {
             m_canvas->zoomOut();
+        }
         updateZoomLabel();
     });
-    m_iconSpecs.append(qMakePair(m_zoomOutBtn, QString("zoom-out")));
+    m_iconSpecs.append(qMakePair(m_zoomOutBtn, QStringLiteral("zoom-out")));
     row->addWidget(m_zoomOutBtn);
 
     m_zoomResetBtn = new QToolButton(m_zoomPill);
-    m_zoomResetBtn->setObjectName("finilyZoomReset");
+    m_zoomResetBtn->setObjectName(QStringLiteral("finilyZoomReset"));
     m_zoomResetBtn->setFixedHeight(30);
-    m_zoomResetBtn->setText("100 %");
+    m_zoomResetBtn->setText(QStringLiteral("100 %"));
     m_zoomResetBtn->setToolTip(tr("Ajustar página o restablecer zoom (Ctrl+0)"));
     polishButton(m_zoomResetBtn);
     connect(m_zoomResetBtn, &QToolButton::clicked, this, [this] {
-        if (m_canvas)
+        if (m_canvas) {
             m_canvas->resetViewport();
+        }
         updateZoomLabel();
     });
     row->addWidget(m_zoomResetBtn);
@@ -825,23 +770,21 @@ void FloatingToolbar::buildZoomPill() {
     m_zoomInBtn = new QToolButton(m_zoomPill);
     m_zoomInBtn->setFixedSize(30, 30);
     m_zoomInBtn->setIconSize(QSize(16, 16));
-    m_zoomInBtn->setToolTip("Acercar");
+    m_zoomInBtn->setToolTip(QStringLiteral("Acercar"));
     polishButton(m_zoomInBtn);
     connect(m_zoomInBtn, &QToolButton::clicked, this, [this] {
-        if (m_canvas)
+        if (m_canvas) {
             m_canvas->zoomIn();
+        }
         updateZoomLabel();
     });
-    m_iconSpecs.append(qMakePair(m_zoomInBtn, QString("zoom-in")));
+    m_iconSpecs.append(qMakePair(m_zoomInBtn, QStringLiteral("zoom-in")));
     row->addWidget(m_zoomInBtn);
 }
 
 void FloatingToolbar::buildPagePill() {
-    // Pill de páginas en la esquina inferior izquierda, espejo del estilo de la
-    // pill de zoom. Hijo normal del overlay (máscara Hyprland-safe en
-    // updateOverlayMask()); todos los controles con Qt::NoFocus para el lápiz.
     m_pagePill = new GlassCapsule(this);
-    m_pagePill->setObjectName("finilyPagePill");
+    m_pagePill->setObjectName(QStringLiteral("finilyPagePill"));
     auto* row = new QHBoxLayout(m_pagePill);
     row->setContentsMargins(8, 5, 8, 5);
     row->setSpacing(2);
@@ -849,18 +792,19 @@ void FloatingToolbar::buildPagePill() {
     m_pagePrevBtn = new QToolButton(m_pagePill);
     m_pagePrevBtn->setFixedSize(30, 30);
     m_pagePrevBtn->setIconSize(QSize(16, 16));
-    m_iconSpecs.append(qMakePair(m_pagePrevBtn, QString("chevron-left")));
-    m_pagePrevBtn->setToolTip("Página anterior (Re Pág)");
+    m_iconSpecs.append(qMakePair(m_pagePrevBtn, QStringLiteral("chevron-left")));
+    m_pagePrevBtn->setToolTip(QStringLiteral("Página anterior (Re Pág)"));
     polishButton(m_pagePrevBtn);
     connect(m_pagePrevBtn, &QToolButton::clicked, this, [this] {
-        if (m_canvas)
+        if (m_canvas) {
             m_canvas->prevPage();
+        }
         refreshFromCanvas();
     });
     row->addWidget(m_pagePrevBtn);
 
-    m_pageLabel = new QLabel("1 / 1", m_pagePill);
-    m_pageLabel->setObjectName("finilyPageLabel");
+    m_pageLabel = new QLabel(QStringLiteral("1 / 1"), m_pagePill);
+    m_pageLabel->setObjectName(QStringLiteral("finilyPageLabel"));
     m_pageLabel->setAlignment(Qt::AlignCenter);
     m_pageLabel->setContentsMargins(4, 0, 4, 0);
     m_pageLabel->setFixedHeight(30);
@@ -869,12 +813,13 @@ void FloatingToolbar::buildPagePill() {
     m_pageNextBtn = new QToolButton(m_pagePill);
     m_pageNextBtn->setFixedSize(30, 30);
     m_pageNextBtn->setIconSize(QSize(16, 16));
-    m_iconSpecs.append(qMakePair(m_pageNextBtn, QString("chevron-right")));
-    m_pageNextBtn->setToolTip("Página siguiente (Av Pág)");
+    m_iconSpecs.append(qMakePair(m_pageNextBtn, QStringLiteral("chevron-right")));
+    m_pageNextBtn->setToolTip(QStringLiteral("Página siguiente (Av Pág)"));
     polishButton(m_pageNextBtn);
     connect(m_pageNextBtn, &QToolButton::clicked, this, [this] {
-        if (m_canvas)
+        if (m_canvas) {
             m_canvas->nextPage();
+        }
         refreshFromCanvas();
     });
     row->addWidget(m_pageNextBtn);
@@ -884,26 +829,28 @@ void FloatingToolbar::buildPagePill() {
     m_pageAddBtn = new QToolButton(m_pagePill);
     m_pageAddBtn->setFixedSize(30, 30);
     m_pageAddBtn->setIconSize(QSize(16, 16));
-    m_iconSpecs.append(qMakePair(m_pageAddBtn, QString("plus")));
-    m_pageAddBtn->setToolTip("Añadir página nueva (Ctrl+Mayús+N)");
+    m_iconSpecs.append(qMakePair(m_pageAddBtn, QStringLiteral("plus")));
+    m_pageAddBtn->setToolTip(QStringLiteral("Añadir página nueva (Ctrl+Mayús+N)"));
     polishButton(m_pageAddBtn);
     connect(m_pageAddBtn, &QToolButton::clicked, this, [this] {
-        if (m_canvas)
+        if (m_canvas) {
             m_canvas->addPage();
+        }
         refreshFromCanvas();
     });
     row->addWidget(m_pageAddBtn);
+    updatePageNavButtons();
 }
 
 void FloatingToolbar::buildRestoreButton() {
     m_restoreBtn = new QToolButton(this);
-    m_restoreBtn->setObjectName("finilyRestore");
+    m_restoreBtn->setObjectName(QStringLiteral("finilyRestore"));
     m_restoreBtn->setFixedSize(26, 26);
     m_restoreBtn->setIconSize(QSize(14, 14));
-    m_restoreBtn->setToolTip("Mostrar interfaz (Tab)");
+    m_restoreBtn->setToolTip(QStringLiteral("Mostrar interfaz (Tab)"));
     polishButton(m_restoreBtn);
     connect(m_restoreBtn, &QToolButton::clicked, this, &FloatingToolbar::toggleCleanUi);
-    m_iconSpecs.append(qMakePair(m_restoreBtn, QString("restore")));
+    m_iconSpecs.append(qMakePair(m_restoreBtn, QStringLiteral("restore")));
     m_restoreBtn->hide();
 }
 
@@ -925,9 +872,7 @@ QString FloatingToolbar::buildStylesheet(const ThemeConfig& theme) const {
     const QString divider = rgba(theme.uiBorder, 80);
 
     return QString(R"(
-/* Las superficies (pills y popovers) son GlassCapsule pintadas a mano: sin
-   reglas QSS de fondo para que el estilo de sistema (Caelestia/KDE) jamas
-   las sobreescriba con cuadrados gris carbon. */
+/* Las superficies (pills y popovers) son GlassCapsule pintadas a mano. */
 #finilyRestore {
     background: %1;
     border: 1px solid %2;
@@ -942,11 +887,11 @@ QString FloatingToolbar::buildStylesheet(const ThemeConfig& theme) const {
     margin: 3px 2px;
 }
 QLabel { color: %3; background: transparent; }
-QLabel#finilyTitle {
+QLabel#finilySectionTitle {
     color: %4;
     font-size: 11px;
     font-weight: 700;
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
 }
 QLabel#finilyToast { font-size: 12px; font-weight: 600; }
 QLabel#finilyPageLabel { font-size: 12px; font-weight: 600; }
@@ -1072,12 +1017,17 @@ QToolButton:checked, QPushButton:checked {
     background: %7;
     border: 1px solid %13;
 }
-QToolButton#finilyMoreToggle { color: %4; font-size: 11px; font-weight: 600; text-align: left; border-radius: 8px; padding: 0 4px; }
+QToolButton#finilyMoreToggle {
+    color: %4;
+    font-size: 11px;
+    font-weight: 600;
+    text-align: left;
+    border-radius: 8px;
+    padding: 0 4px;
+}
 QToolButton#finilyMoreToggle:hover { color: %3; background: transparent; }
 QToolButton:hover:checked, QPushButton:hover:checked { background: %13; }
 QToolButton:disabled { color: %4; }
-/* Herramientas del dock (útiles ilustrados + duotono): cápsula activa refinada
-   con tinte suave de acento y borde fino para no tapar jamás el arte SVG. */
 QToolButton#finilyWritingTool, QToolButton#finilyTool {
     border-radius: 12px;
     border: 1.5px solid transparent;
@@ -1098,7 +1048,9 @@ QToolButton#finilyZoomReset { font-size: 11px; padding: 0px 8px; border-radius: 
 QSlider { background: transparent; min-height: 22px; }
 QSlider::groove:horizontal { border: none; height: 4px; border-radius: 2px; background: %8; }
 QSlider::sub-page:horizontal { background: %10; border-radius: 2px; }
-QSlider::handle:horizontal { width: 14px; height: 14px; margin: -5px 0px; border-radius: 7px; background: %9; }
+QSlider::handle:horizontal {
+    width: 14px; height: 14px; margin: -5px 0px; border-radius: 7px; background: %9;
+}
 QSlider::handle:horizontal:hover { background: %3; }
 QSlider::handle:horizontal:disabled { background: %4; }
 )")
@@ -1121,115 +1073,61 @@ QSlider::handle:horizontal:disabled { background: %4; }
 void FloatingToolbar::applyThemeStylesheet() {
     const ThemeConfig theme = getThemeConfig(m_theme);
 
-    // La primera tinta se adapta automáticamente al tema: tiza (oscuro) / tinta
-    // (claro). Si el usuario restauró presets personalizados desde QSettings,
-    // se respeta su color guardado en lugar de sobrescribirlo.
     if (!m_presetsRestored) {
         m_presets[0].color = getPaletteForTheme(theme.isDark).first();
-        m_presets[0].label = theme.isDark ? "Tiza principal" : "Tinta principal";
+        m_presets[0].label =
+            theme.isDark ? QStringLiteral("Tiza principal") : QStringLiteral("Tinta principal");
     }
-    for (PenPreset& preset : m_presets)
-        if (preset.tool != ToolType::Highlighter)
+    for (PenPreset& preset : m_presets) {
+        if (preset.tool != ToolType::Highlighter) {
             preset.color = adaptInkToTheme(preset.color, theme.isDark);
+        }
+    }
 
     const QString qss = buildStylesheet(theme);
     setStyleSheet(qss);
-    if (m_strokePopover)
-        m_strokePopover->setStyleSheet(qss);
-    if (m_paperPopover)
-        m_paperPopover->setStyleSheet(qss);
-    if (m_shapesPopover)
-        m_shapesPopover->setStyleSheet(qss);
-    if (m_stickersPopover)
-        m_stickersPopover->setStyleSheet(qss);
-    if (m_filePopover)
-        m_filePopover->setStyleSheet(qss);
+    for (GlassCapsule* capsule : m_capsules) {
+        if (capsule) {
+            capsule->applyTheme(theme, qss);
+        }
+    }
 
     refreshIcons();
     updateStationery();
-
-    // Recolorea TODAS las cápsulas de cristal al instante: DarkBoard <-> 
-    // PaperLight cambia cada superficie de vidrio oscuro a blanco luminoso.
-    // Cada cápsula recibe la hoja de estilo directamente: si solo se pone en
-    // la barra, los hijos ya pulidos se quedan con el color del tema anterior
-    // (texto blanco sobre papel blanco).
-    for (GlassCapsule* capsule : m_capsules)
-        if (capsule) {
-            capsule->setCapsuleTheme(theme);
-            capsule->setStyleSheet(qss);
-        }
-
     refreshShadowColors();
-    if (m_stickersPopover)
-        rebuildStickersGrid();
-    disarmClearButton();
 }
 
 void FloatingToolbar::refreshIcons() {
     const ThemeConfig theme = getThemeConfig(m_theme);
     const QColor ink = m_canvas ? m_canvas->inkColor() : theme.accent;
 
-    // 1. Barra superior de utilidades (SVG homologado 22px)
-    for (const auto& spec : m_studioUtilSpecs)
+    for (const auto& spec : m_studioUtilSpecs) {
         spec.first->setIcon(makeStudioIcon(spec.second, 22, theme.uiText, theme.accent, ink, theme.isDark));
+    }
+    if (m_titleLabel) {
+        m_titleLabel->setStyleSheet(
+            QString("color:%1;font-size:13px;font-weight:600;background:transparent;")
+                .arg(theme.uiText.name()));
+    }
+    updateTitleDot();
 
-    // 2. 4 útiles ilustrados del dock (SVG 32px con tinta activa)
-
-    for (QToolButton* b : findChildren<QToolButton*>("finilySwitch"))
-        if (auto* sw = dynamic_cast<SwitchButton*>(b))
-            sw->setColors(theme.uiText, theme.accent, theme.isDark);
-    if (m_titleLabel)
-        m_titleLabel->setStyleSheet(QString("color:%1;font-size:13px;font-weight:600;background:transparent;")
-                                        .arg(theme.uiText.name()));
-    if (m_titleDot)
-        m_titleDot->setStyleSheet(QString("background:%1;border-radius:3px;").arg(theme.accent.name()));
-
-    // 3. 6 herramientas duotono del dock (SVG 24px)
-    for (int i = 0; i < m_secondaryBtns.size() && i < m_secondaryIcons.size(); ++i)
+    for (int i = 0; i < m_secondaryBtns.size() && i < m_secondaryIcons.size(); ++i) {
         m_secondaryBtns.at(i)->setIcon(dockIcon(m_secondaryIcons.at(i), theme.uiText, theme.accent));
+    }
 
-    m_lastInkIconSig = QString("%1|%2").arg(int(m_theme)).arg(ink.name(QColor::HexArgb));
-
-    // 4. Mini-iconos auxiliares (zoom, páginas, popovers de figuras/patrones/plantillas)
-    static const QStringList dockKinds = {"pen", "highlighter", "eraser", "paint-bucket"};
-    for (const auto& spec : m_iconSpecs)
-        spec.first->setIcon(dockKinds.contains(spec.second) ? dockIcon(spec.second, theme.uiText, theme.accent)
-                                                            : glyphIcon(spec.second, theme.uiText));
-    for (const auto& spec : m_ctxIconSpecs)
+    static const QStringList dockKinds = {QStringLiteral("pen"), QStringLiteral("highlighter"),
+                                          QStringLiteral("eraser"), QStringLiteral("paint-bucket")};
+    for (const auto& spec : m_iconSpecs) {
+        spec.first->setIcon(dockKinds.contains(spec.second)
+                                ? dockIcon(spec.second, theme.uiText, theme.accent)
+                                : glyphIcon(spec.second, theme.uiText));
+    }
+    for (const auto& spec : m_ctxIconSpecs) {
         spec.first->setIcon(QIcon(contextIconPixmap(spec.second, theme.uiText)));
-    if (m_stabilizerIcon)
-        m_stabilizerIcon->setPixmap(contextIconPixmap(QStringLiteral("stabilizer"), theme.uiText));
-    if (m_hlOpacityIcon)
-        m_hlOpacityIcon->setPixmap(contextIconPixmap(QStringLiteral("opacity"), theme.uiText));
-    for (QSlider* sl : {m_sizeSlider, m_stabilizerSlider, m_eraserSizeSlider, m_pressureSlider, m_hlOpacitySlider})
-        if (auto* ds = dynamic_cast<DotStepSlider*>(sl))
-            ds->setColors(theme.accent, theme.isDark);
-    for (const auto& spec : m_patternSpecs)
-        spec.first->setIcon(QIcon(patternPixmap(spec.second, theme.uiText)));
-    for (const auto& spec : m_templateSpecs)
-        spec.first->setIcon(QIcon(templatePixmap(spec.second, theme.uiText)));
-    updateFillSwatches();
-    updateTipIcons();
-}
-
-void FloatingToolbar::updateFillSwatches() {
-    const ThemeConfig theme = getThemeConfig(m_theme);
-    const QColor col = m_canvas ? m_canvas->inkColor() : theme.accent;
-    for (const auto& [button, pattern] : m_fillStyles)
-        button->setIcon(QIcon(fillSwatchPixmap(pattern, col, theme.isDark)));
-}
-
-void FloatingToolbar::updateTipIcons() {
-    const ThemeConfig theme = getThemeConfig(m_theme);
-    const QColor col = m_canvas ? m_canvas->inkColor() : theme.accent;
-    for (int i = 0; i < m_penTipBtns.size(); ++i)
-        m_penTipBtns.at(i)->setIcon(QIcon(penTipPixmap(i, col, theme.isDark)));
-    for (int i = 0; i < m_hlTipBtns.size(); ++i)
-        m_hlTipBtns.at(i)->setIcon(QIcon(hlTipPixmap(i, col, theme.isDark)));
+    }
 }
 
 void FloatingToolbar::positionChildren() {
-    // Pill de utilidades: siempre arriba-izquierda (x=14, y=12).
     if (m_pill && !m_pill->isHidden()) {
         m_pill->adjustSize();
         m_pill->move(14, 12);
@@ -1238,152 +1136,157 @@ void FloatingToolbar::positionChildren() {
         m_topRight->adjustSize();
         m_topRight->move(width() - m_topRight->width() - 14, 12);
     }
-    if (m_thumbPanel && !m_thumbPanel->isHidden()) {
-        const int top = m_topRight ? m_topRight->geometry().bottom() + 10 : 60;
-        const int bottom = height() - (m_zoomPill ? m_zoomPill->height() : 40) - 28;
-        m_thumbPanel->setGeometry(width() - m_thumbPanel->width() - 14, top, m_thumbPanel->width(),
-                                  std::max(160, bottom - top));
-    }
     if (m_zoomPill && !m_zoomPill->isHidden()) {
         m_zoomPill->adjustSize();
         m_zoomPill->move(width() - m_zoomPill->width() - 14, height() - m_zoomPill->height() - 14);
     }
     if (m_pagePill && !m_pagePill->isHidden()) {
         m_pagePill->adjustSize();
-        const int zx = (m_zoomPill && !m_zoomPill->isHidden()) ? m_zoomPill->x() - 8 : width() - 14;
+        const int zx = (m_zoomPill && !m_zoomPill->isHidden()) ? (m_zoomPill->x() - 8) : (width() - 14);
         m_pagePill->move(zx - m_pagePill->width(), height() - m_pagePill->height() - 14);
     }
-    // Dock de papelería: vertical centrado en el borde izquierdo (x=12) o
-    // horizontal arriba/abajo, esquivando las pills de esquinas.
     if (m_dock && !m_dock->isHidden()) {
         layoutDock();
         if (m_dockPos == DockPos::Izquierda) {
             m_dock->move(12, std::max(12, (height() - m_dock->height()) / 2));
         } else if (m_dockPos == DockPos::Arriba) {
             const int centeredX = (width() - m_dock->width()) / 2;
-            const int minX = m_pill && !m_pill->isHidden() ? m_pill->geometry().right() + 14 : 14;
+            const int minX = (m_pill && !m_pill->isHidden()) ? (m_pill->geometry().right() + 14) : 14;
             m_dock->move(std::max(minX, centeredX), 12);
         } else {
             int x = (width() - m_dock->width()) / 2;
-            if (m_pagePill && !m_pagePill->isHidden())
+            if (m_pagePill && !m_pagePill->isHidden()) {
                 x = std::min(x, m_pagePill->geometry().left() - m_dock->width() - 14);
+            }
             m_dock->move(std::max(12, x), height() - m_dock->height() - 12);
         }
     }
-    if (m_restoreBtn && !m_restoreBtn->isHidden())
+    if (m_tabBarPill && !m_tabBarPill->isHidden()) {
+        m_tabBarPill->adjustSize();
+        const int leftBound = (m_pill && !m_pill->isHidden()) ? (m_pill->geometry().right() + 12) : 14;
+        const int rightBound =
+            (m_topRight && !m_topRight->isHidden()) ? (m_topRight->x() - 12) : (width() - 14);
+        if (m_dockPos != DockPos::Arriba && (rightBound - leftBound >= m_tabBarPill->width())) {
+            const int x = leftBound + (rightBound - leftBound - m_tabBarPill->width()) / 2;
+            m_tabBarPill->move(x, 14);
+        } else {
+            int belowY = (m_pill && !m_pill->isHidden()) ? (m_pill->geometry().bottom() + 8) : 60;
+            if (m_dockPos == DockPos::Arriba && m_dock && !m_dock->isHidden()) {
+                belowY = std::max(belowY, m_dock->geometry().bottom() + 8);
+            }
+            const int minX =
+                (m_dockPos == DockPos::Izquierda && m_dock && !m_dock->isHidden())
+                    ? (m_dock->geometry().right() + 12)
+                    : 14;
+            m_tabBarPill->move(minX, belowY);
+        }
+    }
+    if (m_thumbPanel && !m_thumbPanel->isHidden()) {
+        const int top = (m_topRight && !m_topRight->isHidden()) ? (m_topRight->geometry().bottom() + 10) : 60;
+        const int zoomH = (m_zoomPill && !m_zoomPill->isHidden()) ? m_zoomPill->height() : 40;
+        const int bottom = height() - zoomH - 28;
+        m_thumbPanel->setGeometry(width() - m_thumbPanel->width() - 14, top, m_thumbPanel->width(),
+                                  std::max(160, bottom - top));
+    }
+    if (m_restoreBtn && !m_restoreBtn->isHidden()) {
         m_restoreBtn->move(width() - 34, 10);
+    }
     if (m_contextPill && !m_contextPill->isHidden()) {
         m_contextPill->adjustSize();
-        // Fija abajo-centro: nunca tapa vértices ni se atraviesa al dibujar o editar.
         const int x = std::max(76, (width() - m_contextPill->width()) / 2);
-        const int y = std::max(12, height() - m_contextPill->height() - 16);
+        int y = std::max(12, height() - m_contextPill->height() - 16);
+        if (m_dockPos == DockPos::Abajo && m_dock && !m_dock->isHidden()) {
+            y = std::max(12, m_dock->geometry().top() - m_contextPill->height() - 10);
+        }
         m_contextPill->move(x, y);
     }
     if (m_toastPill && !m_toastPill->isHidden()) {
         m_toastPill->adjustSize();
-        // Dock abajo: toast arriba-centrado; en otro caso, abajo del todo
-        // (el dock izquierdo queda centrado y no tropieza con el toast).
-        const int y = m_dockPos == DockPos::Abajo ? 18 : height() - m_toastPill->height() - 64;
+        const int y = (m_dockPos == DockPos::Abajo) ? 18 : (height() - m_toastPill->height() - 64);
         m_toastPill->move(std::max(6, (width() - m_toastPill->width()) / 2), y);
     }
     positionOpenPopover();
     updateOverlayMask();
 }
 
-// Máscara de entrada del overlay: únicamente los rectángulos de los hijos
-// visibles capturan eventos (pill, pill de zoom, botón de restauración y
-// popovers abiertos); todo lo demás pasa al CanvasWidget debajo, cuyo
-// eventFilter cierra cualquier popover abierto.
 void FloatingToolbar::updateOverlayMask() {
     QRegion region;
-    const QVector<QWidget*> overlayChildren = {m_pill,          m_topRight,     m_thumbPanel,   m_contextPill, m_edgeMarkPill, m_zoomPill,   m_restoreBtn,
-                                               m_strokePopover, m_paperPopover, m_shapesPopover, m_stickersPopover, m_filePopover,
-                                               m_pagePill,      m_toastPill,    m_dock};
-    for (QWidget* child : overlayChildren) {
-        if (!child || child->isHidden())
+    for (GlassCapsule* capsule : m_capsules) {
+        if (!capsule || capsule->isHidden()) {
             continue;
-        // Margen estrecho (-8,-6,+8,+12): deja respirar la sombra suave sin
-        // robar clics de dibujo lejos del cromo (el hit-test queda pegado a la
-        // pill; solo el halo de la sombra se expande).
-        region += child->geometry().adjusted(-8, -6, 8, 12);
+        }
+        region += capsule->geometry().adjusted(-8, -6, 8, 12);
+    }
+    if (m_restoreBtn && !m_restoreBtn->isHidden()) {
+        region += m_restoreBtn->geometry().adjusted(-8, -6, 8, 12);
     }
     setMask(region);
 }
 
-// Con lápiz Wacom, los QTabletEvent no manejados por los hijos (botones,
-// sliders) suben hasta aquí: al ignorarlos, siguen hacia el contenedor plano
-// de MainWindow (nunca CanvasWidget, que es hermano) y quedan sin manejar,
-// por lo que Qt sintetiza eventos de mouse nítidos para los controles.
 void FloatingToolbar::tabletEvent(QTabletEvent* event) {
     event->ignore();
 }
 
 QPoint FloatingToolbar::popoverPosition(const GlassCapsule* popover, const QWidget* anchor) const {
     const int margin = 12;
-    // Los popovers abren LIMPIOS junto al cromo: a la derecha del dock
-    // vertical (bajo la pill de utilidades), debajo del dock acoplado arriba,
-    // o bajo la pill en cualquier otro caso; nunca tapados ni recortados.
-    int x, y;
-    if (m_topRight && anchor->parentWidget() == m_topRight) {
+    int x = margin;
+    int y = (m_pill && !m_pill->isHidden() ? m_pill->geometry().bottom() : 40) + 10;
+    if (anchor && m_topRight && anchor->parentWidget() == m_topRight) {
         x = m_topRight->geometry().right() - popover->width();
         y = m_topRight->geometry().bottom() + 10;
     } else if (m_dockPos == DockPos::Izquierda && m_dock && !m_dock->isHidden()) {
         x = m_dock->geometry().right() + 10;
-        if (anchor->parentWidget() == m_dock) {
-            // Al abrir desde un útil o Figuras del dock, alinear verticalmente junto a ese botón
+        if (anchor && anchor->parentWidget() == m_dock) {
             y = m_dock->y() + anchor->y() - 12;
-        } else {
-            y = (m_pill && !m_pill->isHidden() ? m_pill->geometry().bottom() : 40) + 10;
         }
     } else if (m_dockPos == DockPos::Arriba && m_dock && !m_dock->isHidden()) {
         x = margin;
         y = m_dock->geometry().bottom() + 10;
-    } else {
-        x = margin;
-        y = (m_pill && !m_pill->isHidden() ? m_pill->geometry().bottom() : 40) + 10;
     }
-    if (m_dockPos == DockPos::Abajo && m_dock && !m_dock->isHidden())
-        // Con el dock abajo, no invadir el dock: ciñe el popover por encima.
+    if (m_dockPos == DockPos::Abajo && m_dock && !m_dock->isHidden()) {
         y = std::min(y, std::max(margin, m_dock->geometry().top() - popover->height() - 10));
+    }
     x = std::clamp(x, margin, std::max(margin, width() - popover->width() - margin));
     y = std::clamp(y, margin, std::max(margin, height() - popover->height() - margin));
     return QPoint(x, y);
 }
 
 void FloatingToolbar::positionOpenPopover() {
-    if (!m_openPopover)
+    if (!m_openPopover) {
         return;
+    }
     m_openPopover->adjustSize();
     const QPoint target = popoverPosition(m_openPopover, m_popoverAnchor);
     if (m_popoverAnim && m_popoverAnim->state() == QAbstractAnimation::Running) {
-        if (m_popoverAnim->endValue().toPoint() == target)
+        if (m_popoverAnim->endValue().toPoint() == target) {
             return;
+        }
         m_popoverAnim->stop();
     }
     m_openPopover->move(target);
 }
 
-// Abre el panel junto a su botón en las coordenadas del overlay.
 void FloatingToolbar::openPopover(GlassCapsule* popover, QWidget* anchor) {
-    if (!popover || !anchor)
+    if (!popover || !anchor) {
         return;
-    const bool wasOpen = m_openPopover == popover;
+    }
+    const bool wasOpen = (m_openPopover == popover);
     closePopovers();
-    if (wasOpen)
+    if (wasOpen) {
         return;
+    }
     m_openPopover = popover;
     m_popoverAnchor = anchor;
 
-    // Al mostrar el panel, Qt vuelve a medir las secciones que cambiaron mientras estaba oculto.
     popover->show();
     popover->adjustSize();
     const QPoint finalPos = popoverPosition(popover, anchor);
-    // Desliza 8 px hacia su lugar final (desde el cromo que lo ancla).
     QPoint offset(0, 8);
-    if ((m_topRight && anchor->parentWidget() == m_topRight) || m_dockPos == DockPos::Abajo)
+    if ((m_topRight && anchor->parentWidget() == m_topRight) || m_dockPos == DockPos::Abajo) {
         offset = QPoint(0, -8);
-    else if (m_dockPos == DockPos::Izquierda)
+    } else if (m_dockPos == DockPos::Izquierda) {
         offset = QPoint(-8, 0);
+    }
     const QPoint startPos = finalPos + offset;
     popover->move(startPos);
     popover->raise();
@@ -1401,10 +1304,14 @@ void FloatingToolbar::openPopover(GlassCapsule* popover, QWidget* anchor) {
 
 void FloatingToolbar::buildEdgeMarkPill() {
     m_edgeMarkPill = new GlassCapsule(this);
-    m_edgeMarkPill->setObjectName("finilyContextPill");
-    auto* row = new QHBoxLayout(m_edgeMarkPill);
-    row->setContentsMargins(6, 5, 6, 5);
-    row->setSpacing(3);
+    m_edgeMarkPill->setObjectName(QStringLiteral("finilyContextPill"));
+    auto* col = new QVBoxLayout(m_edgeMarkPill);
+    col->setContentsMargins(7, 6, 7, 6);
+    col->setSpacing(5);
+
+    auto* marksRow = new QHBoxLayout();
+    marksRow->setContentsMargins(0, 0, 0, 0);
+    marksRow->setSpacing(3);
 
     struct EdgeMarkDef {
         QString glyph;
@@ -1412,46 +1319,93 @@ void FloatingToolbar::buildEdgeMarkPill() {
         QString tip;
     };
     const QVector<EdgeMarkDef> defs = {
-        {"mark-zigzag",   "mark:zigzag",    tr("Serrucho (zig-zag)")},
-        {"mark-spring",   "mark:spring",    tr("Resorte (ondas)")},
-        {"mark-dot",      "mark:dot",       tr("Bolita / punto")},
-        {"mark-bar",      "mark:bar",       tr("Bultito / rectángulo")},
-        {"mark-ticks",    "mark:tick1",     tr("Rayitas de congruencia (cicla 1–3)")},
-        {"mark-parallel", "mark:parallel1", tr("Flechas paralelas (cicla 1–2)")},
+        {QStringLiteral("mark-zigzag"), QStringLiteral("mark:zigzag"), tr("Serrucho (zig-zag)")},
+        {QStringLiteral("mark-spring"), QStringLiteral("mark:spring"), tr("Resorte (ondas)")},
+        {QStringLiteral("mark-dot"), QStringLiteral("mark:dot"), tr("Bolita (congruencia)")},
+        {QStringLiteral("mark-divider"), QStringLiteral("mark:divider"),
+         tr("Punto divisor (parte la arista para marcas y recorte)")},
+        {QStringLiteral("mark-bar"), QStringLiteral("mark:bar"), tr("Bultito / rectángulo")},
+        {QStringLiteral("mark-ticks"), QStringLiteral("mark:tick1"),
+         tr("Rayitas de congruencia (cicla 1–3)")},
+        {QStringLiteral("mark-parallel"), QStringLiteral("mark:parallel1"),
+         tr("Flechas paralelas (cicla 1–2)")},
+        {QStringLiteral("mark-wall"), QStringLiteral("mark:wall"),
+         tr("Pared / suelo rugoso (repite clic para invertir lado)")},
     };
     for (const auto& def : defs) {
         auto* btn = new QToolButton(m_edgeMarkPill);
-        btn->setObjectName("finilyShapeBtn");
-        btn->setFixedSize(36, 34);
+        btn->setObjectName(QStringLiteral("finilyShapeBtn"));
+        btn->setFixedSize(36, 32);
         btn->setIconSize(QSize(19, 19));
         btn->setToolTip(def.tip);
         polishButton(btn);
         connect(btn, &QToolButton::clicked, this, [this, mark = def.mark] {
-            if (m_canvas)
+            if (m_canvas) {
                 m_canvas->stampCongruenceMarkAt(m_edgeMarkWorldPos, mark);
-            if (m_edgeMarkPill)
+            }
+            if (m_edgeMarkPill) {
                 m_edgeMarkPill->hide();
+            }
             updateOverlayMask();
         });
         m_iconSpecs.append(qMakePair(btn, def.glyph));
-        row->addWidget(btn);
+        marksRow->addWidget(btn);
     }
+    col->addLayout(marksRow);
+    col->addWidget(makeDivider(m_edgeMarkPill));
+
+    auto* colorRow = new QHBoxLayout();
+    colorRow->setContentsMargins(0, 0, 0, 0);
+    colorRow->setSpacing(8);
+    colorRow->addStretch(1);
+
+    const QVector<QPair<QString, QString>> quickColors = {
+        {QStringLiteral("#fde047"), tr("Amarillo luminoso")},
+        {QStringLiteral("#38bdf8"), tr("Celeste")},
+        {QStringLiteral("#f87171"), tr("Coral / Rojo")},
+        {QStringLiteral("#4ade80"), tr("Verde")},
+        {QStringLiteral("#c084fc"), tr("Morado")},
+        {QStringLiteral("#fb923c"), tr("Naranja")},
+    };
+    for (const auto& [hex, tip] : quickColors) {
+        const QColor c(hex);
+        auto* dot = new ColorDotButton(m_edgeMarkPill);
+        dot->setDotColor(c);
+        dot->setCheckable(false);
+        dot->setFixedSize(24, 24);
+        dot->setToolTip(tr("Resaltar tramo/arco en %1").arg(tip));
+        connect(dot, &QToolButton::clicked, this, [this, c] {
+            if (m_canvas) {
+                m_canvas->highlightSegmentAt(m_edgeMarkWorldPos, c, 0);
+            }
+            if (m_edgeMarkPill) {
+                m_edgeMarkPill->hide();
+            }
+            updateOverlayMask();
+        });
+        m_edgeMarkDots.append(dot);
+        colorRow->addWidget(dot);
+    }
+    colorRow->addStretch(1);
+    col->addLayout(colorRow);
     m_edgeMarkPill->hide();
 }
 
 void FloatingToolbar::showEdgeMarkPill(const QPointF& screenPos, const QPointF& worldPos) {
-    if (!m_edgeMarkPill)
+    if (!m_edgeMarkPill) {
         return;
+    }
     closePopovers();
     m_edgeMarkWorldPos = worldPos;
     m_edgeMarkPill->adjustSize();
     const int margin = 12;
     const int w = m_edgeMarkPill->width();
     const int h = m_edgeMarkPill->height();
-    int x = std::clamp(qRound(screenPos.x()) - w / 2, margin, std::max(margin, width() - w - margin));
+    const int x = std::clamp(qRound(screenPos.x()) - w / 2, margin, std::max(margin, width() - w - margin));
     int y = qRound(screenPos.y()) - h - 18;
-    if (y < margin)
+    if (y < margin) {
         y = std::min(height() - h - margin, qRound(screenPos.y()) + 18);
+    }
     m_edgeMarkPill->move(x, y);
     m_edgeMarkPill->show();
     m_edgeMarkPill->raise();
@@ -1475,23 +1429,23 @@ void FloatingToolbar::closePopovers() {
         m_popoverAnchor = nullptr;
         changed = true;
     }
-    if (changed)
+    if (changed) {
         updateOverlayMask();
+    }
 }
 
-// Toast flotante estilo StarNote: cápsula de cristal centrada (abajo, o arriba
-// si la barra está acoplada abajo) con fundido de entrada 140 ms, hold de
-// 1.2 s y salida con fundido 220 ms. La QGraphicsOpacityEffect vive en la
-// cápsula y es su único efecto, así no pisa ninguna sombra.
 void FloatingToolbar::showToast(const QString& message) {
-    if (!m_toastPill || !m_toastLabel)
+    if (!m_toastPill || !m_toastLabel) {
         return;
+    }
     if (m_toastAnim) {
         m_toastAnim->stop();
         m_toastAnim->deleteLater();
+        m_toastAnim = nullptr;
     }
-    if (m_toastTimer)
+    if (m_toastTimer) {
         m_toastTimer->stop();
+    }
     m_toastLabel->setText(message);
     m_toastPill->adjustSize();
     m_toastPill->show();
@@ -1510,20 +1464,15 @@ void FloatingToolbar::showToast(const QString& message) {
     m_toastAnim->setEndValue(1.0);
     m_toastAnim->setEasingCurve(QEasingCurve::OutCubic);
     m_toastAnim->start();
-    if (m_toastTimer)
+    if (m_toastTimer) {
         m_toastTimer->start(1200);
+    }
 }
 
-// Repinta el punto de vista previa con la tinta y el grosor reales del lienzo.
-void FloatingToolbar::updateStrokePreview() {
-    if (m_canvas && m_strokePreview)
-        m_strokePreview->setInk(m_canvas->inkColor(), m_canvas->strokeSize());
-}
-
-// Sombra suave real: blur 22, yOffset 6, alfa 70 (tema oscuro) / 35 (claro).
 void FloatingToolbar::applyShadow(QWidget* widget) {
-    if (!widget || widget->graphicsEffect())
+    if (!widget || widget->graphicsEffect()) {
         return;
+    }
     auto* effect = new QGraphicsDropShadowEffect;
     effect->setBlurRadius(28);
     effect->setOffset(0.0, 8.0);
@@ -1531,59 +1480,56 @@ void FloatingToolbar::applyShadow(QWidget* widget) {
     widget->setGraphicsEffect(effect);
 }
 
-// Recolorea las sombras al cambiar de tema sin recrear efectos.
 void FloatingToolbar::refreshShadowColors() {
     const QColor shadowColor(0, 0, 0, getThemeConfig(m_theme).isDark ? 90 : 30);
-    const QVector<QWidget*> elevated = {m_pill,          m_contextPill,   m_edgeMarkPill,  m_zoomPill,      m_pagePill,
-                                        m_strokePopover, m_paperPopover,   m_shapesPopover, m_stickersPopover, m_filePopover,
-                                        m_dock};
-    for (QWidget* widget : elevated) {
-        if (!widget)
+    for (GlassCapsule* widget : m_capsules) {
+        if (!widget || widget == m_toastPill) {
             continue;
-        if (auto* effect = qobject_cast<QGraphicsDropShadowEffect*>(widget->graphicsEffect()))
+        }
+        if (auto* effect = qobject_cast<QGraphicsDropShadowEffect*>(widget->graphicsEffect())) {
             effect->setColor(shadowColor);
+        }
     }
 }
 
-// Restaura la posición acoplable persistida ("toolbar/dockPos": left/top/
-// bottom, con migración desde el antiguo "toolbar/dockBottom" booleano).
 void FloatingToolbar::loadDockPosition() {
-    QSettings settings("Finily", "Finily");
-    const QString pos = settings.value("toolbar/trayPos").toString();
-    if (pos == QLatin1String("top"))
+    const auto settings = appSettings();
+    const QString pos = settings->value(QStringLiteral("toolbar/trayPos")).toString();
+    if (pos == QLatin1String("top")) {
         m_dockPos = DockPos::Arriba;
-    else if (pos == QLatin1String("bottom"))
+    } else if (pos == QLatin1String("bottom")) {
         m_dockPos = DockPos::Abajo;
-    else if (pos == QLatin1String("left"))
+    } else {
         m_dockPos = DockPos::Izquierda;
-    else // por defecto a la izquierda (pensado para zurdos: la mano no tapa la barra)
-        m_dockPos = DockPos::Izquierda;
+    }
 }
 
-// Alterna "Posición de barra" (Izquierda/Arriba/Abajo): reorienta el dock,
-// reancla pills, popovers y toast; persiste y reabre el popover activo.
 void FloatingToolbar::setDockPosition(DockPos pos) {
-    if (m_dockPos == pos)
+    if (m_dockPos == pos) {
         return;
+    }
     m_dockPos = pos;
-    QSettings settings("Finily", "Finily");
-    settings.setValue("toolbar/trayPos", pos == DockPos::Izquierda ? "left"
-                                         : pos == DockPos::Arriba  ? "top"
-                                                                   : "bottom");
+    auto settings = appSettings();
+    settings->setValue(QStringLiteral("toolbar/trayPos"),
+                       pos == DockPos::Izquierda ? QStringLiteral("left")
+                                                 : (pos == DockPos::Arriba ? QStringLiteral("top")
+                                                                           : QStringLiteral("bottom")));
+    if (m_paperPopover) {
+        m_paperPopover->setToolbarState(m_dockPos, m_pageNavDir);
+    }
 
     GlassCapsule* open = m_openPopover;
     QWidget* anchor = m_popoverAnchor;
     closePopovers();
     positionChildren();
-    refreshFromCanvas(); // sincroniza los botones Izquierda/Arriba/Abajo
-    if (open)
+    refreshFromCanvas();
+    if (open) {
         openPopover(open, anchor);
+    }
 }
 
 void FloatingToolbar::toggleCleanUi() {
     m_cleanUi = !m_cleanUi;
-    // Corta cualquier animación previa de la pill (sin disparar su lambda de
-    // cierre para no esconder controles que se van a restaurar).
     if (m_pillAnim) {
         QObject::disconnect(m_pillAnim, &QPropertyAnimation::finished, this, nullptr);
         m_pillAnim->stop();
@@ -1592,22 +1538,31 @@ void FloatingToolbar::toggleCleanUi() {
     }
     if (m_cleanUi) {
         closePopovers();
-        if (m_zoomPill)
+        if (m_zoomPill) {
             m_zoomPill->hide();
-        if (m_contextPill)
+        }
+        if (m_tabBarPill) {
+            m_tabBarPill->hide();
+        }
+        if (m_contextPill) {
             m_contextPill->hide();
-        if (m_pagePill)
+        }
+        if (m_pagePill) {
             m_pagePill->hide();
-        if (m_topRight)
+        }
+        if (m_topRight) {
             m_topRight->hide();
-        if (m_thumbPanel)
+        }
+        if (m_thumbPanel) {
             m_thumbPanel->hide();
-        if (m_dock)
+        }
+        if (m_dock) {
             m_dock->hide();
-        if (m_restoreBtn)
+        }
+        if (m_restoreBtn) {
             m_restoreBtn->show();
+        }
         positionChildren();
-        // Desliza la pill 18 px hacia arriba (150 ms OutCubic) y la esconde.
         if (m_pill && m_pill->isVisible()) {
             const QPoint start = m_pill->pos();
             m_pillAnim = new QPropertyAnimation(m_pill, "pos", this);
@@ -1618,31 +1573,42 @@ void FloatingToolbar::toggleCleanUi() {
             connect(m_pillAnim, &QPropertyAnimation::valueChanged, this,
                     [this](const QVariant&) { updateOverlayMask(); });
             connect(m_pillAnim, &QPropertyAnimation::finished, this, [this] {
-                if (m_pill)
+                if (m_pill) {
                     m_pill->hide();
+                }
                 positionChildren();
             });
             m_pillAnim->start();
         }
     } else {
-        if (m_restoreBtn)
+        if (m_restoreBtn) {
             m_restoreBtn->hide();
-        if (m_pill)
+        }
+        if (m_pill) {
             m_pill->show();
-        if (m_zoomPill)
+        }
+        if (m_tabBarPill && m_tabCount >= 2) {
+            m_tabBarPill->show();
+        }
+        if (m_zoomPill) {
             m_zoomPill->show();
-        if (m_pagePill)
+        }
+        if (m_pagePill) {
             m_pagePill->show();
-        if (m_topRight)
+        }
+        if (m_topRight) {
             m_topRight->show();
+        }
         if (m_thumbPanel && m_pagesBtn && m_pagesBtn->isChecked()) {
             m_thumbPanel->show();
-            rebuildThumbs();
+            m_thumbPanel->rebuild();
         }
-        if (m_dock)
+        if (m_dock) {
             m_dock->show();
+        }
+        m_lastCanvasState.valid = false;
+        refreshFromCanvas();
         positionChildren();
-        // La pill entra deslizándose desde arriba (150 ms OutCubic).
         if (m_pill) {
             const QPoint target = m_pill->pos();
             m_pillAnim = new QPropertyAnimation(m_pill, "pos", this);
@@ -1659,30 +1625,214 @@ void FloatingToolbar::toggleCleanUi() {
 }
 
 void FloatingToolbar::selectTool(ToolType tool) {
-    if (!m_canvas)
+    if (!m_canvas) {
         return;
-    // Seleccionar una herramienta distinta libera el preset activo.
-    if (m_activePreset >= 0 && m_activePreset < m_presets.size() && m_presets.at(m_activePreset).tool != tool)
+    }
+    if (m_activePreset >= 0 && m_activePreset < m_presets.size()
+        && m_presets.at(m_activePreset).tool != tool) {
         m_activePreset = -1;
+    }
     m_canvas->setTool(tool);
     refreshFromCanvas();
 }
 
-void FloatingToolbar::selectPreset(int index) {
-    if (index < 0 || index >= m_presets.size() || !m_canvas)
+QString FloatingToolbar::presetShortcut(int index) const {
+    if (index < 0 || index >= m_presets.size()) {
+        return {};
+    }
+    return m_presets.at(index).shortcut;
+}
+
+void FloatingToolbar::setPageNavDirection(PageNavDirection dir) {
+    if (m_pageNavDir == dir) {
         return;
+    }
+    m_pageNavDir = dir;
+    auto settings = appSettings();
+    settings->setValue(QStringLiteral("ui/pageNavDirection"), dir == PageNavDirection::Vertical ? 1 : 0);
+    if (m_paperPopover) {
+        m_paperPopover->setToolbarState(m_dockPos, m_pageNavDir);
+    }
+    updatePageNavButtons();
+    emit pageNavDirectionChanged(dir);
+    refreshFromCanvas();
+}
+
+void FloatingToolbar::updatePageNavButtons() {
+    const bool vert = (m_pageNavDir == PageNavDirection::Vertical);
+    const QString prevName = vert ? QStringLiteral("chevron-up") : QStringLiteral("chevron-left");
+    const QString nextName = vert ? QStringLiteral("chevron-down") : QStringLiteral("chevron-right");
+    for (auto& spec : m_iconSpecs) {
+        if (spec.first == m_pagePrevBtn) {
+            spec.second = prevName;
+        } else if (spec.first == m_pageNextBtn) {
+            spec.second = nextName;
+        }
+    }
+    const QColor uiText = getThemeConfig(m_theme).uiText;
+    if (m_pagePrevBtn) {
+        m_pagePrevBtn->setIcon(glyphIcon(prevName, uiText));
+        m_pagePrevBtn->setToolTip(vert ? tr("Página anterior (Re Pág / Alt+↑)")
+                                       : tr("Página anterior (Re Pág / Alt+←)"));
+    }
+    if (m_pageNextBtn) {
+        m_pageNextBtn->setIcon(glyphIcon(nextName, uiText));
+        m_pageNextBtn->setToolTip(vert ? tr("Página siguiente (Av Pág / Alt+↓)")
+                                       : tr("Página siguiente (Av Pág / Alt+→)"));
+    }
+}
+
+void FloatingToolbar::updatePresetButtons() {
+    if (!m_strokePopover) {
+        return;
+    }
+    const PenPreset* active =
+        (m_activePreset >= 0 && m_activePreset < m_presets.size()) ? &m_presets.at(m_activePreset) : nullptr;
+    m_strokePopover->setActivePresetIndex(m_activePreset, active);
+}
+
+void FloatingToolbar::showFavoritesMenu(QWidget* anchor) {
+    QWidget* menuAnchor = anchor ? anchor : static_cast<QWidget*>(m_strokePopover);
+    if (!menuAnchor) {
+        return;
+    }
+    QMenu menu(this);
+    for (int i = 0; i < m_presets.size(); ++i) {
+        const PenPreset& preset = m_presets.at(i);
+        QPixmap pm(20, 20);
+        pm.fill(Qt::transparent);
+        QPainter pp(&pm);
+        pp.setRenderHint(QPainter::Antialiasing, true);
+        pp.setPen(QPen(QColor(128, 128, 128, 120), 1.5));
+        pp.setBrush(preset.color);
+        pp.drawEllipse(QRectF(2, 2, 16, 16));
+        pp.end();
+        pm.setDevicePixelRatio(2.0);
+        const QString sc =
+            preset.shortcut.isEmpty() ? QString() : QStringLiteral("  (%1)").arg(preset.shortcut);
+        auto* act = menu.addAction(QIcon(pm), preset.label + sc, [this, i] { selectPreset(i); });
+        act->setCheckable(true);
+        act->setChecked(i == m_activePreset);
+    }
+    menu.addSeparator();
+    auto* saveMenu = menu.addMenu(tr("★ Guardar pincel actual en…"));
+    for (int i = 0; i < m_presets.size(); ++i) {
+        const PenPreset& preset = m_presets.at(i);
+        const QString sc =
+            preset.shortcut.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(preset.shortcut);
+        saveMenu->addAction(QStringLiteral("%1%2").arg(preset.label, sc),
+                            [this, i] { saveCurrentToPreset(i); });
+    }
+    auto* editMenu = menu.addMenu(tr("Configurar nombre / atajo…"));
+    for (int i = 0; i < m_presets.size(); ++i) {
+        const PenPreset& preset = m_presets.at(i);
+        const QString sc = preset.shortcut.isEmpty() ? tr("sin atajo") : preset.shortcut;
+        editMenu->addAction(QStringLiteral("%1 (%2)").arg(preset.label, sc), [this, i, menuAnchor] {
+            editPresetMenu(i, menuAnchor->mapToGlobal(QPoint(0, menuAnchor->height())));
+        });
+    }
+    menu.exec(menuAnchor->mapToGlobal(QPoint(0, menuAnchor->height())));
+}
+
+void FloatingToolbar::saveCurrentToPreset(int index) {
+    if (index < 0 || index >= m_presets.size() || !m_canvas) {
+        return;
+    }
+    const ToolType t = m_canvas->tool();
+    if (t == ToolType::Eraser || t == ToolType::Select || t == ToolType::Hand || t == ToolType::Laser) {
+        return;
+    }
+    PenPreset& preset = m_presets[index];
+    preset.tool = t;
+    preset.color = m_canvas->inkColor();
+    preset.size = m_canvas->strokeSize();
+    preset.linePattern = m_canvas->linePattern();
+    preset.tipStyle = (t == ToolType::Highlighter) ? m_canvas->highlighterTip() : m_canvas->penTip();
+    preset.opacity = (t == ToolType::Highlighter) ? m_canvas->highlighterOpacity() : 1.0;
+    m_activePreset = index;
+    m_presetsRestored = true;
+    savePresets();
+    updatePresetButtons();
+    showToast(tr("Favorito «%1» actualizado").arg(preset.label));
+}
+
+void FloatingToolbar::editPresetMenu(int index, const QPoint& globalPos) {
+    if (index < 0 || index >= m_presets.size()) {
+        return;
+    }
+    QMenu menu(this);
+    menu.addAction(tr("Guardar pincel actual aquí"), [this, index] { saveCurrentToPreset(index); });
+    menu.addAction(tr("Renombrar favorito…"), [this, index] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(window(), tr("Renombrar favorito"), tr("Nombre:"),
+                                                   QLineEdit::Normal, m_presets.at(index).label, &ok);
+        if (!ok || name.trimmed().isEmpty()) {
+            return;
+        }
+        m_presets[index].label = name.trimmed();
+        m_presetsRestored = true;
+        savePresets();
+        updatePresetButtons();
+    });
+    menu.addAction(tr("Cambiar atajo de teclado…"), [this, index] {
+        QDialog dialog(window());
+        dialog.setWindowTitle(tr("Atajo para «%1»").arg(m_presets.at(index).label));
+        auto* col = new QVBoxLayout(&dialog);
+        col->addWidget(new QLabel(tr("Pulsa la tecla o combinación que quieres usar:"), &dialog));
+        auto* edit = new QKeySequenceEdit(QKeySequence(m_presets.at(index).shortcut), &dialog);
+        col->addWidget(edit);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+        auto* clearBtn = buttons->addButton(tr("Quitar"), QDialogButtonBox::ResetRole);
+        connect(clearBtn, &QPushButton::clicked, edit, &QKeySequenceEdit::clear);
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        col->addWidget(buttons);
+        if (dialog.exec() != QDialog::Accepted) {
+            return;
+        }
+        m_presets[index].shortcut = edit->keySequence().toString(QKeySequence::PortableText);
+        m_presetsRestored = true;
+        savePresets();
+        updatePresetButtons();
+        emit presetsChanged();
+    });
+    menu.addSeparator();
+    menu.addAction(tr("Restablecer favoritos por defecto"), [this] {
+        auto settings = appSettings();
+        settings->remove(QStringLiteral("presets"));
+        m_presetsRestored = false;
+        initPresets();
+        updatePresetButtons();
+        emit presetsChanged();
+        refreshFromCanvas();
+    });
+    menu.exec(globalPos);
+}
+
+void FloatingToolbar::selectPreset(int index) {
+    if (index < 0 || index >= m_presets.size() || !m_canvas) {
+        return;
+    }
     m_activePreset = index;
     const PenPreset& preset = m_presets[index];
     m_canvas->setTool(preset.tool);
     m_canvas->setInkColor(preset.color);
     m_canvas->setStrokeSize(preset.size);
     m_canvas->setLinePattern(preset.linePattern);
+    if (preset.tool == ToolType::Highlighter) {
+        m_canvas->setHighlighterTip(preset.tipStyle);
+        m_canvas->setHighlighterOpacity(preset.opacity);
+    } else if (preset.tool == ToolType::Pen || preset.tool == ToolType::Ballpoint) {
+        m_canvas->setPenTip(preset.tipStyle);
+    }
+    updatePresetButtons();
     refreshFromCanvas();
 }
 
 void FloatingToolbar::setColor(const QColor& color) {
-    if (!m_canvas || !color.isValid())
+    if (!m_canvas || !color.isValid()) {
         return;
+    }
     m_canvas->setInkColor(color);
     syncActivePresetFromCanvas();
     updateStationery();
@@ -1690,59 +1840,38 @@ void FloatingToolbar::setColor(const QColor& color) {
 }
 
 void FloatingToolbar::syncActivePresetFromCanvas() {
-    if (!m_canvas || m_activePreset < 0 || m_activePreset >= m_presets.size())
+    if (!m_canvas || m_activePreset < 0 || m_activePreset >= m_presets.size()) {
         return;
-    if (m_canvas->tool() == ToolType::Eraser) // el borrador no tiene preset de tinta
+    }
+    if (m_canvas->tool() == ToolType::Eraser) {
         return;
+    }
     PenPreset& preset = m_presets[m_activePreset];
     preset.tool = m_canvas->tool();
     preset.color = m_canvas->inkColor();
     preset.size = m_canvas->strokeSize();
     preset.linePattern = m_canvas->linePattern();
-    // Persistir los presets favoritos solo cuando realmente cambian.
-    const QString sig = QString("%1|%2|%3|%4|%5")
+    preset.tipStyle =
+        (preset.tool == ToolType::Highlighter) ? m_canvas->highlighterTip() : m_canvas->penTip();
+    preset.opacity = (preset.tool == ToolType::Highlighter) ? m_canvas->highlighterOpacity() : 1.0;
+    const QString sig = QString("%1|%2|%3|%4|%5|%6|%7")
                             .arg(m_activePreset)
                             .arg(int(preset.tool))
                             .arg(preset.color.name(QColor::HexArgb))
                             .arg(preset.size)
-                            .arg(int(preset.linePattern));
+                            .arg(int(preset.linePattern))
+                            .arg(preset.tipStyle)
+                            .arg(qRound(preset.opacity * 100.0));
     if (sig != m_lastPresetsSig) {
         m_lastPresetsSig = sig;
         savePresets();
+        updatePresetButtons();
     }
 }
 
 void FloatingToolbar::updateStationery() {
-    // Actualiza el color de tinta en los 4 útiles ilustrados SVG + el botón
-    // "Trazo" de la pill superior (solo si el color o tema realmente cambió).
     const ThemeConfig theme = getThemeConfig(m_theme);
-    const QColor ink = m_canvas ? m_canvas->inkColor() : theme.accent;
-    const QString sig = QString("%1|%2").arg(int(m_theme)).arg(ink.name(QColor::HexArgb));
-    // Los lápices del estuche se repintan solo si su tinta cambia (setInk es barato).
-    for (QToolButton* button : m_writingBtns)
-        if (auto* pen = dynamic_cast<PenTrayButton*>(button)) {
-            pen->setInk(ink);
-            pen->setDarkTheme(theme.isDark);
-        }
-    if (sig != m_lastInkIconSig) {
-        m_lastInkIconSig = sig;
-    }
-
-    // Muestras de la paleta del popover "Trazo" (ColorDotButton antialias):
-    // punto de color real + rim sutil de 1px que contrasta con el tema.
     const QColor rim = theme.isDark ? QColor(255, 255, 255, 70) : QColor(15, 23, 42, 80);
-    for (int i = 0; i < m_swatches.size() && i < m_palette.size(); ++i) {
-        ColorDotButton* swatch = m_swatches.at(i);
-        swatch->setDotColor(m_palette.at(i));
-        swatch->setAccentColor(theme.accent);
-        swatch->setRimColor(rim);
-        swatch->setToolTip(m_palette.at(i).name());
-    }
-    if (m_trayColorBtn && m_canvas) {
-        m_trayColorBtn->setDotColor(m_canvas->inkColor());
-        m_trayColorBtn->setAccentColor(theme.accent);
-        m_trayColorBtn->setRimColor(rim);
-    }
     for (int i = 0; i < m_trayDots.size(); ++i) {
         ColorDotButton* dot = m_trayDots.at(i);
         if (i >= m_palette.size()) {
@@ -1754,326 +1883,176 @@ void FloatingToolbar::updateStationery() {
         dot->setRimColor(rim);
         dot->show();
     }
+    for (ColorDotButton* dot : m_edgeMarkDots) {
+        if (!dot) {
+            continue;
+        }
+        dot->setAccentColor(theme.accent);
+        dot->setRimColor(rim);
+    }
 }
 
 void FloatingToolbar::updateZoomLabel() {
-    if (!m_canvas || !m_zoomResetBtn)
+    if (!m_canvas || !m_zoomResetBtn) {
         return;
+    }
     const int percent = qRound(m_canvas->viewport().zoom * 100.0);
     m_zoomResetBtn->setText(QString("%1 %").arg(percent));
 }
 
-void FloatingToolbar::onClearClicked() {
-    if (!m_clearBtn)
-        return;
-    if (!m_clearArmed) {
-        // Primer paso: armar la confirmación (se desarma sola a los 3 s).
-        m_clearArmed = true;
-        m_clearBtn->setText("¿Borrar anotaciones? Pulsa de nuevo");
-        m_clearBtn->setStyleSheet(
-            "QPushButton { background: rgba(239, 68, 68, 70); color: #fecaca; border-radius: 14px; }");
-        if (m_clearTimer)
-            m_clearTimer->start(3000);
-        return;
-    }
-    disarmClearButton();
-    if (m_canvas)
-        m_canvas->clearBoard();
-    closePopovers();
-    refreshFromCanvas();
-}
-
-void FloatingToolbar::disarmClearButton() {
-    m_clearArmed = false;
-    if (m_clearTimer && m_clearTimer->isActive())
-        m_clearTimer->stop();
-    if (m_clearBtn) {
-        m_clearBtn->setText("Borrar anotaciones de esta página");
-        m_clearBtn->setStyleSheet(QString());
-    }
-}
-
 void FloatingToolbar::refreshFromCanvas() {
-    if (!m_canvas)
+    if (!m_canvas) {
         return;
+    }
 
-    // Cambio de tema: rederivar todo el cromo (QSS, iconos, paleta, presets).
     const ThemeId theme = m_canvas->themeId();
     if (theme != m_theme) {
         m_theme = theme;
         m_palette = getPaletteForTheme(getThemeConfig(theme).isDark);
+        if (m_strokePopover) {
+            m_strokePopover->setPalette(m_palette);
+        }
         applyThemeStylesheet();
-        if (m_canvas->tool() != ToolType::Highlighter)
+        if (m_canvas->tool() != ToolType::Highlighter) {
             m_canvas->setInkColor(adaptInkToTheme(m_canvas->inkColor(), getThemeConfig(theme).isDark));
+        }
     }
 
-    if (m_thumbPanel && !m_thumbPanel->isHidden() && m_thumbTimer) {
-        const int active = m_canvas->currentPageIndex();
-        if (m_thumbCurrent != active) {
-            if (auto* previous = m_thumbList->item(m_thumbCurrent))
-                previous->setIcon(QIcon(QPixmap::fromImage(m_canvas->pageThumbnail(m_thumbCurrent, thumbnailSize))));
-            m_thumbCurrent = active;
-            if (m_thumbList->currentRow() != active)
-                m_thumbList->setCurrentRow(active, QItemSelectionModel::ClearAndSelect);
-        }
-        m_thumbTimer->start();
+    if (m_thumbPanel) {
+        m_thumbPanel->syncFromCanvas();
     }
     syncActivePresetFromCanvas();
+    updatePresetButtons();
 
-    // Toggle "Posición de barra" (estado propio del toolbar, fuera de la
-    // huella del lienzo para que siempre quede sincronizado).
-    if (m_dockLeftBtn && m_dockTopBtn && m_dockBottomBtn) {
-        m_dockLeftBtn->setChecked(m_dockPos == DockPos::Izquierda);
-        m_dockTopBtn->setChecked(m_dockPos == DockPos::Arriba);
-        m_dockBottomBtn->setChecked(m_dockPos == DockPos::Abajo);
-    }
-    // Formato de hoja (Infinita / Hoja A4 / Diapo 16:9).
-    const PageFormat pageFormat = m_canvas->pageFormat();
-    for (int i = 0; i < m_formatBtns.size() && i < m_formatSpecs.size(); ++i)
-        m_formatBtns.at(i)->setChecked(m_formatSpecs.at(i) == pageFormat);
-    if (m_mathBeautifyBtn)
-        m_mathBeautifyBtn->setChecked(m_canvas->mathBeautifyEnabled());
-    if (m_strokeBeautifyBtn)
-        m_strokeBeautifyBtn->setChecked(m_canvas->mathBeautifyEnabled());
-    if (m_mathModeBtn)
-        m_mathModeBtn->setChecked(m_canvas->mathBeautifyEnabled());
-    const int curStyle = m_canvas->cursorStyle();
-    for (int i = 0; i < m_cursorBtns.size(); ++i)
-        m_cursorBtns.at(i)->setChecked(i == curStyle);
+    ToolbarCanvasState state;
+    state.tool = m_canvas->tool();
+    state.inkColor = m_canvas->inkColor().rgba();
+    state.strokeSize = m_canvas->strokeSize();
+    state.linePattern = m_canvas->linePattern();
+    state.lineEnding = m_canvas->lineEnding();
+    state.stabilizer = m_canvas->stabilizer();
+    state.highlighterOpacity = m_canvas->highlighterOpacity();
+    state.eraserMode = m_canvas->eraserMode();
+    state.eraserSize = m_canvas->eraserSize();
+    state.eraserPreserveShapes = m_canvas->eraserPreserveShapes();
+    state.eraserOnlyHighlight = m_canvas->eraserOnlyHighlight();
+    state.pressureSensitivity = m_canvas->pressureSensitivity();
+    state.themeId = m_canvas->themeId();
+    state.backgroundTemplate = m_canvas->backgroundTemplate();
+    state.pageFormat = m_canvas->pageFormat();
+    state.templateScale = m_canvas->templateScale();
+    state.canUndo = m_canvas->canUndo();
+    state.canRedo = m_canvas->canRedo();
+    state.zoom = m_canvas->viewport().zoom;
+    state.shapeKind = m_canvas->shapeKind();
+    state.polygonSides = m_canvas->polygonSides();
+    state.triangleVariant = m_canvas->triangleVariant();
+    state.quadVariant = m_canvas->quadVariant();
+    state.solidKind = m_canvas->solidKind();
+    state.congruenceMarkSpec = m_canvas->congruenceMarkSpec();
+    state.holdToShapeEnabled = m_canvas->holdToShapeEnabled();
+    state.smartGuidesEnabled = m_canvas->smartGuidesEnabled();
+    state.mathBeautifyEnabled = m_canvas->mathBeautifyEnabled();
+    state.swapPenButtons = m_canvas->swapPenButtons();
+    state.cursorStyle = m_canvas->cursorStyle();
+    state.drawingPolyline = m_canvas->isDrawingPolyline();
+    state.hasSelection = m_canvas->hasSelection();
+    state.hasSelectedShape = m_canvas->hasSelectedShape();
+    state.hasSelectedAxes = m_canvas->hasSelectedAxes();
+    state.hasSelectedStrokes = m_canvas->hasSelectedStrokes();
+    state.hasSelectedImage = m_canvas->hasSelectedImage();
+    state.hasSelectedText = m_canvas->hasSelectedText();
+    state.hasLassoSelection = m_canvas->hasLassoSelection();
+    state.canGroupSelection = m_canvas->canGroupSelection();
+    state.canUngroupSelection = m_canvas->canUngroupSelection();
+    state.activelyDragging = m_canvas->isActivelyDragging();
+    state.lassoRectMode = m_canvas->lassoRectMode();
+    state.penTip = m_canvas->penTip();
+    state.highlighterTip = m_canvas->highlighterTip();
+    state.shadePattern = m_canvas->shadePattern();
+    state.pdfPageCount = m_canvas->documentPdfPageCount();
+    state.currentPageIndex = m_canvas->currentPageIndex();
+    state.pageCount = m_canvas->pageCount();
+    state.cleanUi = m_cleanUi;
+    state.dockPos = m_dockPos;
+    state.pageNavDir = m_pageNavDir;
+    state.valid = true;
 
-    // Huella de estado: evita reflashear la UI en cada punto de un trazo a 200 Hz.
-    const int pdfPageCount = m_canvas->documentPdfPageCount();
-    const QString signature = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15|%16|%17|%18|%19|%20|%21|%22|%23|%24|%25|%26|%27|%28|%29|%30")
-                                  .arg(int(m_canvas->tool()))
-                                  .arg(m_canvas->inkColor().name(QColor::HexArgb))
-                                  .arg(m_canvas->strokeSize())
-                                  .arg(int(m_canvas->linePattern()))
-                                  .arg(m_canvas->stabilizer())
-                                  .arg(qRound(m_canvas->highlighterOpacity() * 100.0))
-                                  .arg(int(m_canvas->eraserMode()))
-                                  .arg(m_canvas->eraserSize())
-                                  .arg(int(m_canvas->eraserOnlyHighlight()))
-                                  .arg(qRound(m_canvas->pressureSensitivity() * 100.0))
-                                  .arg(int(m_canvas->themeId()))
-                                  .arg(int(m_canvas->backgroundTemplate()))
-                                  .arg(m_canvas->canUndo())
-                                  .arg(m_canvas->canRedo())
-                                  .arg(m_canvas->viewport().zoom)
-                                  .arg(int(m_canvas->shapeKind()))
-                                  .arg(m_canvas->holdToShapeEnabled())
-                                  .arg(m_canvas->smartGuidesEnabled())
-                                  .arg(int(m_canvas->isDrawingPolyline()) * 4 + int(m_canvas->hasSelectedAxes()) * 2 + int(m_canvas->hasSelectedShape()))
-                                  .arg(int(m_canvas->hasLassoSelection()) + 2 * int(m_canvas->hasSelectedStrokes())
-                                       + 4 * int(m_canvas->canGroupSelection()) + 8 * int(m_canvas->canUngroupSelection()))
-                                  .arg(m_canvas->hasSelectedImage())
-                                  .arg(m_canvas->hasSelectedText())
-                                  .arg(pdfPageCount)
-                                  .arg(m_canvas->currentPageIndex())
-                                  .arg(m_canvas->pageCount())
-                                  .arg(int(m_canvas->lineEnding()))
-                                  .arg(m_canvas->polygonSides())
-                                  .arg(m_canvas->triangleVariant())
-                                  .arg(m_canvas->quadVariant())
-                                  .arg(m_canvas->solidKind())
-                                  .arg(m_canvas->isActivelyDragging())
-                                  .arg(m_canvas->penTip() * 64 + m_canvas->highlighterTip() * 16
-                                       + int(m_canvas->lassoRectMode()) * 8 + int(m_canvas->shadePattern())
-                                       + qHash(m_canvas->congruenceMarkSpec()));
-    if (signature == m_lastStateSig)
+    if (state == m_lastCanvasState) {
         return;
-    m_lastStateSig = signature;
-
+    }
+    m_lastCanvasState = state;
     m_updatingUi = true;
 
-    // Historial
-    m_undoBtn->setEnabled(m_canvas->canUndo());
-    m_redoBtn->setEnabled(m_canvas->canRedo());
+    m_undoBtn->setEnabled(state.canUndo);
+    m_redoBtn->setEnabled(state.canRedo);
 
-    // Herramientas (10 exclusivas: 4 útiles ilustrados + 6 duotono)
-    const ToolType tool = m_canvas->tool();
-    for (int i = 0; i < m_writingBtns.size() && i < m_writingKinds.size(); ++i)
-        if (m_writingKinds.at(i) == tool || (m_writingKinds.at(i) == ToolType::Pen && tool == ToolType::Ballpoint))
+    const ToolType tool = state.tool;
+    for (int i = 0; i < m_writingBtns.size() && i < m_writingKinds.size(); ++i) {
+        if (m_writingKinds.at(i) == tool
+            || (m_writingKinds.at(i) == ToolType::Pen && tool == ToolType::Ballpoint)) {
             m_writingBtns.at(i)->setChecked(true);
-    for (int i = 0; i < m_secondaryBtns.size() && i < m_secondaryKinds.size(); ++i)
-        if (m_secondaryBtns.at(i) != m_stickersBtn && m_secondaryKinds.at(i) == tool)
+        }
+    }
+    for (int i = 0; i < m_secondaryBtns.size() && i < m_secondaryKinds.size(); ++i) {
+        if (m_secondaryBtns.at(i) != m_stickersBtn && m_secondaryKinds.at(i) == tool) {
             m_secondaryBtns.at(i)->setChecked(true);
-    updateStationery();
-
-    // Popover "Trazo" (10 niveles discretos + puntas de lápiz/resaltador + cuadritos de relleno)
-    const bool isHl = tool == ToolType::Highlighter;
-    const bool isPen = tool == ToolType::Pen || tool == ToolType::Ballpoint;
-    const int sizeLevel = sizeToLevel(m_canvas->strokeSize(), isHl);
-    if (m_sizeSlider->value() != sizeLevel)
-        m_sizeSlider->setValue(sizeLevel);
-    m_sizeLabel->setText(QString("%1 / 10").arg(sizeLevel));
-    updateStrokePreview();
-    updateFillSwatches();
-    if (m_penTipSection)
-        m_penTipSection->setVisible(isPen);
-    for (int i = 0; i < m_penTipBtns.size(); ++i)
-        m_penTipBtns.at(i)->setChecked(i == m_canvas->penTip());
-    if (m_hlTipSection)
-        m_hlTipSection->setVisible(isHl);
-    const bool isRectHl = (m_canvas->highlighterTip() == 2);
-    if (m_hlTipBtns.size() >= 2) {
-        m_hlTipBtns.at(0)->setChecked(!isRectHl);
-        m_hlTipBtns.at(1)->setChecked(isRectHl);
+        }
     }
-    const LinePattern pattern = m_canvas->linePattern();
-    for (int i = 0; i < m_patternSpecs.size(); ++i) {
-        m_patternBtns.at(i)->setChecked(m_patternSpecs.at(i).second == pattern);
-        m_patternBtns.at(i)->setEnabled(pattern != LinePattern::Dimension);
-    }
-
-    const int stabilizerLevel = qRound(m_canvas->stabilizer() * m_stabilizerSlider->maximum());
-    if (m_stabilizerSlider->value() != stabilizerLevel)
-        m_stabilizerSlider->setValue(stabilizerLevel);
-    m_stabilizerLabel->setText(QString("%1 / 10").arg(stabilizerLevel));
-
-    // Sensibilidad a la presión (0%..100%) y auto-embellecedor de escritura
-    const int pressureLevel = qRound(m_canvas->pressureSensitivity() * 10.0);
-    if (m_pressureSlider && m_pressureSlider->value() != pressureLevel)
-        m_pressureSlider->setValue(pressureLevel);
-    if (m_pressureLabel)
-        m_pressureLabel->setText(QString("%1%").arg(pressureLevel * 10));
-    if (m_mathBeautifyBtn)
-        m_mathBeautifyBtn->setChecked(m_canvas->mathBeautifyEnabled());
-    if (m_strokeBeautifyBtn)
-        m_strokeBeautifyBtn->setChecked(m_canvas->mathBeautifyEnabled());
-    if (m_mathModeBtn)
-        m_mathModeBtn->setChecked(m_canvas->mathBeautifyEnabled());
 
     const QColor ink = m_canvas->inkColor();
-    for (int i = 0; i < m_swatches.size() && i < m_palette.size(); ++i)
-        m_swatches.at(i)->setChecked(m_palette.at(i) == ink);
     const bool inking = tool == ToolType::Pen || tool == ToolType::Ballpoint
                         || tool == ToolType::Highlighter || tool == ToolType::Shape
                         || tool == ToolType::Polyline || tool == ToolType::Text || tool == ToolType::Fill;
-    for (int i = 0; i < m_trayDots.size() && i < m_palette.size(); ++i)
+    for (int i = 0; i < m_trayDots.size() && i < m_palette.size(); ++i) {
         m_trayDots.at(i)->setChecked(inking && m_palette.at(i) == ink);
+    }
+    updateStationery();
 
-    // Controles del borrador / lazo / relleno
-    const bool erasing = tool == ToolType::Eraser;
-    const bool filling = tool == ToolType::Fill;
-    const bool lassoTool = tool == ToolType::Lasso;
-    updateTipIcons();
-    if (m_lassoModeSection)
-        m_lassoModeSection->setVisible(lassoTool);
-    if (m_lassoFreeBtn)
-        m_lassoFreeBtn->setChecked(!m_canvas->lassoRectMode());
-    if (m_lassoRectBtn)
-        m_lassoRectBtn->setChecked(m_canvas->lassoRectMode());
-    m_strokeStyleSection->setVisible(!erasing && !lassoTool);
-    m_strokeGeometrySection->setVisible(!filling && !lassoTool);
-    m_fillStyleSection->setVisible(filling);
-    for (const auto& [button, pattern] : m_fillStyles)
-        if (pattern == m_canvas->shadePattern())
-            button->setChecked(true);
-    m_stabilizerRow->setVisible(!erasing && !filling && !lassoTool && !isHl);
-    if (m_hlOpacityRow) {
-        m_hlOpacityRow->setVisible(isHl);
-        if (m_hlOpacitySlider) {
-            const double curOp = m_canvas->highlighterOpacity();
-            int bestIdx = 3;
-            double bestDist = 1e9;
-            for (int i = 0; i < 10; ++i) {
-                const double d = std::abs(kHlOpacityLevels[i] - curOp);
-                if (d < bestDist) { bestDist = d; bestIdx = i; }
-            }
-            if (m_hlOpacitySlider->value() != bestIdx + 1)
-                m_hlOpacitySlider->setValue(bestIdx + 1);
-        }
+    if (m_strokePopover) {
+        m_strokePopover->syncFromCanvas();
     }
-    if (m_strokeBeautifyBtn)
-        m_strokeBeautifyBtn->setVisible(isPen);
-    m_eraserSection->setVisible(erasing);
-    m_eraserStrokeBtn->setChecked(m_canvas->eraserMode() == EraserMode::Stroke);
-    m_eraserPartialBtn->setChecked(m_canvas->eraserMode() == EraserMode::Partial);
-    const int eraserFilterIdx = m_canvas->eraserOnlyHighlight() ? 2 : (m_canvas->eraserPreserveShapes() ? 1 : 0);
-    for (int i = 0; i < m_eraserFilterBtns.size(); ++i)
-        m_eraserFilterBtns.at(i)->setChecked(i == eraserFilterIdx);
-    const int eraserLevel = std::clamp(qRound(m_canvas->eraserSize() / 8.0), 1, 10);
-    if (m_eraserPreview) {
-        QColor erCol = getThemeConfig(m_theme).uiText;
-        erCol.setAlpha(185);
-        m_eraserPreview->setInk(erCol, 4.0 + eraserLevel * 1.8);
+    if (m_paperPopover) {
+        m_paperPopover->setToolbarState(m_dockPos, m_pageNavDir);
+        m_paperPopover->syncFromCanvas();
     }
-    if (m_eraserSizeSlider->value() != eraserLevel)
-        m_eraserSizeSlider->setValue(eraserLevel);
-    m_eraserSizeLabel->setText(QString("%1 / 10").arg(eraserLevel));
-    if (m_openPopover == m_strokePopover) {
-        const QRect oldGeometry = m_strokePopover->geometry();
-        positionOpenPopover();
-        if (m_strokePopover->geometry() != oldGeometry)
-            updateOverlayMask();
+    if (m_shapesPopover) {
+        m_shapesPopover->syncFromCanvas();
+    }
+    if (m_filePopover) {
+        m_filePopover->syncFromCanvas();
     }
 
-    // Popover "Papel"
-    const ThemeId activeTheme = m_canvas->themeId();
-    for (int i = 0; i < m_themeBtns.size() && i < m_themeSpecs.size(); ++i)
-        m_themeBtns.at(i)->setChecked(m_themeSpecs.at(i) == activeTheme);
-    const BackgroundTemplate tpl = m_canvas->backgroundTemplate();
-    for (int i = 0; i < m_templateSpecs.size(); ++i)
-        m_templateBtns.at(i)->setChecked(m_templateSpecs.at(i).second == tpl);
-
-    // Popover "Figuras": tipo de figura y toggles
-    const ShapeKind shapeKind = m_canvas->shapeKind();
-    const LinePattern pat = m_canvas->linePattern();
-    const bool dimension = pat == LinePattern::Dimension;
-    {
-        const QSignalBlocker blocker(m_shapeEndings);
-        m_shapeEndings->setCurrentIndex(int(m_canvas->lineEnding()));
-        m_shapeEndings->setEnabled(!dimension);
-    }
-    for (int i = 0; i < m_shapeKindBtns.size(); ++i) {
-        const QString btnMark = i < m_shapeMarkSpecs.size() ? m_shapeMarkSpecs.at(i) : QString();
-        bool on = m_shapeKindSpecs.at(i) == shapeKind && btnMark == m_canvas->congruenceMarkSpec();
-        if (on && btnMark.isEmpty() && m_shapeKindSpecs.at(i) == ShapeKind::Line)
-            on = m_shapeDimensionSpecs.at(i) == dimension;
-        if (on && m_shapeSidesSpecs.at(i) > 0)
-            on = m_shapeSidesSpecs.at(i) == m_canvas->polygonSides()
-                 && (i < m_shapeQuadSpecs.size() ? m_shapeQuadSpecs.at(i) == m_canvas->quadVariant() : true);
-        if (on && i < m_shapeSolidSpecs.size() && m_shapeSolidSpecs.at(i) >= 0)
-            on = m_shapeSolidSpecs.at(i) == m_canvas->solidKind();
-        if (on && m_shapeTriSpecs.at(i) >= 0)
-            on = m_shapeTriSpecs.at(i) == m_canvas->triangleVariant();
-        m_shapeKindBtns.at(i)->setChecked(on);
-    }
-    m_holdToShapeBtn->setChecked(m_canvas->holdToShapeEnabled());
-    m_smartGuidesBtn->setChecked(m_canvas->smartGuidesEnabled());
-
-    const bool drawingPolyline = m_canvas->isDrawingPolyline();
-    const bool hasSel = !drawingPolyline && m_canvas->hasSelection();
+    const bool drawingPolyline = state.drawingPolyline;
+    const bool hasSel = !drawingPolyline && state.hasSelection;
     m_finishPolylineBtn->setVisible(drawingPolyline);
     m_closePolylineBtn->setVisible(drawingPolyline);
-    if (m_ctxBeautifyBtn)
-        m_ctxBeautifyBtn->setVisible(hasSel && m_canvas->hasSelectedStrokes());
-    if (m_ctxAxesFuncBtn)
-        m_ctxAxesFuncBtn->setVisible(hasSel && m_canvas->hasSelectedAxes());
-    if (m_ctxDuplicateBtn)
+    if (m_ctxBeautifyBtn) {
+        m_ctxBeautifyBtn->setVisible(hasSel && state.hasSelectedStrokes);
+    }
+    if (m_ctxAxesFuncBtn) {
+        m_ctxAxesFuncBtn->setVisible(hasSel && state.hasSelectedAxes);
+    }
+    if (m_ctxDuplicateBtn) {
         m_ctxDuplicateBtn->setVisible(hasSel);
-    if (m_ctxDeleteBtn)
+    }
+    if (m_ctxDeleteBtn) {
         m_ctxDeleteBtn->setVisible(hasSel);
+    }
     m_selectionActions->setVisible(hasSel);
-    const bool contextDesired = !m_cleanUi && !m_canvas->isActivelyDragging()
-        && (drawingPolyline || m_canvas->hasSelection());
+    const bool contextDesired =
+        !m_cleanUi && !state.activelyDragging && (drawingPolyline || state.hasSelection);
     const bool contextChanged = (m_contextPill->isVisible() != contextDesired);
-    if (contextChanged)
+    if (contextChanged) {
         m_contextPill->setVisible(contextDesired);
-    if (contextChanged || contextDesired)
-        positionChildren(); // recalcula posición y máscara con el contenido actual
+    }
+    if (contextChanged || contextDesired) {
+        positionChildren();
+    }
 
-    // Etiqueta informativa del PDF cargado
-    m_pdfInfoLabel->setVisible(pdfPageCount > 0);
-    if (pdfPageCount > 0)
-        m_pdfInfoLabel->setText(tr("Páginas de PDF en el cuaderno · %1").arg(pdfPageCount));
-
-    // Pill de páginas (inferior izquierda): indicador y habilitaciones
-    const int pageIndex = m_canvas->currentPageIndex();
-    const int pageCount = m_canvas->pageCount();
-    m_pageLabel->setText(QString("%1 / %2").arg(pageIndex + 1).arg(pageCount));
-    m_pagePrevBtn->setEnabled(pageIndex > 0);
-    m_pageNextBtn->setEnabled(pageIndex < pageCount - 1);
+    m_pageLabel->setText(QString("%1 / %2").arg(state.currentPageIndex + 1).arg(state.pageCount));
+    m_pagePrevBtn->setEnabled(state.currentPageIndex > 0);
+    m_pageNextBtn->setEnabled(state.currentPageIndex < state.pageCount - 1);
     m_updatingUi = false;
 
     updateZoomLabel();
@@ -2100,9 +2079,9 @@ bool FloatingToolbar::eventFilter(QObject* watched, QEvent* event) {
             setGeometry(m_canvas->rect());
             positionChildren();
         } else if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::TabletPress) {
-            // Un clic o toque del lápiz sobre el lienzo cierra cualquier popover abierto.
-            if (m_openPopover)
+            if (m_openPopover || (m_edgeMarkPill && !m_edgeMarkPill->isHidden())) {
                 closePopovers();
+            }
         }
     }
     return QWidget::eventFilter(watched, event);

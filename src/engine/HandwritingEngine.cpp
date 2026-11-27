@@ -1,17 +1,20 @@
 #include "engine/HandwritingEngine.h"
 
+#include "core/Utils.h"
 #include "engine/InkEngine.h"
 #include "engine/MathCnnWeights.h"
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutexLocker>
 #include <QPainter>
+#include <QSaveFile>
 #include <QStandardPaths>
-#include <QUuid>
 
 #include <algorithm>
 #include <array>
@@ -486,7 +489,9 @@ HandwritingEngine::HandwritingEngine() {
 
 QString HandwritingEngine::templatesFilePath() const {
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir().mkpath(dir);
+    if (dir.isEmpty()) {
+        return {};
+    }
     return dir + QStringLiteral("/templates.json");
 }
 
@@ -554,25 +559,35 @@ QVector<QVector<QPointF>> HandwritingEngine::normalizeDirected(
 
 double HandwritingEngine::directedStrokeDistance(const QVector<QVector<QPointF>>& a,
                                                  const QVector<QVector<QPointF>>& b) {
-    if (a.size() != b.size() || a.isEmpty())
+    if (a.size() != b.size() || a.isEmpty()) {
         return 1e9;
-    const int k = a.size();
-    if (k == 1)
-        return pathDistance(a[0], b[0]);
-    if (k == 2) {
-        const double d01 = 0.5 * (pathDistance(a[0], b[0]) + pathDistance(a[1], b[1]));
-        const double d10 = 0.5 * (pathDistance(a[0], b[1]) + pathDistance(a[1], b[0]));
-        return std::min(d01, d10);
     }
-    // k == 3: test all 6 permutations of stroke order
-    int perm[3] = {0, 1, 2};
+    const int k = int(a.size());
+    if (k == 1) {
+        return pathDistance(a[0], b[0]);
+    }
+    if (k > 4) {
+        double sum = 0.0;
+        for (int i = 0; i < k; ++i) {
+            sum += pathDistance(a[i], b[i]);
+        }
+        return sum / double(k);
+    }
+    double distMatrix[4][4]{};
+    for (int i = 0; i < k; ++i) {
+        for (int j = 0; j < k; ++j) {
+            distMatrix[i][j] = pathDistance(a[i], b[j]);
+        }
+    }
+    std::array<int, 4> perm{0, 1, 2, 3};
     double best = std::numeric_limits<double>::max();
     do {
-        const double d = (pathDistance(a[0], b[perm[0]])
-                          + pathDistance(a[1], b[perm[1]])
-                          + pathDistance(a[2], b[perm[2]])) / 3.0;
-        best = std::min(best, d);
-    } while (std::next_permutation(perm, perm + 3));
+        double sum = 0.0;
+        for (int i = 0; i < k; ++i) {
+            sum += distMatrix[i][perm[i]];
+        }
+        best = std::min(best, sum / double(k));
+    } while (std::next_permutation(perm.begin(), perm.begin() + k));
     return best;
 }
 
@@ -580,16 +595,17 @@ void HandwritingEngine::addTemplate(const QString& label,
                                     bool isMathOrDigit,
                                     const QVector<QVector<QPointF>>& sampleStrokes,
                                     const QVector<QVector<QPointF>>& canonicalStrokes,
-                                    bool isCustom) {
+                                    bool isCustom) const {
     GlyphTemplate tpl;
     tpl.label = label;
     tpl.isMathOrDigit = isMathOrDigit;
     tpl.isCustom = isCustom;
-    tpl.strokeCount = sampleStrokes.size();
+    tpl.strokeCount = int(sampleStrokes.size());
     tpl.directedStrokes = normalizeDirected(sampleStrokes, &tpl.aspectRatio);
     tpl.canonicalStrokes = normalizeStrokes01(canonicalStrokes);
-    if (!tpl.directedStrokes.isEmpty() && !tpl.canonicalStrokes.isEmpty())
+    if (!tpl.directedStrokes.isEmpty() && !tpl.canonicalStrokes.isEmpty()) {
         m_templates.append(std::move(tpl));
+    }
 }
 
 // ==================== CAPA 1: DETECTOR GEOMÉTRICO ESTRUCTURAL ====================
@@ -1532,47 +1548,75 @@ void HandwritingEngine::buildBuiltinTemplates() {
                     linePolyline(0.49, 0.84, 0.51, 0.86, 3)});
 }
 
-void HandwritingEngine::loadCustomTemplates() {
-    QFile file(templatesFilePath());
-    if (!file.open(QIODevice::ReadOnly))
+void HandwritingEngine::loadCustomTemplates() const {
+    const QString path = templatesFilePath();
+    m_templates.removeIf([](const GlyphTemplate& t) { return t.isCustom; });
+    m_loadedTemplatesPath = path;
+    if (path.isEmpty()) {
         return;
+    }
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return;
+    }
     const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    if (!doc.isObject())
+    if (!doc.isObject()) {
         return;
+    }
     const QJsonArray arr = doc.object().value(QStringLiteral("templates")).toArray();
     for (const QJsonValue& val : arr) {
         const QJsonObject obj = val.toObject();
         const QString label = obj.value(QStringLiteral("label")).toString().trimmed();
-        if (label.isEmpty())
+        if (label.isEmpty()) {
             continue;
+        }
         QVector<QVector<QPointF>> strokes;
         for (const QJsonValue& sv : obj.value(QStringLiteral("strokes")).toArray()) {
             QVector<QPointF> pts;
             for (const QJsonValue& pv : sv.toArray()) {
                 const QJsonArray pair = pv.toArray();
-                if (pair.size() == 2)
+                if (pair.size() == 2) {
                     pts.append(QPointF(pair[0].toDouble(), pair[1].toDouble()));
+                }
             }
-            if (pts.size() >= 2)
+            if (pts.size() >= 2) {
                 strokes.append(pts);
+            }
         }
-        if (!strokes.isEmpty())
+        if (!strokes.isEmpty()) {
             addTemplate(label, true, strokes, strokes, true);
+        }
+    }
+}
+
+void HandwritingEngine::ensureCustomTemplatesSynced() const {
+    if (templatesFilePath() != m_loadedTemplatesPath) {
+        loadCustomTemplates();
     }
 }
 
 void HandwritingEngine::saveCustomTemplatesToDisk() const {
+    const QString path = templatesFilePath();
+    if (path.isEmpty()) {
+        return;
+    }
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    m_loadedTemplatesPath = path;
+
     QJsonArray arr;
     for (const auto& tpl : m_templates) {
-        if (!tpl.isCustom)
+        if (!tpl.isCustom) {
             continue;
+        }
         QJsonObject obj;
         obj.insert(QStringLiteral("label"), tpl.label);
         QJsonArray strokesArr;
         for (const auto& s : tpl.canonicalStrokes) {
             QJsonArray ptsArr;
-            for (const QPointF& p : s)
+            for (const QPointF& p : s) {
                 ptsArr.append(QJsonArray{p.x(), p.y()});
+            }
             strokesArr.append(ptsArr);
         }
         obj.insert(QStringLiteral("strokes"), strokesArr);
@@ -1582,17 +1626,27 @@ void HandwritingEngine::saveCustomTemplatesToDisk() const {
     root.insert(QStringLiteral("version"), 1);
     root.insert(QStringLiteral("templates"), arr);
 
-    QFile file(templatesFilePath());
-    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return;
+    }
+    const QByteArray bytes = QJsonDocument(root).toJson(QJsonDocument::Compact);
+    if (file.write(bytes) != bytes.size()) {
+        file.cancelWriting();
+        return;
+    }
+    file.commit();
 }
 
 bool HandwritingEngine::saveCustomTemplate(const QString& label,
                                            const QVector<QVector<QPointF>>& worldStrokes) {
     const QString cleanLabel = label.trimmed();
-    if (cleanLabel.isEmpty() || worldStrokes.isEmpty())
+    if (cleanLabel.isEmpty() || worldStrokes.isEmpty()) {
         return false;
+    }
 
+    const QMutexLocker locker(&m_mutex);
+    ensureCustomTemplatesSynced();
     m_templates.removeIf([&](const GlyphTemplate& t) { return t.isCustom && t.label == cleanLabel; });
     const auto norm = normalizeStrokes01(worldStrokes);
     addTemplate(cleanLabel, true, norm, norm, true);
@@ -1601,18 +1655,25 @@ bool HandwritingEngine::saveCustomTemplate(const QString& label,
 }
 
 bool HandwritingEngine::removeCustomTemplate(const QString& label) {
-    const int removed = m_templates.removeIf(
-        [&](const GlyphTemplate& t) { return t.isCustom && t.label == label.trimmed(); });
-    if (removed > 0)
+    const QMutexLocker locker(&m_mutex);
+    ensureCustomTemplatesSynced();
+    const QString cleanLabel = label.trimmed();
+    const qsizetype removed = m_templates.removeIf(
+        [&](const GlyphTemplate& t) { return t.isCustom && t.label == cleanLabel; });
+    if (removed > 0) {
         saveCustomTemplatesToDisk();
+    }
     return removed > 0;
 }
 
 QStringList HandwritingEngine::customTemplateLabels() const {
+    const QMutexLocker locker(&m_mutex);
+    ensureCustomTemplatesSynced();
     QStringList labels;
     for (const auto& t : m_templates) {
-        if (t.isCustom && !labels.contains(t.label))
+        if (t.isCustom && !labels.contains(t.label)) {
             labels.append(t.label);
+        }
     }
     return labels;
 }
@@ -1621,8 +1682,12 @@ RecognitionResult HandwritingEngine::recognizeCluster(const QVector<QVector<QPoi
                                                       bool mathAndDigitsOnly,
                                                       const QRectF& neighborLeftBox,
                                                       bool hasRightNeighbor) const {
-    if (rawStrokes.isEmpty() || rawStrokes.size() > 4)
+    if (rawStrokes.isEmpty() || rawStrokes.size() > 4) {
         return {};
+    }
+
+    const QMutexLocker locker(&m_mutex);
+    ensureCustomTemplatesSynced();
 
     // 1. Primero: plantillas personales guardadas por el usuario (máxima prioridad)
     double inputAspect = 1.0;
@@ -1816,6 +1881,7 @@ bool HandwritingEngine::beautifyCluster(QVector<Stroke>& strokes,
                                         QString* recognizedLabel,
                                         int* outDeltaCount,
                                         const QVector<ShapeItem>& shapes) const {
+    const QMutexLocker locker(&m_mutex);
     if (outDeltaCount)
         *outDeltaCount = 0;
     if (endIdx < 0 || endIdx > strokes.size())
@@ -1946,6 +2012,34 @@ bool HandwritingEngine::beautifyCluster(QVector<Stroke>& strokes,
     cleanStrokes.reserve(rec.canonicalStrokes.size());
     const qint64 baseTs = strokes[endIdx - 1].points.back().timestampMs;
 
+    auto appendBeautifiedStroke = [&](const QVector<QPointF>& pts,
+                                      bool mapNormalized,
+                                      const QPointF& canonCenter,
+                                      const QPointF& targetCenter,
+                                      double scale) {
+        Stroke s;
+        s.id = freshId();
+        s.tool = ref.tool;
+        s.color = finalColor;
+        s.size = ref.size;
+        s.opacity = ref.opacity;
+        s.linePattern = ref.linePattern;
+        s.pressureProfile = ref.pressureProfile;
+        s.pressureSensitivity = ref.pressureSensitivity;
+        s.hasHardwarePressure = false;
+        s.tipStyle = ref.tipStyle;
+        s.groupId = ref.groupId;
+        s.points.reserve(pts.size());
+        for (int pi = 0; pi < pts.size(); ++pi) {
+            const QPointF mapped = mapNormalized
+                ? (targetCenter + (pts[pi] - canonCenter) * scale)
+                : pts[pi];
+            s.points.append({mapped.x(), mapped.y(), 0.55, baseTs + pi, 0.0, 0.0});
+        }
+        s.bounds = computeBounds(s.points, s.size * 0.7);
+        cleanStrokes.append(std::move(s));
+    };
+
     if (rec.canonicalInWorld) {
         // Ajustar grados (°) y signos (−) a la métrica limpia de la línea si hay referencia!
         QVector<QVector<QPointF>> placed = rec.canonicalStrokes;
@@ -1961,20 +2055,7 @@ bool HandwritingEngine::beautifyCluster(QVector<Stroke>& strokes,
             placed = {linePolyline(cx - halfW, midY, cx + halfW, midY, 10)};
         }
         for (const auto& cs : placed) {
-            Stroke s;
-            s.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-            s.tool = ref.tool;
-            s.color = finalColor;
-            s.size = ref.size;
-            s.opacity = ref.opacity;
-            s.linePattern = ref.linePattern;
-            s.pressureProfile = ref.pressureProfile;
-            s.hasHardwarePressure = false;
-            s.points.reserve(cs.size());
-            for (int pi = 0; pi < cs.size(); ++pi)
-                s.points.append({cs[pi].x(), cs[pi].y(), 0.55, baseTs + pi, 0.0, 0.0});
-            s.bounds = computeBounds(s.points, s.size * 0.7);
-            cleanStrokes.append(std::move(s));
+            appendBeautifiedStroke(cs, false, QPointF(), QPointF(), 1.0);
         }
     } else {
         const QRectF rawBox = strokesBoundingBox(raw);
@@ -2009,22 +2090,7 @@ bool HandwritingEngine::beautifyCluster(QVector<Stroke>& strokes,
         const QPointF canonCenter = canonBox.center();
 
         for (const auto& cs : rec.canonicalStrokes) {
-            Stroke s;
-            s.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-            s.tool = ref.tool;
-            s.color = finalColor;
-            s.size = ref.size;
-            s.opacity = ref.opacity;
-            s.linePattern = ref.linePattern;
-            s.pressureProfile = ref.pressureProfile;
-            s.hasHardwarePressure = false;
-            s.points.reserve(cs.size());
-            for (int pi = 0; pi < cs.size(); ++pi) {
-                const QPointF mapped = targetCenter + (cs[pi] - canonCenter) * scale;
-                s.points.append({mapped.x(), mapped.y(), 0.55, baseTs + pi, 0.0, 0.0});
-            }
-            s.bounds = computeBounds(s.points, s.size * 0.7);
-            cleanStrokes.append(std::move(s));
+            appendBeautifiedStroke(cs, true, canonCenter, targetCenter, scale);
         }
     }
 
@@ -2043,6 +2109,8 @@ bool HandwritingEngine::beautifyCluster(QVector<Stroke>& strokes,
 
 QString HandwritingEngine::recognizeStrokesToText(const QVector<Stroke>& strokes,
                                                   const QSet<QString>& selectedIds) const {
+    const QMutexLocker locker(&m_mutex);
+    ensureCustomTemplatesSynced();
     struct Item {
         const Stroke* stroke;
         QRectF box;
@@ -2195,16 +2263,49 @@ QString HandwritingEngine::recognizeStrokesToText(const QVector<Stroke>& strokes
             }
         }
 
-        // 3. Asociar puntos ('i', 'j', '?', '!', ':', '.')
+        // 3. Asociar puntos ('i', 'j', '?', '!', ':', '.', '÷')
         for (const auto& dot : dots) {
             const double dotCx = dot.box.center().x();
+            const double dotCy = dot.box.center().y();
             int bestIdx = -1;
             double bestDist = 1e9;
             for (int i = 0; i < clusters.size(); ++i) {
-                if (clusters[i].isMidOperator) continue;
-                const double d = std::abs(dotCx - clusters[i].coreBox.center().x());
-                const double reach = std::max(baseH * 0.38, clusters[i].coreBox.width() * 0.65);
-                if (d <= reach && d < bestDist) {
+                const auto& cl = clusters[i];
+                const double d = std::abs(dotCx - cl.coreBox.center().x());
+                if (cl.isMidOperator) {
+                    // Un '-' único con puntos encima/debajo forma '÷'
+                    if (cl.crossbars.size() != 1) {
+                        continue;
+                    }
+                    const bool overBar = (dotCx >= cl.coreBox.left() - 4.0)
+                                      && (dotCx <= cl.coreBox.right() + 4.0);
+                    const double dy = std::abs(dotCy - cl.coreBox.center().y());
+                    if (overBar && dy <= std::max(baseH * 0.75, cl.coreBox.width() * 0.85) && d < bestDist) {
+                        bestDist = d;
+                        bestIdx = i;
+                    }
+                    continue;
+                }
+                if (cl.isStandaloneDots) {
+                    // Agrupar dos puntos apilados verticalmente como ':' sin fundir '..' horizontales
+                    const double xReach = std::max(baseH * 0.28, 8.0);
+                    const double dy = std::abs(dotCy - cl.coreBox.center().y());
+                    if (d <= xReach && dy >= 3.0 && d < bestDist) {
+                        bestDist = d;
+                        bestIdx = i;
+                    }
+                    continue;
+                }
+                // Evitar absorber puntos de ':' o '.' ubicados a la derecha de una letra o dígito
+                const double horizMargin = (cl.coreBox.width() < baseH * 0.35) ? (baseH * 0.20) : 2.5;
+                const bool aboveBody = (dotCy <= cl.coreBox.top() + cl.coreBox.height() * 0.22)
+                                    && (dotCx >= cl.coreBox.left() - horizMargin)
+                                    && (dotCx <= cl.coreBox.right() + horizMargin);
+                const bool belowBody = (dotCy > cl.coreBox.bottom() - 1.0)
+                                    && (dotCx >= cl.coreBox.left() - 3.0)
+                                    && (dotCx <= cl.coreBox.right() + 3.0);
+                const double reach = std::max(baseH * 0.38, cl.coreBox.width() * 0.65);
+                if ((aboveBody || belowBody) && d <= reach && d < bestDist) {
                     bestDist = d;
                     bestIdx = i;
                 }
@@ -2249,8 +2350,25 @@ QString HandwritingEngine::recognizeStrokesToText(const QVector<Stroke>& strokes
             }
             // 2. Operadores horizontales ('-', '=', '÷')
             if (cl.isMidOperator) {
-                if (cl.crossbars.size() >= 2) return QStringLiteral("=");
-                if (cl.dots.size() >= 2) return QStringLiteral("÷");
+                if (cl.crossbars.size() >= 2) {
+                    return QStringLiteral("=");
+                }
+                if (cl.crossbars.size() == 1 && cl.dots.size() >= 2) {
+                    const double barCy = polylineBox(cl.crossbars.front()).center().y();
+                    bool hasAbove = false;
+                    bool hasBelow = false;
+                    for (const auto& dotPts : cl.dots) {
+                        const double dy = polylineBox(dotPts).center().y() - barCy;
+                        if (dy < -1.0) {
+                            hasAbove = true;
+                        } else if (dy > 1.0) {
+                            hasBelow = true;
+                        }
+                    }
+                    if (hasAbove && hasBelow) {
+                        return QStringLiteral("÷");
+                    }
+                }
                 return QStringLiteral("-");
             }
             // 3. Letras con punto ('i', 'j', '?', '!')

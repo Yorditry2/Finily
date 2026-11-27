@@ -4,6 +4,7 @@
 
 #include <QColor>
 #include <QPointF>
+#include <QRecursiveMutex>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -66,7 +67,8 @@ private:
 
     HandwritingEngine();
     void buildBuiltinTemplates();
-    void loadCustomTemplates();
+    void loadCustomTemplates() const;
+    void ensureCustomTemplatesSynced() const;
     void saveCustomTemplatesToDisk() const;
     QString templatesFilePath() const;
 
@@ -74,7 +76,7 @@ private:
                      bool isMathOrDigit,
                      const QVector<QVector<QPointF>>& sampleStrokes,
                      const QVector<QVector<QPointF>>& canonicalStrokes,
-                     bool isCustom = false);
+                     bool isCustom = false) const;
 
     // Structural geometric recognizer for math operators, brackets, braces, √, θ, °, ·
     RecognitionResult matchGeometric(const QVector<QVector<QPointF>>& rawStrokes,
@@ -87,7 +89,9 @@ private:
     static double directedStrokeDistance(const QVector<QVector<QPointF>>& a,
                                          const QVector<QVector<QPointF>>& b);
 
-    QVector<GlyphTemplate> m_templates;
+    mutable QRecursiveMutex m_mutex;
+    mutable QString m_loadedTemplatesPath;
+    mutable QVector<GlyphTemplate> m_templates;
 };
 
 } // namespace finily

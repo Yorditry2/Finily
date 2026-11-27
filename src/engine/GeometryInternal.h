@@ -1,6 +1,8 @@
 #pragma once
 
+#include "core/ShapeProtocols.h"
 #include "core/Types.h"
+#include "core/Utils.h"
 
 #include <QPainterPath>
 #include <QPolygonF>
@@ -38,7 +40,6 @@ inline QRectF vertexBounds(const QVector<QPointF>& vertices) {
     return {QPointF(l, t), QPointF(r, b)};
 }
 
-bool isMarkLabel(const QString& label);
 QPainterPath shapePath(const ShapeItem& shape);
 QVector<QPolygonF> shapeOutlines(const ShapeItem& shape);
 

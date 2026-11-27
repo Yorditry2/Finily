@@ -91,13 +91,19 @@ enum class BackgroundTemplate {
     Blank,
     Grid,
     Dots,
-    Ruled
+    Ruled,
+    Engineering, // Milimetrado 5x5
+    Isometric,   // Malla isométrica 30° para sólidos 3D
+    Cornell,     // Apuntes Cornell (columna izquierda + rayado + resumen)
+    TwoColumn,   // Dos columnas (enunciado | desarrollo) con cuadrícula suave
+    School       // Hoja escolar con encabezado doble y margen izquierdo
 };
 
 enum class PageFormat {
-    Infinite,
-    A4,
-    Slide16x9
+    Infinite = 0,
+    A4 = 1,
+    Slide16x9 = 2,
+    A4Landscape = 3
 };
 
 enum class ThemeId {
@@ -105,6 +111,29 @@ enum class ThemeId {
     GreenBoard,
     PaperLight,
     PaperCream
+};
+
+enum class DocumentKind {
+    Notebook = 0,
+    Board = 1,
+    QuickNote = 2
+};
+
+struct CoverStyle {
+    int colorIndex = -1; // -1 = automático; 0..7 = color elegido
+    int iconIndex = 0;   // 0 = sin ícono; 1..7 = ícono editorial de portada
+};
+
+struct NewDocumentSpec {
+    DocumentKind kind = DocumentKind::Notebook;
+    QString title;
+    ThemeId theme = ThemeId::DarkBoard;
+    BackgroundTemplate tpl = BackgroundTemplate::Grid;
+    PageFormat format = PageFormat::A4;
+    double templateScale = 1.0;
+    CoverStyle cover;
+    QString folderRelativePath; // vacío = raíz (preparado para futura fase de Carpetas)
+    bool ephemeralIfEmpty = false;
 };
 
 struct ThemeConfig {
@@ -237,6 +266,21 @@ struct PageData {
     std::optional<BackgroundTemplate> background;
 };
 
+struct NotebookSession {
+    QString id;
+    QString filePath;
+    QVector<PageData> pages;
+    int currentPageIndex = 0;
+    ThemeId themeId = ThemeId::DarkBoard;
+    BackgroundTemplate tpl = BackgroundTemplate::Dots;
+    PageFormat pageFormat = PageFormat::Infinite;
+    double templateScale = 1.0;
+    CoverStyle cover;
+    bool ephemeralIfEmpty = false;
+    QString pendingTitle;
+    bool dirty = false;
+};
+
 struct PenPreset {
     int index = 0;
     QString label;
@@ -244,6 +288,9 @@ struct PenPreset {
     QColor color = QColor("#f8fafc");
     double size = 2.6;
     LinePattern linePattern = LinePattern::Solid;
+    int tipStyle = 1;
+    double opacity = 1.0;
+    QString shortcut;
 };
 
 inline ThemeConfig getThemeConfig(ThemeId id) {

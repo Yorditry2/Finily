@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finily — Ajustes básicos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="_shell.css">
+<style>
+  .set { flex: 1; display: flex; min-height: 0; }
+  .snav { width: 196px; padding: 16px 10px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 1px; }
+  .snav .nav { height: 32px; }
+  .spane { flex: 1; padding: 20px 34px; overflow: hidden; display: flex; flex-direction: column; gap: 18px; max-width: 640px; }
+  .spane h2 { font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+  .sgroup { display: flex; flex-direction: column; border-radius: 14px; border: 1px solid var(--line); background: #fff; }
+  .srow { display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 9px 14px; border-top: 1px solid var(--line); }
+  .srow:first-child { border-top: 0; }
+  .srow .lb { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .srow .lb b { font-weight: 600; font-size: 12.5px; }
+  .srow .lb span { color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+  .sel-box { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 9px; background: var(--field); font-weight: 600; font-size: 12px; color: var(--icon); }
+  .sel-box svg { width: 12px; height: 12px; }
+  .theme-pick { display: flex; gap: 10px; }
+  .tp-card { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+  .tp-card .mini { width: 92px; height: 60px; border-radius: 10px; overflow: hidden; display: flex; box-shadow: inset 0 0 0 1px rgba(15,23,42,.1); }
+  .tp-card.on { color: var(--text); }
+  .tp-card.on .mini { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--accent); }
+  .mini .s { width: 26px; } .mini .m { flex: 1; padding: 8px 7px; display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start; }
+  .mini .m i { width: 16px; height: 12px; border-radius: 3px; }
+  .acc { display: flex; gap: 8px; }
+  .acc span { width: 22px; height: 22px; border-radius: 50%; }
+  .acc span.on { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--accent); }
+  .slider { width: 160px; height: 4px; border-radius: 999px; background: var(--field); position: relative; }
+  .slider::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: var(--v); background: var(--accent); border-radius: inherit; }
+  .slider::after { content: ''; position: absolute; left: var(--v); top: 50%; width: 16px; height: 16px; border-radius: 50%; background: #fff; transform: translate(-50%,-50%); box-shadow: 0 1px 4px rgba(15,23,42,.3); }
+  .soon { border-radius: 14px; border: 1px dashed rgba(24,24,27,.22); padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start; background: var(--sidebar); }
+  .soon svg { width: 18px; height: 18px; flex-shrink: 0; color: var(--icon); margin-top: 1px; }
+  .soon b { font-weight: 600; font-size: 12.5px; display: block; margin-bottom: 3px; }
+  .soon p { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+  .curve { width: 140px; height: 70px; border-radius: 10px; background: var(--field); }
+  .curve path { fill: none; stroke: var(--accent); stroke-width: 2; }
+  .test { flex: 1; height: 90px; border-radius: 12px; border: 1px dashed rgba(24,24,27,.2); position: relative; }
+  .test svg { position: absolute; inset: 0; }
+  .test span { position: absolute; right: 10px; bottom: 8px; font-size: 10.5px; color: var(--faint); }
+  .path-box { font-family: ui-monospace, monospace; font-size: 11px; color: var(--icon); background: var(--field); padding: 6px 9px; border-radius: 8px; }
+  .meter { height: 6px; border-radius: 999px; background: var(--field); overflow: hidden; display: flex; width: 100%; }
+  .meter i { display: block; height: 100%; }
+  .legend { display: flex; gap: 14px; font-size: 11px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend i { width: 8px; height: 8px; border-radius: 2px; }
+  .about { display: flex; align-items: center; gap: 14px; }
+  .about .logo { width: 48px; height: 48px; border-radius: 13px; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; }
+  .about .logo svg { width: 24px; height: 24px; }
+</style>
+</head>
+<body>
+<div class="page-title">Ajustes básicos</div>
+<p class="hint">Modo Claro. Ajustes se abre desde el engranaje del sidebar y ocupa el área de la biblioteca (el sidebar sigue ahí para volver con un clic). Solo lo esencial en esta versión; la personalización avanzada (aspecto de carpetas, iconos propios, temas) queda reservada en su propio apartado. Todo se aplica al instante, sin botón «Guardar».</p>
+<nav class="toc" id="toc"></nav>
+<div id="out" style="display:contents"></div>
+
+<script src="_shell.js"></script>
+<script>
+const SECS = [['apariencia', 'palette', 'Apariencia'], ['inicio', 'grid', 'Inicio'], ['lapiz', 'pen', 'Lápiz y tableta'], ['almacen', 'hdd', 'Almacenamiento'], ['actual', 'refresh', 'Actualizaciones'], ['acerca', 'info', 'Acerca de']];
+const snav = (on) => `<div class="snav">${SECS.map(([id, ic, l]) => `<div class="nav${id === on ? ' on' : ''}">${svgI(ic)}${l}</div>`).join('')}
+  <div style="margin-top:auto" class="nav">${svgI('sparkle')}Personalizar<span class="cnt" style="font-size:10px">pronto</span></div></div>`;
+const row = (t, d, ctl) => `<div class="srow"><div class="lb"><b>${t}</b>${d ? `<span>${d}</span>` : ''}</div>${ctl}</div>`;
+const sw = (on) => `<span class="switch${on ? ' on' : ''}"></span>`;
+const box = (t) => `<span class="sel-box">${t}${svgI('chevD')}</span>`;
+const settings = (sec, pane) => frameHTML({ sb: { active: 'none' }, hdr: { title: 'Ajustes', custom: `<div class="hdr-title">Ajustes</div><div class="hdr-sp"></div><span class="kbd">Esc</span>` }, body: `<div class="set">${snav(sec)}<div class="spane">${pane}</div></div>` }).replace('<div class="nav"><svg', '<div class="nav"><svg');
+const mini = (sb, m, it) => `<div class="mini"><div class="s" style="background:${sb}"></div><div class="m" style="background:${m}">${[1,2,3,4,5,6].map(() => `<i style="background:${it}"></i>`).join('')}</div></div>`;
+const S = [];
+
+S.push(scene('apariencia', '01', 'Apariencia',
+  'Tema con miniaturas en vez de palabras: Claro (por defecto), Oscuro o Sistema. El color de acento empieza en Tinta (neutro) y solo cambia botones principales y selección, nunca las carpetas ni las portadas.',
+  settings('apariencia', `<h2>Apariencia</h2>
+    <div class="sgroup">
+      <div class="srow" style="padding:14px"><div class="lb"><b>Tema</b><span>Sistema sigue el modo claro/oscuro de tu escritorio.</span></div>
+        <div class="theme-pick">
+          <div class="tp-card on">${mini('#F6F6F4', '#fff', '#E4E4E7')}Claro</div>
+          <div class="tp-card">${mini('#15161C', '#1A1B22', '#2E303A')}Oscuro</div>
+          <div class="tp-card"><div class="mini" style="background:linear-gradient(135deg,#fff 50%,#1A1B22 50%)"></div>Sistema</div>
+        </div></div>
+      ${row('Color de acento', 'Botón + Nuevo, selección y controles activos.', `<div class="acc">${['#18181B', '#52525B', '#3F5F8A', '#4F7A64', '#8A4F6A'].map((c, i) => `<span class="${i === 0 ? 'on' : ''}" style="background:${c}"></span>`).join('')}</div>`)}
+      ${row('Tamaño del texto', 'Afecta a la biblioteca y los menús, no al contenido de los cuadernos.', box('Normal'))}
+      ${row('Reducir animaciones', 'Quita rebotes y transiciones largas.', sw(false))}
+    </div>
+    <div class="soon">${svgI('sparkle')}<div><b>Personalización avanzada · próximamente</b><p>Aquí podrás cambiar el aspecto de las carpetas, usar tus propios iconos, crear temas completos e instalar paquetes. Por eso el diseño base es neutro: todo lo de color se podrá reemplazar.</p></div></div>`)));
+
+S.push(scene('inicio', '02', 'Inicio',
+  'Cómo se ve y se comporta la biblioteca.',
+  settings('inicio', `<h2>Inicio</h2>
+    <div class="sgroup">
+      ${row('Al abrir Finily', '', box('Mostrar la biblioteca'))}
+      ${row('Tamaño de los objetos', 'Más pequeño cabe más por fila.', `<div class="slider" style="--v:45%"></div>`)}
+      ${row('Mostrar fecha bajo el nombre', '', sw(true))}
+      ${row('Carpetas antes que documentos', '', sw(true))}
+      ${row('Abrir documentos en pestaña nueva', 'Si no, reemplaza la pestaña actual.', sw(true))}
+    </div>`),
+  `<ul><li>«Al abrir Finily» ofrece: Mostrar la biblioteca · Abrir el último documento · Nueva pizarra.</li></ul>`));
+
+S.push(scene('lapiz', '03', 'Lápiz y tableta',
+  'Lo básico para la Wacom. La zona de prueba permite ver el cambio de presión al momento.',
+  settings('lapiz', `<h2>Lápiz y tableta</h2>
+    <div class="sgroup">
+      <div class="srow" style="align-items:flex-start;padding:14px"><div class="lb"><b>Sensibilidad a la presión</b><span>Arrastra la curva o elige: Suave · Normal · Firme.</span>
+          <div class="seg" style="margin-top:8px;align-self:flex-start"><span>Suave</span><span class="on">Normal</span><span>Firme</span></div></div>
+        <svg class="curve" viewBox="0 0 140 70"><path d="M8 62C50 60 80 30 132 8"/></svg></div>
+      <div class="srow" style="padding:12px 14px"><div class="test"><svg viewBox="0 0 400 90" preserveAspectRatio="none"><path d="M20 60c40-40 70-40 100-10s60 20 90-10 60-30 90 0 50 20 70-10" fill="none" stroke="#18181B" stroke-width="3" stroke-linecap="round"/></svg><span>Prueba aquí</span></div></div>
+      ${row('Ignorar la palma', 'Con lápiz cerca, el toque con la mano no dibuja.', sw(true))}
+      ${row('Botón lateral del lápiz', '', box('Borrador'))}
+      ${row('Botones del pad', 'Detectado: Wacom Intuos S', `<button class="text-btn">Configurar…</button>`)}
+    </div>`)));
+
+S.push(scene('almacen', '04', 'Almacenamiento',
+  'Dónde viven los archivos, cuánto ocupan y cuánto dura la papelera. Cambiar la carpeta abre el selector del sistema (el único diálogo nativo que se mantiene).',
+  settings('almacen', `<h2>Almacenamiento</h2>
+    <div class="sgroup">
+      ${row('Carpeta de la biblioteca', '<span class="path-box">~/Documentos/Finily</span>', `<button class="text-btn">Cambiar…</button>`)}
+      <div class="srow" style="flex-direction:column;align-items:stretch;gap:8px;padding:12px 14px"><div class="lb"><b>Espacio usado · 1,2 GB</b></div>
+        <div class="meter"><i style="width:46%;background:#18181B"></i><i style="width:22%;background:#71717A"></i><i style="width:9%;background:#C4C4CB"></i></div>
+        <div class="legend"><span><i style="background:#18181B"></i>Cuadernos 560 MB</span><span><i style="background:#71717A"></i>PDF 270 MB</span><span><i style="background:#C4C4CB"></i>Papelera 110 MB</span></div></div>
+      ${row('Vaciar la papelera automáticamente', '', `<div class="seg"><span>7 días</span><span class="on">30 días</span><span>90 días</span><span>Nunca</span></div>`)}
+      ${row('Guardado automático', 'Cada cambio se guarda solo. Elige cada cuánto se hace una copia de seguridad.', box('Cada 5 min'))}
+    </div>`)));
+
+S.push(scene('actual', '05', 'Actualizaciones y Acerca de',
+  'Mismo flujo que la tarjeta del sidebar (09 · escena 06), aquí con la opción de buscar a mano y elegir si se comprueba solo.',
+  settings('actual', `<h2>Actualizaciones</h2>
+    <div class="sgroup">
+      ${row('Finily 0.2.1', 'Última comprobación: hoy, 18:20 · Estás al día.', `<button class="text-btn">${svgI('refresh')}Buscar ahora</button>`)}
+      ${row('Buscar actualizaciones al abrir', '', sw(true))}
+      ${row('Instalar al cerrar Finily', 'Descarga en segundo plano y aplica al salir.', sw(false))}
+    </div>
+    <h2 style="margin-top:6px">Acerca de</h2>
+    <div class="sgroup"><div class="srow" style="padding:14px"><div class="about"><div class="logo">${svgI('pen')}</div><div class="lb"><b>Finily 0.2.1</b><span>Licencia GPL-3.0 · Código fuente · Notas de versión</span></div></div></div></div>`),
+  `<ul><li>El logo del cuadrado es provisional: falta elegir entre las propuestas de <code>branding/</code>.</li></ul>`));
+
+document.getElementById('out').innerHTML = S.join('');
+document.getElementById('toc').innerHTML = [...document.querySelectorAll('.scene')].map(s => `<a href="#${s.id}">${s.querySelector('h2').textContent.slice(2)}</a>`).join('');
+fitFrames();
+</script>
+</body>
+</html>

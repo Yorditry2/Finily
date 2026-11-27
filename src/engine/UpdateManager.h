@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QPointer>
 #include <QString>
 #include <QUrl>
 
@@ -24,6 +25,7 @@ struct UpdateInfo {
 };
 
 bool isTrustedUpdateUrl(const QUrl& url);
+bool isSafeInstallerAssetName(const QString& asset);
 bool isNewerVersion(const QString& candidateVersion, const QString& currentVersion);
 std::optional<UpdateInfo> parseUpdateManifest(const QByteArray& jsonBytes);
 QString computeFileSha256(const QString& filePath);
@@ -60,15 +62,18 @@ signals:
 
 private:
     void cleanupCachedInstallers();
+    void cleanupActiveDownload();
 
     QNetworkAccessManager* m_nam = nullptr;
-    QNetworkReply* m_checkReply = nullptr;
-    QNetworkReply* m_downloadReply = nullptr;
+    QPointer<QNetworkReply> m_checkReply;
+    QPointer<QNetworkReply> m_downloadReply;
     QFile* m_downloadFile = nullptr;
     QString m_downloadPartPath;
     QString m_downloadFinalPath;
     UpdateInfo m_pendingInfo;
     bool m_downloadCancelled = false;
+    bool m_downloadWriteFailed = false;
+    QString m_downloadWriteError;
 };
 
 } // namespace finily

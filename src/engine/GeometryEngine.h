@@ -38,6 +38,11 @@ void attachNewShape(QVector<ShapeItem>& shapes);
 bool updateShapeLinks(QVector<ShapeItem>& shapes, const QVector<ShapeItem>& original,
                       const QSet<QString>& edited);
 std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke);
+std::optional<ShapeItem> tryRecognizeFreehandArrow(const Stroke& stroke, double zoom);
+bool tryAttachArrowheadToLine(const Stroke& stroke, QVector<ShapeItem>& shapes, double zoom,
+                              QString* outUpdatedId = nullptr);
+bool trySnapFreehandDividerOnEdge(const Stroke& stroke, QVector<ShapeItem>& shapes, double zoom,
+                                  QString* outCreatedId = nullptr);
 std::optional<ShapeItem> trySnapAngleArcAtVertex(const Stroke& stroke, const QVector<ShapeItem>& shapes, double zoom);
 std::optional<ShapeItem> trySnapCongruenceStrokeOnEdge(const Stroke& stroke,
                                                        const QVector<ShapeItem>& shapes,
@@ -61,6 +66,13 @@ bool isPointNearGeometryEdge(const QPointF& worldPos,
                              double zoom,
                              double maxDistPx = 20.0,
                              QPointF* outEdgePoint = nullptr);
+// style: 0 = brillo/resaltado luminoso, 1 = color sólido limpio, 2 = guiones/punteado
+std::optional<ShapeItem> createHighlightedSegment(const QVector<ShapeItem>& shapes,
+                                                  const QPointF& worldPos,
+                                                  const QColor& color,
+                                                  double baseStrokeSize,
+                                                  double zoom,
+                                                  int style = 0);
 bool isValidMathFunction(const QString& expr);
 // Borrado parcial de figuras 2D (Line, Polyline, Triangle, Rectangle, Circle, Ellipse, Curve, Arc).
 // Con trimToIntersections=true (Shift) recorta limpio el tramo entre intersecciones con otras figuras.

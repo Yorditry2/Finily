@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finily — Clic derecho y ventanas propias</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="_shell.css">
+<style>
+  .rename { display: inline-flex; align-items: center; height: 22px; padding: 0 6px; border-radius: 6px; background: #fff; box-shadow: 0 0 0 1.5px var(--accent), 0 0 0 4px rgba(24,24,27,.06); font-size: 11.5px; font-weight: 500; }
+  .rename .s { background: rgba(24,24,27,.14); border-radius: 2px; }
+  .rename .caret { width: 1px; height: 13px; background: var(--text); margin-left: 1px; }
+  .obj.drop { background: var(--hover); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .drag-ghost { position: absolute; z-index: 30; transform: rotate(-6deg); filter: drop-shadow(0 22px 26px rgba(15,23,42,.28)); opacity: .96; }
+  .drag-pill { position: absolute; z-index: 31; background: var(--accent); color: var(--accent-fg); border-radius: 999px; height: 24px; padding: 0 10px; display: inline-flex; align-items: center; gap: 5px; font-weight: 600; font-size: 11.5px; box-shadow: 0 8px 18px -6px rgba(15,23,42,.4); }
+  .drag-pill svg { width: 12px; height: 12px; }
+  .cursor { position: absolute; z-index: 32; width: 16px; height: 16px; }
+  .importing { width: 84px; height: 110px; border-radius: 4px; background: #fff; box-shadow: 0 10px 22px -8px rgba(15,23,42,.16), 0 3px 8px -3px rgba(15,23,42,.07); display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+  .importing::after { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, rgba(24,24,27,.05) 50%, transparent 70%); animation: sweep 1.4s linear infinite; }
+  @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  .bar { width: 120px; height: 4px; border-radius: 999px; background: rgba(255,255,255,.16); overflow: hidden; }
+  .bar span { display: block; height: 100%; width: 25%; background: #fff; border-radius: inherit; }
+  .tree-pick { display: flex; flex-direction: column; gap: 1px; max-height: 260px; }
+  .tp { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: 8px; font-weight: 500; font-size: 12.5px; color: var(--icon); position: relative; }
+  .tp.on { background: var(--soft); color: var(--text); font-weight: 600; }
+  .tp.here { color: var(--faint); }
+  .tp .k { margin-left: auto; font-size: 10.5px; color: var(--faint); }
+  .tp svg { width: 14px; height: 14px; }
+  .dropzone { position: absolute; inset: 70px 14px 14px; border-radius: 16px; border: 1.5px dashed rgba(24,24,27,.35); background: rgba(246,246,244,.86); backdrop-filter: blur(2px); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; z-index: 20; }
+  .dropzone .ring { width: 54px; height: 54px; border-radius: 16px; background: #fff; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-card); }
+  .dropzone .ring svg { width: 22px; height: 22px; }
+  .dropzone h3 { font-size: 15px; font-weight: 600; }
+  .dropzone p { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="page-title">Clic derecho y ventanas propias</div>
+<p class="hint">Modo Claro. Reemplaza los menús y ventanas del sistema (<code>QMenu</code>, <code>QInputDialog</code>, <code>QMessageBox</code>, <code>QProgressDialog</code>), que hoy salen con el estilo de KDE o Windows. Todo es una cápsula pintada por Finily. Solo el selector de archivos sigue siendo el del sistema.</p>
+<nav class="toc" id="toc"></nav>
+<div id="out" style="display:contents"></div>
+
+<script src="_shell.js"></script>
+<script>
+const CURSOR = '<svg class="cursor" viewBox="0 0 24 24" style="left:%Xpx;top:%Ypx"><path d="M5 3l14 8-6 1.5L10 19z" fill="#18181B" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+const cur = (x, y) => CURSOR.replace('%X', x).replace('%Y', y);
+const libWith = (map) => LIB.map((f, i) => map[i] !== undefined ? map[i] : f);
+const sel = (i, cls = 'sel') => {
+  const base = [
+    ['rosa', 'book', 'Apuntes', 'Hoy · 14:30', 'f'], ['arena', 'shape', 'Diagramas', 'Ayer', 'f'], ['salvia', 'sun', 'Clases', '22 nov 2026', 'f'],
+  ];
+  if (i < 3) { const [c, ic, n, d] = base[i]; return objHTML(folderSVG(c, ic), n, d, cls); }
+  const vis = [null, null, null, boardHTML('dark'), bookHTML('salvia'), bookHTML('tinta', 84, '16:9'), pdfHTML(), boardHTML('paper')][i];
+  const names = [null, null, null, ['Lluvia de ideas', 'Hoy · 11:02'], ['Física II', 'Ayer · 19:40'], ['Clase 07 — Ondas', '24 nov 2026'], ['Guía de laboratorio', '23 nov 2026'], ['Mapa mental', '20 nov 2026']][i];
+  return objHTML(vis, names[0], names[1], cls);
+};
+
+const S = [];
+
+/* 1 — Documento */
+S.push(scene('doc', '01', 'Clic derecho sobre un documento',
+  'Mismo menú para pizarras, cuadernos y PDF. Cambia una sola fila según el tipo: «Cambiar portada» en cuadernos, «Fondo y plantilla» en pizarras y nada en PDF. Los atajos se ven a la derecha para que se aprendan solos. «Mover a la papelera» va al final, separado y en rojo.',
+  frameHTML({
+    items: libWith({ 4: sel(4) }),
+    overlay: menuHTML([
+      ['open', 'Abrir', '↵'], ['tab', 'Abrir en pestaña nueva', ''], '-',
+      ['pencil', 'Renombrar', 'F2', 'hov'], ['copy', 'Duplicar', 'Ctrl D'], ['folderMove', 'Mover a…', '>'],
+      ['star', 'Añadir a favoritos', 'Ctrl B'], ['tag', 'Etiquetas', '>'], '-',
+      ['cover', 'Cambiar portada', ''], ['export', 'Exportar como PDF', ''], '-',
+      ['trash', 'Mover a la papelera', 'Supr', 'danger'],
+    ], 'left:376px;top:330px') + cur(352, 318),
+  }),
+  `<ul><li><b>Doble clic o Enter</b> abre; el menú no repite acciones que ya están en la barra de arriba (sin «Nuevo», sin «Buscar»).</li>
+   <li><b>Etiquetas ›</b> abre a la derecha la lista de etiquetas con casillas y un campo «Nueva etiqueta».</li>
+   <li>Nada de «Propiedades»: tamaño, páginas y fechas aparecen al pasar el cursor por la fecha (tooltip propio).</li></ul>`));
+
+/* 2 — Carpeta */
+S.push(scene('carpeta', '02', 'Clic derecho sobre una carpeta',
+  'El color se cambia ahí mismo con los círculos de 2 tonos, sin abrir nada más. «Icono…» abre la tarjeta de carpeta ya cargada (la misma de «Nueva carpeta», en modo edición). Al mandar una carpeta a la papelera se va con todo su contenido, y el aviso lo dice.',
+  frameHTML({
+    sb: { active: 'folders', folders: true }, hdr: { title: 'Carpetas' },
+    items: [sel(0, 'sel'), sel(1, ''), sel(2, '')],
+    overlay: menuHTML([
+      ['open', 'Abrir', '↵'], '-',
+      ['pencil', 'Renombrar', 'F2'], ['#', 'Color'],
+      `<div class="mswatch">${Object.values(FCOL).map((c, i) => `<span class="${i === 0 ? 'on' : ''}" style="background:linear-gradient(180deg,${c.flap} 0 38%,${c.b2} 38%)"></span>`).join('')}</div>`,
+      ['sparkle', 'Icono…', ''], '-',
+      ['folderPlus', 'Nueva subcarpeta', ''], ['folderMove', 'Mover a…', '>'], ['star', 'Añadir a favoritos', 'Ctrl B', 'hov'], '-',
+      ['trash', 'Mover a la papelera', 'Supr', 'danger'],
+    ], 'left:378px;top:150px') + cur(352, 140),
+  })));
+
+/* 3 — Espacio vacío y selección múltiple */
+S.push(scene('vacio', '03', 'Clic derecho en espacio vacío · selección múltiple',
+  'Izquierda: clic derecho en un hueco de la grilla, solo con lo que tiene sentido ahí. Derecha: con varios elementos seleccionados (Ctrl+clic, Mayús+clic o arrastrando un recuadro), el menú dice cuántos son y oculta lo que es de uno solo (renombrar, portada).',
+  frameHTML({
+    items: libWith({ 3: sel(3), 4: sel(4), 6: sel(6) }),
+    overlay: menuHTML([
+      ['#', '3 elementos'],
+      ['open', 'Abrir en pestañas', ''], '-',
+      ['folderMove', 'Mover a…', '>', 'hov'], ['star', 'Añadir a favoritos', ''], ['tag', 'Etiquetas', '>'], ['export', 'Exportar como PDF', ''], '-',
+      ['trash', 'Mover a la papelera', 'Supr', 'danger'],
+    ], 'left:930px;top:300px') + menuHTML([
+      ['#', 'Documentos'],
+      ['copy', 'Pegar', 'Ctrl V', 'off'], ['grid', 'Seleccionar todo', 'Ctrl A'], '-',
+      ['sort', 'Ordenar por', '>', 'hov'], ['upload', 'Importar PDF…', ''],
+    ], 'left:252px;top:520px;width:214px') + cur(240, 508),
+  }),
+  `<ul><li>En el espacio vacío <b>no</b> se ofrece «Nuevo…»: la regla es que <b>+ Nuevo</b> es el único punto de creación. <b>Decidido:</b> se mantiene así. Dentro de una carpeta, + Nuevo ya crea ahí mismo, así que el atajo no hace falta.</li></ul>`));
+
+/* 4 — Renombrar */
+S.push(scene('renombrar', '04', 'Renombrar en el sitio (adiós a la ventanita)',
+  'F2, «Renombrar» o un clic lento sobre el nombre lo convierten en un campo ahí mismo, con el texto seleccionado. Enter guarda, Esc cancela y clic fuera también guarda. Si el nombre ya existe en esa carpeta, el borde se pone rojo con un aviso corto debajo, sin bloquear nada.',
+  frameHTML({
+    items: libWith({ 4: `<div class="obj sel"><div class="vis">${bookHTML('salvia')}</div><div style="display:flex;flex-direction:column;align-items:center;gap:3px"><span class="rename"><span class="s">Física II</span><span class="caret"></span></span><div class="obj-date">Ayer · 19:40</div></div></div>` }),
+  })));
+
+/* 5 — Mover a */
+S.push(scene('mover', '05', '«Mover a…»',
+  'Se abre la misma tarjeta derecha de 344 px de «Nueva pizarra» y «Nueva carpeta», sin velo. Tiene buscador, el árbol con sangría y la carpeta actual atenuada. «Nueva carpeta aquí» crea la carpeta dentro de la seleccionada sin salir de la tarjeta. Desde el submenú › del clic derecho salen las 5 carpetas recientes, para mover con un solo gesto.',
+  frameHTML({
+    items: libWith({ 4: sel(4) }),
+    overlay: `<section class="float-card">
+      <div class="fc-head"><h3>Mover «Física II»</h3><button class="fc-close">${svgI('x')}</button></div>
+      <div class="fc-body">
+        <div class="field">${svgI('search')}<input value="" placeholder="Buscar carpeta"></div>
+        <div class="tree-pick">
+          <div class="tp here">${svgI('docs')}Documentos<span class="k">aquí está</span></div>
+          <div class="tp" style="padding-left:8px"><span class="tdot" style="background:#E78FA8"></span>Apuntes</div>
+          <div class="tp on" style="padding-left:26px"><span class="tdot" style="background:#E78FA8"></span>Semestre 1<span class="k">${svgI('check')}</span></div>
+          <div class="tp" style="padding-left:26px"><span class="tdot" style="background:#E78FA8"></span>Semestre 2</div>
+          <div class="tp" style="padding-left:8px"><span class="tdot" style="background:#E1C0A2"></span>Diagramas</div>
+          <div class="tp" style="padding-left:8px"><span class="tdot" style="background:#92BFA9"></span>Clases</div>
+          <div class="tp" style="color:var(--muted)">${svgI('folderPlus')}Nueva carpeta aquí</div>
+        </div>
+        <button class="cta">Mover a Semestre 1</button>
+      </div></section>`,
+  })));
+
+/* 6 — Papelera: deshacer */
+S.push(scene('deshacer', '06', 'Mandar a la papelera: sin pregunta, con «Deshacer»',
+  'Como la papelera se puede recuperar, no se pregunta «¿Seguro?». El objeto se va con una animación corta y abajo aparece un aviso durante 6 s con «Deshacer» (también Ctrl+Z). Así se evita la ventanita de confirmación, que es la que más molesta.',
+  frameHTML({
+    items: LIB.filter((_, i) => i !== 4),
+    sb: { trashCount: 4 },
+    overlay: `<div class="toast" style="left:calc(214px + 483px)">${svgI('trash')}«Física II» se movió a la papelera<button class="tbtn">Deshacer</button><span class="k">Ctrl Z</span><button class="tx">${svgI('x')}</button></div>`,
+  })));
+
+/* 7 — Eliminar para siempre */
+S.push(scene('eliminar', '07', 'Lo irreversible sí pregunta',
+  'Solo «Eliminar para siempre» y «Vaciar papelera» abren un diálogo propio: velo muy suave, tarjeta centrada, el botón peligroso en rojo y Esc o «Cancelar» con el foco por defecto.',
+  frameHTML({
+    sb: { active: 'trash', trashCount: 4 }, hdr: { title: 'Papelera', right: `<button class="text-btn danger" style="margin-right:6px">Vaciar papelera</button>` },
+    items: [sel(4, 'dim'), sel(7, 'dim'), sel(1, 'dim'), sel(6, 'dim')],
+    overlay: `<div class="scrim"></div><div class="dialog">
+      <h3>¿Vaciar la papelera?</h3>
+      <p>Se eliminarán para siempre <b>4 elementos</b>. Esta acción no se puede deshacer.</p>
+      <div class="row"><button class="ghost-btn" style="box-shadow:0 0 0 2px #fff,0 0 0 3.5px var(--accent)">Cancelar</button><button class="cta danger">Vaciar</button></div></div>`,
+  })));
+
+/* 8 — Importar PDF */
+S.push(scene('importar', '08', 'Importar PDF: progreso sin ventana que bloquee',
+  'El PDF aparece de inmediato en la grilla como un hueco con brillo que avanza, y abajo un aviso con barra, páginas y «Cancelar». Mientras tanto se puede seguir usando la app. Al terminar, el hueco se convierte en la miniatura real y el aviso cambia a «Abrir».',
+  frameHTML({
+    items: [objHTML('<div class="importing"></div>', 'Termodinámica', 'Importando…'), ...LIB.slice(0, 7)],
+    overlay: `<div class="toast" style="left:calc(214px + 483px)">${svgI('pdf')}Importando «Termodinámica.pdf»<div class="bar"><span></span></div><span class="k">12 de 48</span><button class="tbtn">Cancelar</button></div>`,
+  }),
+  `<ul><li>Si falla (PDF protegido o dañado), el aviso se vuelve <b>«No se pudo importar · Ver motivo»</b> y el hueco desaparece. Sin ventanas de error.</li></ul>`));
+
+/* 9 — Arrastrar a carpeta */
+S.push(scene('arrastrar', '09', 'Arrastrar un documento sobre una carpeta',
+  'El documento se levanta inclinado y con sombra, y en su sitio queda un hueco tenue. La carpeta de destino abre la solapa (se ve una hoja asomando), se marca con un contorno y una píldora confirma «Mover a Apuntes». Si se suelta fuera, vuelve con un rebote suave.',
+  frameHTML({
+    items: libWith({ 0: objHTML(folderSVG('rosa', 'book', 118, { open: true }), 'Apuntes', 'Hoy · 14:30', 'drop'), 4: sel(4, 'dim') }),
+    overlay: `<div class="drag-ghost" style="left:372px;top:62px">${bookHTML('salvia', 62)}</div>
+      <span class="drag-pill" style="left:420px;top:158px">${svgI('folderMove')}Mover a Apuntes</span>${cur(398, 132)}`,
+  })));
+
+/* 10 — Soltar archivos desde fuera */
+S.push(scene('soltar', '10', 'Soltar archivos desde fuera de Finily',
+  'Al arrastrar PDF o imágenes desde el explorador de archivos, toda la biblioteca muestra una zona de destino con borde punteado. Al soltar, cada archivo pasa por el mismo flujo de importación de la escena 08.',
+  frameHTML({
+    libOverlay: `<div class="dropzone"><div class="ring">${svgI('download')}</div><h3>Suelta para importar</h3><p>PDF, PNG o JPG · se guardarán en Documentos</p></div>`,
+  })));
+
+document.getElementById('out').innerHTML = S.join('');
+document.getElementById('toc').innerHTML = [...document.querySelectorAll('.scene')].map(s => `<a href="#${s.id}">${s.querySelector('h2').textContent.slice(2)}</a>`).join('');
+fitFrames();
+</script>
+</body>
+</html>

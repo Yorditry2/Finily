@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finily — Tarjeta «Nueva pizarra» v2 (Selector lateral + Plantillas vivas + Regla mm)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', var(--font-sans, system-ui, -apple-system, sans-serif);
+    background: var(--background, #f1f5f9);
+    color: var(--foreground, #0f172a);
+    padding: 18px 16px 26px;
+    line-height: 1.35;
+    font-size: 12px;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .hint-line {
+    font-size: 11px;
+    color: var(--muted-foreground, #64748b);
+    text-align: center;
+    max-width: 616px;
+  }
+
+  /* Escenario alineado a la derecha con popover hermano a la izquierda */
+  .stage {
+    position: relative;
+    width: 616px;
+    max-width: 100%;
+    min-height: 556px;
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-start;
+  }
+
+  /* Popover flotante de color a la izquierda (nunca aprieta ni deforma la tarjeta) */
+  .color-popover {
+    position: absolute;
+    right: 356px;
+    top: 106px;
+    width: 256px;
+    border-radius: 16px;
+    background: #ffffff;
+    color: #18181b;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow:
+      0 22px 48px -12px rgba(15, 23, 42, 0.22),
+      0 6px 16px -4px rgba(15, 23, 42, 0.08);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    z-index: 10;
+    opacity: 0;
+    transform: translateX(10px) scale(0.985);
+    pointer-events: none;
+    transition: opacity 180ms cubic-bezier(0.22, 1, 0.36, 1),
+                transform 210ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .color-popover.open {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+    pointer-events: auto;
+  }
+
+  .cp-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .cp-title {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #18181b;
+    letter-spacing: -0.01em;
+  }
+  .cp-close {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: none;
+    background: #f4f4f5;
+    color: #52525b;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .cp-close:hover {
+    background: #e4e4e7;
+    color: #18181b;
+  }
+
+  /* 3 filas cromáticas visuales (sin etiquetas ni pestañas de texto) */
+  .cp-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .cp-row {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+  }
+  .cp-sw {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    cursor: pointer;
+    padding: 0;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+  .cp-sw:hover { transform: scale(1.1); }
+  .cp-sw.active {
+    box-shadow: 0 0 0 2px #ffffff, 0 0 0 3.6px #18181b;
+  }
+
+  .cp-divider {
+    height: 1px;
+    background: rgba(15, 23, 42, 0.06);
+  }
+
+  /* Picker SV amplio + barra Hue + HEX */
+  .cp-sv-wrap {
+    position: relative;
+    width: 100%;
+    height: 136px;
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: crosshair;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    touch-action: none;
+  }
+  .cp-sv-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .cp-sv-cursor {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #ffffff;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.42), 0 2px 5px rgba(0, 0, 0, 0.25);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  .cp-hue-wrap {
+    position: relative;
+    height: 13px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%);
+    cursor: pointer;
+    touch-action: none;
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+  }
+  .cp-hue-thumb {
+    position: absolute;
+    top: 50%;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #ffffff;
+    border: 2px solid #18181b;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  .cp-hex-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cp-live-dot {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    flex-shrink: 0;
+  }
+  .cp-hex-input {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    background: #f4f4f5;
+    padding: 0 10px;
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #18181b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    outline: none;
+    transition: border-color 140ms ease, background 140ms ease;
+  }
+  .cp-hex-input:focus {
+    background: #ffffff;
+    border-color: #18181b;
+  }
+
+  /* Tarjeta flotante derecha (tamaño fijo y sereno) */
+  .float-card {
+    width: 344px;
+    border-radius: 18px;
+    background: #ffffff;
+    color: #18181b;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow:
+      0 20px 46px -12px rgba(15, 23, 42, 0.18),
+      0 5px 14px -3px rgba(15, 23, 42, 0.07);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  /* Preview Full-Bleed con Canvas HiDPI centrado */
+  .fc-hero {
+    height: 174px;
+    padding: 13px 15px 14px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    overflow: hidden;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.07);
+    background: #161922;
+  }
+  .fc-hero-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    pointer-events: none;
+  }
+  .fc-hero-scrim {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 58px;
+    pointer-events: none;
+  }
+  .fc-hero-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+    z-index: 1;
+  }
+  .fc-inf-badge {
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 999px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: color 140ms ease, background 140ms ease;
+  }
+  .fc-close-btn {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 140ms ease, background 140ms ease;
+  }
+  .fc-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 5px;
+    position: relative;
+    z-index: 1;
+    transition: border-color 140ms ease;
+  }
+  .fc-title-input {
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    transition: color 140ms ease;
+  }
+
+  /* Cuerpo de controles */
+  .fc-body {
+    padding: 15px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+  .fc-sec {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .fc-sec-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .fc-kicker {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #71717a;
+  }
+  .fc-hex-label {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 10.5px;
+    font-weight: 500;
+    color: #71717a;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Fila rápida de 6 colores + botón cromático "+" */
+  .fc-dots-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .fc-dot {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    cursor: pointer;
+    transition: transform 130ms ease, box-shadow 140ms ease;
+    background: transparent;
+    padding: 0;
+  }
+  .fc-dot:hover { transform: scale(1.08); }
+  .fc-dot.active {
+    box-shadow: 0 0 0 2px #ffffff, 0 0 0 3.8px #18181b;
+  }
+
+  .fc-dot-free {
+    width: 26px;
+    height: 26px;
+    padding: 2px;
+    border-radius: 50%;
+    border: none;
+    background: conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ec4899, #ef4444);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 130ms ease, box-shadow 140ms ease;
+  }
+  .fc-dot-free:hover { transform: scale(1.08); }
+  .fc-dot-free.open,
+  .fc-dot-free.has-custom {
+    box-shadow: 0 0 0 2px #ffffff, 0 0 0 3.8px #18181b;
+  }
+  .fc-dot-free-inner {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: #ffffff;
+    color: #18181b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 140ms ease, color 140ms ease;
+  }
+
+  /* 4 Muestras de plantilla altas con fondo neutro fijo (no cambian al color del tablero) */
+  .fc-tpl-row {
+    --tpl-ink: rgba(24, 24, 27, 0.36);
+    --tpl-sheen: rgba(24, 24, 27, 0.04);
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .fc-tpl-card {
+    height: 58px;
+    border-radius: 11px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(15, 23, 42, 0.09);
+    padding: 0;
+    cursor: pointer;
+    background-color: #f6f6f4;
+    transition: transform 130ms ease, box-shadow 140ms ease, border-color 140ms ease, background-color 140ms ease;
+  }
+  .fc-tpl-card:hover {
+    background-color: #fbfbfa;
+    border-color: rgba(15, 23, 42, 0.18);
+    transform: translateY(-1px);
+  }
+  .fc-tpl-card.active {
+    background-color: #ffffff;
+    border: 1.5px solid #18181b;
+    box-shadow: 0 4px 12px -4px rgba(15, 23, 42, 0.14);
+  }
+  .fc-tpl-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    pointer-events: none;
+  }
+
+  /* Regla milimetrada de Trama + Stepper */
+  .fc-trama-sec {
+    transition: opacity 150ms ease;
+  }
+  .fc-trama-sec.disabled {
+    opacity: 0.34;
+    pointer-events: none;
+  }
+  .mm-stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    background: #f4f4f5;
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .mm-step-btn {
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: #52525b;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .mm-step-btn:hover {
+    background: #ffffff;
+    color: #18181b;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  }
+  .fc-mm-val {
+    min-width: 42px;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: #18181b;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ruler-slider {
+    position: relative;
+    height: 30px;
+    border-radius: 10px;
+    background: #f4f4f5;
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    cursor: ew-resize;
+    touch-action: none;
+    user-select: none;
+  }
+  .ruler-bg {
+    position: absolute;
+    inset: 0;
+    border-radius: 9px;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .ruler-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: rgba(24, 24, 27, 0.065);
+  }
+  .ruler-ticks {
+    position: absolute;
+    left: 11px;
+    right: 11px;
+    top: 0;
+    bottom: 0;
+  }
+  .ruler-tick {
+    position: absolute;
+    bottom: 0;
+    width: 1px;
+    transform: translateX(-50%);
+    background: rgba(24, 24, 27, 0.18);
+    border-radius: 1px 1px 0 0;
+    transition: background-color 110ms ease;
+  }
+  .ruler-tick.major { height: 12px; width: 1.25px; }
+  .ruler-tick.mid { height: 8px; }
+  .ruler-tick.minor { height: 5px; }
+  .ruler-tick.lit { background: rgba(24, 24, 27, 0.56); }
+
+  .ruler-thumb {
+    position: absolute;
+    top: 50%;
+    width: 14px;
+    height: 22px;
+    border-radius: 5px;
+    background: #ffffff;
+    border: 1.5px solid #18181b;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  .ruler-thumb::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 1.5px;
+    height: 8px;
+    border-radius: 1px;
+    background: #18181b;
+    transform: translate(-50%, -50%);
+  }
+
+  .ruler-marks {
+    position: relative;
+    height: 14px;
+    margin-top: -3px;
+  }
+  .ruler-mark-btn {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    border: none;
+    background: transparent;
+    padding: 0 3px;
+    font-family: inherit;
+    font-size: 9.5px;
+    font-weight: 500;
+    color: #a1a1aa;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    transition: color 120ms ease;
+  }
+  .ruler-mark-btn:hover { color: #52525b; }
+  .ruler-mark-btn.active {
+    color: #18181b;
+    font-weight: 700;
+  }
+
+  /* Chips Carpeta y Etiqueta (100% SVG fino) */
+  .fc-chips {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding-top: 1px;
+  }
+  .fc-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: #f4f4f5;
+    font-size: 11px;
+    font-weight: 500;
+    color: #27272a;
+    cursor: pointer;
+    transition: background 120ms ease;
+  }
+  .fc-chip:hover { background: #e4e4e7; }
+  .fc-chip.dashed {
+    background: transparent;
+    border: 1px dashed rgba(15, 23, 42, 0.18);
+    color: #71717a;
+  }
+  .fc-chip.dashed:hover {
+    background: #f4f4f5;
+    color: #27272a;
+  }
+
+  .fc-create-btn {
+    margin-top: 1px;
+    width: 100%;
+    height: 38px;
+    border-radius: 11px;
+    border: none;
+    background: #18181b;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 6px 16px -4px rgba(24, 24, 27, 0.28);
+    transition: background 130ms ease, transform 120ms ease;
+  }
+  .fc-create-btn:hover { background: #27272a; }
+  .fc-create-btn:active { transform: scale(0.99); }
+
+  /* Seguridad para ventanas muy estrechas sin recorte lateral */
+  @media (max-width: 635px) {
+    .stage {
+      width: 344px;
+      justify-content: center;
+    }
+    .color-popover {
+      right: 14px;
+      top: 212px;
+      z-index: 20;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="hint-line">Prueba los colores (el selector flota a la izquierda sin apretar la tarjeta), las plantillas vivas y la regla de <strong>mm</strong>.</div>
+
+<div class="stage" id="stage">
+  <!-- Popover flotante de color a la izquierda -->
+  <aside class="color-popover open" id="colorPopover" aria-label="Selector de color">
+    <div class="cp-hdr">
+      <span class="cp-title">Color de fondo</span>
+      <button class="cp-close" id="btnClosePopover" type="button" title="Cerrar selector">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <!-- 3 filas visuales sin pestañas de texto -->
+    <div class="cp-groups" id="popoverSwatches">
+      <div class="cp-row">
+        <button class="cp-sw" type="button" data-color="#0b0d12" style="background:#0b0d12;" title="Negro pizarra"></button>
+        <button class="cp-sw" type="button" data-color="#161922" style="background:#161922;" title="Grafito"></button>
+        <button class="cp-sw" type="button" data-color="#122b24" style="background:#122b24;" title="Verde pizarra"></button>
+        <button class="cp-sw" type="button" data-color="#1e293b" style="background:#1e293b;" title="Azul noche"></button>
+        <button class="cp-sw" type="button" data-color="#261c2c" style="background:#261c2c;" title="Ciruela noche"></button>
+        <button class="cp-sw" type="button" data-color="#292524" style="background:#292524;" title="Carbón cálido"></button>
+      </div>
+      <div class="cp-row">
+        <button class="cp-sw" type="button" data-color="#ffffff" style="background:#ffffff;" title="Blanco"></button>
+        <button class="cp-sw" type="button" data-color="#faf8f3" style="background:#faf8f3;" title="Marfil"></button>
+        <button class="cp-sw" type="button" data-color="#f5efe0" style="background:#f5efe0;" title="Crema cálido"></button>
+        <button class="cp-sw" type="button" data-color="#f3f4f6" style="background:#f3f4f6;" title="Gris papel"></button>
+        <button class="cp-sw" type="button" data-color="#e8eae6" style="background:#e8eae6;" title="Salvia piedra"></button>
+        <button class="cp-sw" type="button" data-color="#e5e0d8" style="background:#e5e0d8;" title="Lino"></button>
+      </div>
+      <div class="cp-row">
+        <button class="cp-sw" type="button" data-color="#f6e2ea" style="background:#f6e2ea;" title="Rosa suave"></button>
+        <button class="cp-sw" type="button" data-color="#fbe8dd" style="background:#fbe8dd;" title="Durazno suave"></button>
+        <button class="cp-sw" type="button" data-color="#fbf5d9" style="background:#fbf5d9;" title="Mantequilla"></button>
+        <button class="cp-sw" type="button" data-color="#e2f3eb" style="background:#e2f3eb;" title="Menta suave"></button>
+        <button class="cp-sw" type="button" data-color="#e3eefc" style="background:#e3eefc;" title="Cielo suave"></button>
+        <button class="cp-sw" type="button" data-color="#ece6fa" style="background:#ece6fa;" title="Lavanda suave"></button>
+      </div>
+    </div>
+
+    <div class="cp-divider"></div>
+
+    <div class="cp-sv-wrap" id="svWrap">
+      <canvas class="cp-sv-canvas" id="svCanvas" width="228" height="136"></canvas>
+      <div class="cp-sv-cursor" id="svCursor"></div>
+    </div>
+
+    <div class="cp-hue-wrap" id="hueWrap">
+      <div class="cp-hue-thumb" id="hueThumb"></div>
+    </div>
+
+    <div class="cp-hex-row">
+      <span class="cp-live-dot" id="popoverLiveDot"></span>
+      <input class="cp-hex-input" id="hexInput" type="text" maxlength="7" value="#161922" aria-label="Código hexadecimal">
+    </div>
+  </aside>
+
+  <!-- Tarjeta flotante derecha -->
+  <section class="float-card" id="floatCard">
+    <!-- Cabecera Full-Bleed con Canvas HiDPI -->
+    <div class="fc-hero" id="heroBoard">
+      <canvas class="fc-hero-canvas" id="heroPatternCanvas"></canvas>
+      <div class="fc-hero-scrim" id="heroScrim"></div>
+
+      <div class="fc-hero-top">
+        <span class="fc-inf-badge" id="heroBadge">∞ Pizarra</span>
+        <button class="fc-close-btn" id="heroClose" type="button" title="Cerrar">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="fc-title-row" id="heroTitleRow">
+        <input class="fc-title-input" id="heroTitleInput" type="text" value="Pizarra sin título" aria-label="Nombre de la pizarra">
+        <svg id="heroEditIcon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+      </div>
+    </div>
+
+    <div class="fc-body">
+      <!-- 1. Fondo -->
+      <div class="fc-sec">
+        <div class="fc-sec-hdr">
+          <span class="fc-kicker">Fondo</span>
+          <span class="fc-hex-label" id="hexLabel">#161922</span>
+        </div>
+
+        <div class="fc-dots-row" id="quickDots">
+          <button class="fc-dot active" type="button" data-color="#161922" style="background:#161922;" title="Grafito"></button>
+          <button class="fc-dot" type="button" data-color="#122b24" style="background:#122b24;" title="Verde pizarra"></button>
+          <button class="fc-dot" type="button" data-color="#1e293b" style="background:#1e293b;" title="Azul noche"></button>
+          <button class="fc-dot" type="button" data-color="#ffffff" style="background:#ffffff;" title="Blanco"></button>
+          <button class="fc-dot" type="button" data-color="#fbf7ea" style="background:#fbf7ea;" title="Crema"></button>
+          <button class="fc-dot" type="button" data-color="#f6e2ea" style="background:#f6e2ea;" title="Rosa pastel"></button>
+          <button class="fc-dot-free open" id="btnTogglePicker" type="button" title="Más tonos y color libre">
+            <span class="fc-dot-free-inner" id="freeInner">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 2. Plantilla (100% visual, fondo neutro fijo, cero texto) -->
+      <div class="fc-sec">
+        <div class="fc-sec-hdr">
+          <span class="fc-kicker">Plantilla</span>
+        </div>
+        <div class="fc-tpl-row" id="tplRow">
+          <button class="fc-tpl-card" type="button" data-tpl="blank" title="Liso">
+            <svg class="fc-tpl-svg" viewBox="0 0 74 58" preserveAspectRatio="none">
+              <polygon points="0,0 50,0 20,58 0,58" fill="var(--tpl-sheen)"/>
+            </svg>
+          </button>
+          <button class="fc-tpl-card active" type="button" data-tpl="grid" title="Cuadrícula">
+            <svg class="fc-tpl-svg" viewBox="0 0 74 58" preserveAspectRatio="none">
+              <g stroke="var(--tpl-ink)" stroke-width="1">
+                <line x1="13" y1="0" x2="13" y2="58"/>
+                <line x1="25" y1="0" x2="25" y2="58"/>
+                <line x1="37" y1="0" x2="37" y2="58"/>
+                <line x1="49" y1="0" x2="49" y2="58"/>
+                <line x1="61" y1="0" x2="61" y2="58"/>
+                <line x1="0" y1="11" x2="74" y2="11"/>
+                <line x1="0" y1="23" x2="74" y2="23"/>
+                <line x1="0" y1="35" x2="74" y2="35"/>
+                <line x1="0" y1="47" x2="74" y2="47"/>
+              </g>
+            </svg>
+          </button>
+          <button class="fc-tpl-card" type="button" data-tpl="dots" title="Puntos">
+            <svg class="fc-tpl-svg" viewBox="0 0 74 58" preserveAspectRatio="none">
+              <g fill="var(--tpl-ink)">
+                <circle cx="13" cy="11" r="1.45"/><circle cx="25" cy="11" r="1.45"/><circle cx="37" cy="11" r="1.45"/><circle cx="49" cy="11" r="1.45"/><circle cx="61" cy="11" r="1.45"/>
+                <circle cx="13" cy="23" r="1.45"/><circle cx="25" cy="23" r="1.45"/><circle cx="37" cy="23" r="1.45"/><circle cx="49" cy="23" r="1.45"/><circle cx="61" cy="23" r="1.45"/>
+                <circle cx="13" cy="35" r="1.45"/><circle cx="25" cy="35" r="1.45"/><circle cx="37" cy="35" r="1.45"/><circle cx="49" cy="35" r="1.45"/><circle cx="61" cy="35" r="1.45"/>
+                <circle cx="13" cy="47" r="1.45"/><circle cx="25" cy="47" r="1.45"/><circle cx="37" cy="47" r="1.45"/><circle cx="49" cy="47" r="1.45"/><circle cx="61" cy="47" r="1.45"/>
+              </g>
+            </svg>
+          </button>
+          <button class="fc-tpl-card" type="button" data-tpl="ruled" title="Rayado">
+            <svg class="fc-tpl-svg" viewBox="0 0 74 58" preserveAspectRatio="none">
+              <g stroke="var(--tpl-ink)" stroke-width="1">
+                <line x1="0" y1="11" x2="74" y2="11"/>
+                <line x1="0" y1="21" x2="74" y2="21"/>
+                <line x1="0" y1="31" x2="74" y2="31"/>
+                <line x1="0" y1="41" x2="74" y2="41"/>
+                <line x1="0" y1="51" x2="74" y2="51"/>
+              </g>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 3. Regla milimetrada de Trama -->
+      <div class="fc-sec fc-trama-sec" id="tramaSec">
+        <div class="fc-sec-hdr">
+          <span class="fc-kicker">Trama</span>
+          <div class="mm-stepper">
+            <button class="mm-step-btn" id="btnMmDec" type="button" title="Reducir 1 mm">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <span class="fc-mm-val" id="mmLabel">5 mm</span>
+            <button class="mm-step-btn" id="btnMmInc" type="button" title="Aumentar 1 mm">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="ruler-slider" id="rulerSlider" role="slider" aria-label="Medida de trama en milímetros" aria-valuemin="3" aria-valuemax="12" aria-valuenow="5" tabindex="0">
+          <div class="ruler-bg">
+            <div class="ruler-fill" id="rulerFill"></div>
+            <div class="ruler-ticks" id="rulerTicks"></div>
+          </div>
+          <div class="ruler-thumb" id="rulerThumb"></div>
+        </div>
+
+        <div class="ruler-marks" id="rulerMarks"></div>
+      </div>
+
+      <!-- 4. Carpeta y Etiqueta (SVG fino) -->
+      <div class="fc-chips">
+        <span class="fc-chip">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span>Sin carpeta</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </span>
+        <span class="fc-chip dashed">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+          <span>Etiqueta</span>
+        </span>
+      </div>
+
+      <button class="fc-create-btn" type="button">Crear pizarra</button>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const MIN_MM = 3;
+  const MAX_MM = 12;
+  const MAJOR_STOPS = [3, 5, 8, 10, 12];
+
+  const state = {
+    color: '#161922',
+    tpl: 'grid',
+    mm: 5,
+    hue: 225,
+    sat: 0.35,
+    val: 0.13,
+    pickerOpen: true,
+    tramaActive: false
+  };
+
+  let tramaTimer = null;
+
+  const colorPopover = document.getElementById('colorPopover');
+  const btnClosePopover = document.getElementById('btnClosePopover');
+  const btnTogglePicker = document.getElementById('btnTogglePicker');
+  const freeInner = document.getElementById('freeInner');
+  const popoverLiveDot = document.getElementById('popoverLiveDot');
+  const hexInput = document.getElementById('hexInput');
+  const hexLabel = document.getElementById('hexLabel');
+
+  const heroBoard = document.getElementById('heroBoard');
+  const heroCanvas = document.getElementById('heroPatternCanvas');
+  const heroCtx = heroCanvas.getContext('2d');
+  const heroScrim = document.getElementById('heroScrim');
+  const heroBadge = document.getElementById('heroBadge');
+  const heroClose = document.getElementById('heroClose');
+  const heroTitleRow = document.getElementById('heroTitleRow');
+  const heroTitleInput = document.getElementById('heroTitleInput');
+  const heroEditIcon = document.getElementById('heroEditIcon');
+
+  const quickDotBtns = Array.from(document.querySelectorAll('#quickDots .fc-dot'));
+  const popoverSwBtns = Array.from(document.querySelectorAll('#popoverSwatches .cp-sw'));
+
+  const tplRow = document.getElementById('tplRow');
+  const tplBtns = Array.from(document.querySelectorAll('#tplRow .fc-tpl-card'));
+
+  const tramaSec = document.getElementById('tramaSec');
+  const btnMmDec = document.getElementById('btnMmDec');
+  const btnMmInc = document.getElementById('btnMmInc');
+  const mmLabel = document.getElementById('mmLabel');
+  const rulerSlider = document.getElementById('rulerSlider');
+  const rulerFill = document.getElementById('rulerFill');
+  const rulerThumb = document.getElementById('rulerThumb');
+  const rulerTicks = document.getElementById('rulerTicks');
+  const rulerMarks = document.getElementById('rulerMarks');
+
+  const svWrap = document.getElementById('svWrap');
+  const svCanvas = document.getElementById('svCanvas');
+  const svCtx = svCanvas.getContext('2d');
+  const svCursor = document.getElementById('svCursor');
+  const hueWrap = document.getElementById('hueWrap');
+  const hueThumb = document.getElementById('hueThumb');
+
+  function formatMm(val) {
+    return Number.isInteger(val) ? String(val) : val.toFixed(1);
+  }
+
+  function hexToRgb(hex) {
+    const clean = hex.replace('#', '');
+    return {
+      r: parseInt(clean.slice(0, 2), 16),
+      g: parseInt(clean.slice(2, 4), 16),
+      b: parseInt(clean.slice(4, 6), 16)
+    };
+  }
+
+  function rgbToHex(r, g, b) {
+    const toHex = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+    return '#' + toHex(r) + toHex(g) + toHex(b);
+  }
+
+  function hsvToRgb(h, s, v) {
+    const c = v * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = v - c;
+    let r = 0, g = 0, b = 0;
+    if (h < 60) { r = c; g = x; }
+    else if (h < 120) { r = x; g = c; }
+    else if (h < 180) { g = c; b = x; }
+    else if (h < 240) { g = x; b = c; }
+    else if (h < 300) { r = x; b = c; }
+    else { r = c; b = x; }
+    return { r: (r + m) * 255, g: (g + m) * 255, b: (b + m) * 255 };
+  }
+
+  function rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const d = max - min;
+    let h = 0;
+    if (d !== 0) {
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h = Math.round(h * 60);
+      if (h < 0) h += 360;
+    }
+    return { h, s: max === 0 ? 0 : d / max, v: max };
+  }
+
+  function isLightColor(hex) {
+    const { r, g, b } = hexToRgb(hex);
+    const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    return lum >= 0.50;
+  }
+
+  // Construcción única de marcas de regla (cada 0.5 mm de 3 a 12)
+  const tickEntries = [];
+  for (let v = MIN_MM; v <= MAX_MM + 0.001; v += 0.5) {
+    const rounded = Math.round(v * 2) / 2;
+    const pct = ((rounded - MIN_MM) / (MAX_MM - MIN_MM)) * 100;
+    const tick = document.createElement('span');
+    let cls = 'ruler-tick minor';
+    if (MAJOR_STOPS.includes(rounded)) cls = 'ruler-tick major';
+    else if (Number.isInteger(rounded)) cls = 'ruler-tick mid';
+    tick.className = cls;
+    tick.style.left = `${pct}%`;
+    rulerTicks.appendChild(tick);
+    tickEntries.push({ mm: rounded, el: tick });
+  }
+
+  const markBtns = [];
+  MAJOR_STOPS.forEach((mmVal) => {
+    const pct = (mmVal - MIN_MM) / (MAX_MM - MIN_MM);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ruler-mark-btn';
+    btn.textContent = String(mmVal);
+    btn.style.left = `calc(11px + (100% - 22px) * ${pct})`;
+    btn.addEventListener('click', () => {
+      pulseTrama();
+      setMm(mmVal);
+    });
+    rulerMarks.appendChild(btn);
+    markBtns.push({ mm: mmVal, el: btn });
+  });
+
+  function renderHeroCanvas() {
+    const rect = heroBoard.getBoundingClientRect();
+    const w = Math.max(1, Math.round(rect.width));
+    const h = Math.max(1, Math.round(rect.height));
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    if (heroCanvas.width !== Math.round(w * dpr) || heroCanvas.height !== Math.round(h * dpr)) {
+      heroCanvas.width = Math.round(w * dpr);
+      heroCanvas.height = Math.round(h * dpr);
+    }
+
+    const ctx = heroCtx;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = state.color;
+    ctx.fillRect(0, 0, w, h);
+
+    if (state.tpl === 'blank') return;
+
+    const light = isLightColor(state.color);
+    const stepPx = state.mm * 4.2;
+    const cx = w / 2;
+    const cy = h / 2;
+
+    const lineCol = light ? 'rgba(15, 23, 42, 0.14)' : 'rgba(255, 255, 255, 0.14)';
+    const dotCol = light ? 'rgba(15, 23, 42, 0.30)' : 'rgba(255, 255, 255, 0.30)';
+
+    if (state.tpl === 'grid') {
+      ctx.strokeStyle = lineCol;
+      ctx.lineWidth = 1;
+      const kxMax = Math.ceil(w / (2 * stepPx)) + 1;
+      const kyMax = Math.ceil(h / (2 * stepPx)) + 1;
+      ctx.beginPath();
+      for (let k = -kxMax; k <= kxMax; k++) {
+        const x = Math.round(cx + k * stepPx) + 0.5;
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+      }
+      for (let j = -kyMax; j <= kyMax; j++) {
+        const y = Math.round(cy + j * stepPx) + 0.5;
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+      }
+      ctx.stroke();
+    } else if (state.tpl === 'dots') {
+      ctx.fillStyle = dotCol;
+      const rDot = Math.max(1.05, Math.min(1.85, 0.85 + state.mm * 0.085));
+      const kxMax = Math.ceil(w / (2 * stepPx)) + 1;
+      const kyMax = Math.ceil(h / (2 * stepPx)) + 1;
+      for (let j = -kyMax; j <= kyMax; j++) {
+        const y = cy + j * stepPx;
+        for (let k = -kxMax; k <= kxMax; k++) {
+          const x = cx + k * stepPx;
+          ctx.beginPath();
+          ctx.arc(x, y, rDot, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    } else if (state.tpl === 'ruled') {
+      ctx.strokeStyle = lineCol;
+      ctx.lineWidth = 1;
+      const kyMax = Math.ceil(h / (2 * stepPx)) + 1;
+      ctx.beginPath();
+      for (let j = -kyMax; j <= kyMax; j++) {
+        const y = Math.round(cy + j * stepPx) + 0.5;
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+      }
+      ctx.stroke();
+    }
+
+    // Caliper arquitectónico sutil sobre una celda exacta de la trama
+    const calAlpha = state.tramaActive ? 0.88 : 0.42;
+    const calColor = light ? `rgba(24, 24, 27, ${calAlpha})` : `rgba(255, 255, 255, ${calAlpha})`;
+    const labelText = `${formatMm(state.mm)} mm`;
+
+    ctx.strokeStyle = calColor;
+    ctx.fillStyle = calColor;
+    ctx.lineWidth = 1;
+    ctx.font = '600 10px Inter, system-ui, sans-serif';
+
+    if (state.tpl === 'grid' || state.tpl === 'dots') {
+      let bestK = 0;
+      let bestScore = Infinity;
+      const targetMid = w * 0.62;
+      for (let k = -3; k <= 4; k++) {
+        const x1Test = cx + k * stepPx;
+        const x2Test = x1Test + stepPx;
+        if (x1Test >= 24 && x2Test <= w - 24) {
+          const mid = (x1Test + x2Test) * 0.5;
+          const dist = Math.abs(mid - targetMid);
+          if (dist < bestScore) {
+            bestScore = dist;
+            bestK = k;
+          }
+        }
+      }
+      const x1 = Math.round(cx + bestK * stepPx) + 0.5;
+      const x2 = Math.round(cx + (bestK + 1) * stepPx) + 0.5;
+      const yCal = state.tpl === 'grid'
+        ? Math.round(cy - Math.min(18, Math.max(8, stepPx * 0.38))) + 0.5
+        : Math.round(cy - 10) + 0.5;
+
+      ctx.beginPath();
+      ctx.moveTo(x1, yCal);
+      ctx.lineTo(x2, yCal);
+      ctx.moveTo(x1, yCal - 3.5);
+      ctx.lineTo(x1, yCal + 3.5);
+      ctx.moveTo(x2, yCal - 3.5);
+      ctx.lineTo(x2, yCal + 3.5);
+      ctx.stroke();
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(labelText, (x1 + x2) * 0.5, yCal - 5.5);
+    } else if (state.tpl === 'ruled') {
+      let bestJ = -1;
+      let bestScore = Infinity;
+      for (let j = -4; j <= 3; j++) {
+        const y1Test = cy + j * stepPx;
+        const y2Test = y1Test + stepPx;
+        if (y1Test >= 38 && y2Test <= h - 52) {
+          const mid = (y1Test + y2Test) * 0.5;
+          const dist = Math.abs(mid - (cy - 4));
+          if (dist < bestScore) {
+            bestScore = dist;
+            bestJ = j;
+          }
+        }
+      }
+      const y1 = Math.round(cy + bestJ * stepPx) + 0.5;
+      const y2 = Math.round(cy + (bestJ + 1) * stepPx) + 0.5;
+      const xCal = Math.round(w - 82) + 0.5;
+
+      ctx.beginPath();
+      ctx.moveTo(xCal, y1);
+      ctx.lineTo(xCal, y2);
+      ctx.moveTo(xCal - 3.5, y1);
+      ctx.lineTo(xCal + 3.5, y1);
+      ctx.moveTo(xCal - 3.5, y2);
+      ctx.lineTo(xCal + 3.5, y2);
+      ctx.stroke();
+
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(labelText, xCal + 7, (y1 + y2) * 0.5);
+    }
+  }
+
+  function renderAll() {
+    const light = isLightColor(state.color);
+    const upperHex = state.color.toUpperCase();
+
+    heroBoard.style.backgroundColor = state.color;
+    hexLabel.textContent = upperHex;
+    popoverLiveDot.style.backgroundColor = state.color;
+    if (document.activeElement !== hexInput) {
+      hexInput.value = upperHex;
+    }
+
+    // Contraste del hero
+    if (light) {
+      heroScrim.style.background = `linear-gradient(180deg, rgba(255,255,255,0) 0%, ${state.color}cc 100%)`;
+      heroBadge.style.color = '#18181b';
+      heroBadge.style.background = 'rgba(24, 24, 27, 0.08)';
+      heroClose.style.color = '#18181b';
+      heroClose.style.background = 'rgba(24, 24, 27, 0.08)';
+      heroTitleInput.style.color = '#18181b';
+      heroEditIcon.style.color = 'rgba(24, 24, 27, 0.55)';
+      heroTitleRow.style.borderBottom = '1px solid rgba(24, 24, 27, 0.18)';
+    } else {
+      heroScrim.style.background = 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(10,12,18,0.62) 100%)';
+      heroBadge.style.color = 'rgba(255, 255, 255, 0.90)';
+      heroBadge.style.background = 'rgba(255, 255, 255, 0.13)';
+      heroClose.style.color = '#ffffff';
+      heroClose.style.background = 'rgba(255, 255, 255, 0.14)';
+      heroTitleInput.style.color = '#ffffff';
+      heroEditIcon.style.color = 'rgba(255, 255, 255, 0.65)';
+      heroTitleRow.style.borderBottom = '1px solid rgba(255, 255, 255, 0.24)';
+    }
+
+    // Regla mm
+    const pct = (state.mm - MIN_MM) / (MAX_MM - MIN_MM);
+    const isBlank = state.tpl === 'blank';
+    mmLabel.textContent = isBlank ? '—' : `${formatMm(state.mm)} mm`;
+    rulerSlider.setAttribute('aria-valuenow', String(state.mm));
+    rulerFill.style.width = `calc(11px + (100% - 22px) * ${pct})`;
+    rulerThumb.style.left = `calc(11px + (100% - 22px) * ${pct})`;
+    tramaSec.classList.toggle('disabled', isBlank);
+
+    tickEntries.forEach(({ mm, el }) => {
+      el.classList.toggle('lit', mm <= state.mm + 0.01);
+    });
+    markBtns.forEach(({ mm, el }) => {
+      el.classList.toggle('active', Math.abs(state.mm - mm) < 0.26);
+    });
+
+    renderHeroCanvas();
+  }
+
+  function syncDotSelection() {
+    const low = state.color.toLowerCase();
+    let matchedQuick = false;
+    quickDotBtns.forEach((btn) => {
+      const match = btn.dataset.color.toLowerCase() === low;
+      btn.classList.toggle('active', match);
+      if (match) matchedQuick = true;
+    });
+    popoverSwBtns.forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.color.toLowerCase() === low);
+    });
+
+    btnTogglePicker.classList.toggle('has-custom', !matchedQuick);
+    if (!matchedQuick) {
+      freeInner.style.backgroundColor = state.color;
+      freeInner.style.color = isLightColor(state.color) ? '#18181b' : '#ffffff';
+    } else {
+      freeInner.style.backgroundColor = '#ffffff';
+      freeInner.style.color = '#18181b';
+    }
+  }
+
+  function drawSvCanvas() {
+    const w = svCanvas.width;
+    const h = svCanvas.height;
+    const hueRgb = hsvToRgb(state.hue, 1, 1);
+    svCtx.fillStyle = `rgb(${hueRgb.r}, ${hueRgb.g}, ${hueRgb.b})`;
+    svCtx.fillRect(0, 0, w, h);
+
+    const whiteGrad = svCtx.createLinearGradient(0, 0, w, 0);
+    whiteGrad.addColorStop(0, 'rgba(255,255,255,1)');
+    whiteGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    svCtx.fillStyle = whiteGrad;
+    svCtx.fillRect(0, 0, w, h);
+
+    const blackGrad = svCtx.createLinearGradient(0, 0, 0, h);
+    blackGrad.addColorStop(0, 'rgba(0,0,0,0)');
+    blackGrad.addColorStop(1, 'rgba(0,0,0,1)');
+    svCtx.fillStyle = blackGrad;
+    svCtx.fillRect(0, 0, w, h);
+
+    svCursor.style.left = `${state.sat * 100}%`;
+    svCursor.style.top = `${(1 - state.val) * 100}%`;
+    hueThumb.style.left = `${(state.hue / 360) * 100}%`;
+  }
+
+  function setColorFromHex(hex) {
+    state.color = hex.toLowerCase();
+    const { r, g, b } = hexToRgb(state.color);
+    const hsv = rgbToHsv(r, g, b);
+    if (hsv.s > 0) state.hue = hsv.h;
+    state.sat = hsv.s;
+    state.val = hsv.v;
+    drawSvCanvas();
+    syncDotSelection();
+    renderAll();
+  }
+
+  function setPopoverOpen(open) {
+    state.pickerOpen = open;
+    colorPopover.classList.toggle('open', open);
+    btnTogglePicker.classList.toggle('open', open);
+  }
+
+  function pulseTrama() {
+    state.tramaActive = true;
+    clearTimeout(tramaTimer);
+    tramaTimer = setTimeout(() => {
+      state.tramaActive = false;
+      renderHeroCanvas();
+    }, 750);
+  }
+
+  function setMm(nextMm) {
+    const snapped = Math.round(Math.max(MIN_MM, Math.min(MAX_MM, nextMm)) * 2) / 2;
+    if (snapped !== state.mm) {
+      state.mm = snapped;
+    }
+    renderAll();
+  }
+
+  // Eventos de color rápido y selector lateral
+  quickDotBtns.forEach((btn) => {
+    btn.addEventListener('click', () => setColorFromHex(btn.dataset.color));
+  });
+  popoverSwBtns.forEach((btn) => {
+    btn.addEventListener('click', () => setColorFromHex(btn.dataset.color));
+  });
+
+  btnTogglePicker.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setPopoverOpen(!state.pickerOpen);
+  });
+  btnClosePopover.addEventListener('click', () => setPopoverOpen(false));
+
+  document.addEventListener('pointerdown', (e) => {
+    if (!state.pickerOpen) return;
+    if (colorPopover.contains(e.target) || btnTogglePicker.contains(e.target)) return;
+    setPopoverOpen(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.pickerOpen) setPopoverOpen(false);
+  });
+
+  // Arrastrar SV y Hue
+  function updateFromSvPointer(e) {
+    const rect = svWrap.getBoundingClientRect();
+    state.sat = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    state.val = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height));
+    const { r, g, b } = hsvToRgb(state.hue, state.sat, state.val);
+    state.color = rgbToHex(r, g, b);
+    drawSvCanvas();
+    syncDotSelection();
+    renderAll();
+  }
+
+  function updateFromHuePointer(e) {
+    const rect = hueWrap.getBoundingClientRect();
+    const t = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    state.hue = t * 360;
+    const { r, g, b } = hsvToRgb(state.hue, state.sat, state.val);
+    state.color = rgbToHex(r, g, b);
+    drawSvCanvas();
+    syncDotSelection();
+    renderAll();
+  }
+
+  function bindDrag(el, handler) {
+    el.addEventListener('pointerdown', (e) => {
+      el.setPointerCapture(e.pointerId);
+      handler(e);
+      const onMove = (ev) => handler(ev);
+      const onUp = () => {
+        el.removeEventListener('pointermove', onMove);
+        el.removeEventListener('pointerup', onUp);
+      };
+      el.addEventListener('pointermove', onMove);
+      el.addEventListener('pointerup', onUp);
+    });
+  }
+  bindDrag(svWrap, updateFromSvPointer);
+  bindDrag(hueWrap, updateFromHuePointer);
+
+  hexInput.addEventListener('input', () => {
+    const raw = hexInput.value.trim();
+    const match = raw.match(/^#?([0-9a-fA-F]{6})$/);
+    if (match) setColorFromHex('#' + match[1].toLowerCase());
+  });
+  hexInput.addEventListener('blur', () => {
+    hexInput.value = state.color.toUpperCase();
+  });
+
+  // Plantillas
+  tplBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.tpl = btn.dataset.tpl;
+      tplBtns.forEach((b) => b.classList.toggle('active', b === btn));
+      renderAll();
+    });
+  });
+
+  // Regla mm + stepper
+  function updateRulerFromPointer(e) {
+    const rect = rulerSlider.getBoundingClientRect();
+    const pad = 11;
+    const usable = Math.max(1, rect.width - pad * 2);
+    const t = Math.max(0, Math.min(1, (e.clientX - rect.left - pad) / usable));
+    pulseTrama();
+    setMm(MIN_MM + t * (MAX_MM - MIN_MM));
+  }
+  bindDrag(rulerSlider, updateRulerFromPointer);
+
+  rulerSlider.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      pulseTrama();
+      setMm(state.mm + 0.5);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      pulseTrama();
+      setMm(state.mm - 0.5);
+    }
+  });
+
+  btnMmDec.addEventListener('click', () => {
+    pulseTrama();
+    setMm(Math.floor(state.mm - 0.01));
+  });
+  btnMmInc.addEventListener('click', () => {
+    pulseTrama();
+    setMm(Math.ceil(state.mm + 0.01));
+  });
+
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => renderHeroCanvas()).observe(heroBoard);
+  } else {
+    window.addEventListener('resize', renderHeroCanvas);
+  }
+
+  setColorFromHex('#161922');
+})();
+</script>
+</body>
+</html>

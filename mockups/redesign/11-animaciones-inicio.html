@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finily — Animaciones de Inicio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="_shell.css">
+<style>
+  .ctrl { position: sticky; top: 10px; z-index: 50; display: flex; gap: 8px; align-items: center; padding: 6px; border-radius: 999px; background: rgba(255,255,255,.8); backdrop-filter: blur(16px) saturate(1.5); box-shadow: 0 6px 20px -8px rgba(15,23,42,.25), inset 0 1px 0 #fff; }
+  .ctrl button { border: 0; height: 30px; padding: 0 14px; border-radius: 999px; background: transparent; font-weight: 600; font-size: 12px; color: var(--icon); cursor: pointer; }
+  .ctrl button.on { background: var(--accent); color: var(--accent-fg); }
+  .ctrl .sep { width: 1px; height: 18px; background: rgba(15,23,42,.1); }
+  .replay { align-self: flex-start; margin-left: 4px; border: 0; background: #fff; height: 26px; padding: 0 12px; border-radius: 999px; font-weight: 600; font-size: 11.5px; color: var(--icon); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; box-shadow: 0 1px 2px rgba(15,23,42,.08); }
+  .replay svg { width: 13px; height: 13px; }
+  /* tabla de movimiento */
+  .spec { width: 100%; max-width: 1180px; background: #fff; border-radius: 14px; padding: 18px 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px 28px; }
+  .spec h3 { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  .spec table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  .spec td { padding: 6px 0; border-top: 1px solid rgba(15,23,42,.06); vertical-align: top; }
+  .spec td:first-child { font-weight: 600; width: 34%; }
+  .spec td code { font-size: 10.5px; background: var(--field); padding: 1px 5px; border-radius: 5px; }
+  .spec .curve { display: flex; gap: 10px; align-items: center; }
+  .spec .curve svg { width: 46px; height: 30px; flex-shrink: 0; }
+  .spec .curve path { fill: none; stroke: #18181B; stroke-width: 1.8; }
+  .spec p { font-size: 11.5px; color: #52525B; line-height: 1.5; }
+  .spec .full { grid-column: 1 / -1; }
+  /* capas de escena */
+  .layer { position: absolute; inset: 0; }
+  .lib .grid { will-change: transform, opacity; }
+  .hdr .sfield.anim { position: absolute; left: 22px; right: 150px; top: 11px; }
+  .reopen { opacity: 0; }
+  .flyer { position: absolute; z-index: 40; pointer-events: none; }
+  .ripple { position: absolute; border-radius: 50%; background: var(--soft); pointer-events: none; }
+  .trash-badge { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); }
+  .bg-glass { position: absolute; inset: 0; background: linear-gradient(135deg, #F2A4B9 0%, #A9C7E8 50%, #A6CEBB 100%); }
+</style>
+</head>
+<body>
+<div class="page-title">Animaciones de Inicio · Etapa 3</div>
+<p class="hint">Cada escena se repite sola. Usa «Lento ×4» para ver el detalle y «Reducir animaciones» para ver la versión mínima (solo fundidos cortos). Todo usa 3 duraciones y 3 curvas; nada rebota más de lo necesario y el vidrio solo aparece en lo que flota.</p>
+<div class="ctrl"><button class="on" data-speed="1">Normal</button><button data-speed="4">Lento ×4</button><span class="sep"></span><button id="rm">Reducir animaciones</button></div>
+
+<section class="spec">
+  <div>
+    <h3>Duraciones</h3>
+    <table>
+      <tr><td>Rápida · 120 ms</td><td>Hover, pulsar, cerrar menús, desaparecer.</td></tr>
+      <tr><td>Base · 200 ms</td><td>Abrir menús, campo de búsqueda, avisos, diálogos.</td></tr>
+      <tr><td>Lenta · 320 ms</td><td>Tarjetas laterales, entrar a carpeta, sidebar, papelera, cambio de tema (420 ms).</td></tr>
+    </table>
+  </div>
+  <div>
+    <h3>Curvas</h3>
+    <table>
+      <tr><td><div class="curve"><svg viewBox="0 0 46 30"><path d="M2 28C12 4 22 2 44 2"/></svg>Salida</div></td><td>Todo lo que entra. <code>cubic-bezier(.22,1,.36,1)</code></td></tr>
+      <tr><td><div class="curve"><svg viewBox="0 0 46 30"><path d="M2 28C20 28 34 20 44 2"/></svg>Entrada</div></td><td>Todo lo que se va (más corto). <code>cubic-bezier(.4,0,1,1)</code></td></tr>
+      <tr><td><div class="curve"><svg viewBox="0 0 46 30"><path d="M2 28C14 2 24 -4 32 4S40 2 44 2"/></svg>Muelle</div></td><td>Solo detalles pequeños: insignias, soltar. <code>cubic-bezier(.34,1.45,.64,1)</code></td></tr>
+    </table>
+  </div>
+  <div class="full">
+    <h3>Vidrio y costo</h3>
+    <p>Menús, tarjetas, diálogos y avisos son <b>translúcidos con desenfoque</b> y un brillo de 1 px en el borde superior (el «liquid glass» discreto). Para que no gaste recursos en Qt: el desenfoque se calcula <b>una sola vez al abrir</b> sobre una captura reducida a 1/4 del fondo (≈1 ms), no en cada cuadro; mientras algo se mueve se usa esa misma imagen. Nunca hay blur sobre el lienzo ni mientras se dibuja con la tableta. Con «Reducir animaciones» o sin aceleración gráfica, el vidrio pasa a color sólido. Solo se animan posición, escala y opacidad (lo barato); nunca tamaños de texto ni sombras grandes cuadro a cuadro.</p>
+  </div>
+</section>
+
+<div id="out" style="display:contents"></div>
+
+<script src="_shell.js"></script>
+<script>
+let SPEED = 1, REDUCED = false;
+const EO = 'cubic-bezier(.22,1,.36,1)', EI = 'cubic-bezier(.4,0,1,1)', SP = 'cubic-bezier(.34,1.45,.64,1)';
+const T = { fast: 120, base: 200, slow: 320 };
+const wait = ms => new Promise(r => setTimeout(r, ms * SPEED));
+function A(el, kf, ms, ease = EO, delay = 0) {
+  if (!el) return Promise.resolve();
+  if (REDUCED) { // versión mínima: solo opacidad final, 80 ms
+    const last = kf[kf.length - 1]; const first = kf[0];
+    const op = ('opacity' in last || 'opacity' in first) ? [{ opacity: first.opacity ?? 1 }, { opacity: last.opacity ?? 1 }] : [{}, {}];
+    const a = el.animate([{ ...last, ...op[0] }, { ...last, ...op[1] }], { duration: 80 * SPEED, delay: delay * SPEED, fill: 'both' });
+    return a.finished.catch(() => {});
+  }
+  const a = el.animate(kf, { duration: ms * SPEED, delay: delay * SPEED, easing: ease, fill: 'both' });
+  return a.finished.catch(() => {});
+}
+const reset = root => root.querySelectorAll('*').forEach(e => e.getAnimations().forEach(a => a.cancel()));
+const $ = (r, s) => r.querySelector(s), $$ = (r, s) => [...r.querySelectorAll(s)];
+const scale = f => f.getBoundingClientRect().width / 1180;
+function rel(f, el) { const a = f.getBoundingClientRect(), b = el.getBoundingClientRect(), s = scale(f); return { x: (b.left - a.left) / s, y: (b.top - a.top) / s, w: b.width / s, h: b.height / s }; }
+
+const SCENES = [];
+function add(id, n, title, desc, frame, play, notes = '') {
+  SCENES.push({ id, play });
+  document.getElementById('out').insertAdjacentHTML('beforeend',
+    play ? scene(id, n, title, desc, frame, notes).replace('<div class="frame-wrap">', `<button class="replay" data-id="${id}">${svgI('refresh')}Repetir</button><div class="frame-wrap">`) : scene(id, n, title, desc, frame, notes));
+}
+const sb = { folders: true };
+
+/* 01 · Hover y pulsar */
+add('hover', '01', 'Pasar el lápiz por encima y pulsar',
+  'El objeto sube 3 px y su sombra se abre (rápida, salida). Al pulsar se hunde a 96 % y al soltar vuelve con un muelle mínimo. Sin cajas ni fondos: el objeto es el que reacciona.',
+  frameHTML({ sb }),
+  async f => {
+    const objs = $$(f, '.obj .vis');
+    for (const i of [0, 1, 4, 3]) {
+      await A(objs[i], [{ transform: 'translateY(0)' }, { transform: 'translateY(-3px)' }], T.fast);
+      await wait(260);
+      if (i === 3) { await A(objs[i], [{ transform: 'translateY(-3px)' }, { transform: 'translateY(-1px) scale(.96)' }], 90, EI); await A(objs[i], [{ transform: 'translateY(-1px) scale(.96)' }, { transform: 'translateY(-3px) scale(1)' }], T.base, SP); await wait(200); }
+      await A(objs[i], [{ transform: 'translateY(-3px)' }, { transform: 'translateY(0)' }], T.fast, EI);
+    }
+  });
+
+/* 02 · Menú + Nuevo */
+const nuevo = `<div class="menu" style="right:18px;top:52px;width:244px;transform-origin:top right">${[
+  ['pen', 'Nota rápida', 'Ctrl N'], ['board', 'Pizarra infinita'], ['book', 'Cuaderno'], '-', ['folder', 'Carpeta'], ['pdf', 'Importar PDF']]
+  .map(r => r === '-' ? '<div class="msep"></div>' : `<div class="mi">${svgI(r[0])}${r[1]}<span class="k">${r[2] || ''}</span></div>`).join('')}</div>`;
+add('nuevo', '02', 'Abrir el menú + Nuevo',
+  'Crece desde la esquina del botón (96 % → 100 %, base 200 ms) mientras se desenfoca lo de atrás; las filas entran escalonadas cada 18 ms. Al cerrar: 120 ms, sin escalonar.',
+  frameHTML({ sb, libOverlay: nuevo }),
+  async f => {
+    const m = $(f, '.menu'), btn = $(f, '.pill-new'), rows = $$(m, '.mi, .msep');
+    m.style.opacity = 0; await wait(300);
+    await A(btn, [{ transform: 'scale(1)' }, { transform: 'scale(.94)' }], 80, EI);
+    A(btn, [{ transform: 'scale(.94)' }, { transform: 'scale(1)' }], T.base, SP);
+    m.style.opacity = '';
+    A(m, [{ opacity: 0, transform: 'translateY(-4px) scale(.96)' }, { opacity: 1, transform: 'none' }], T.base);
+    await Promise.all(rows.map((r, i) => A(r, [{ opacity: 0, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }], T.base, EO, 30 + i * 18)));
+    await wait(1100);
+    await A(m, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.98)' }], T.fast, EI);
+  });
+
+/* 03 · Tarjeta lateral (Nueva carpeta) */
+const card = `<div class="float-card" style="top:62px"><div class="fc-head"><h3>Nueva carpeta</h3><span class="fc-close">${svgI('x')}</span></div>
+  <div class="fc-body"><div style="display:flex;justify-content:center;padding:14px 0;background:var(--field);border-radius:14px">${folderSVG('lavanda', 'music', 132)}</div>
+  <div class="field focus"><input value="Música"></div>
+  <span class="kicker">Color</span><div style="display:flex;justify-content:space-between">${Object.values(FCOL).map((c, i) => `<span style="width:24px;height:24px;border-radius:50%;background:linear-gradient(${c.flap} 35%,${c.b1} 35%);${i === 4 ? 'box-shadow:0 0 0 2px var(--ring),0 0 0 3.5px var(--accent)' : ''}"></span>`).join('')}</div>
+  <button class="cta">Crear carpeta</button></div></div>`;
+add('tarjeta', '03', 'Tarjeta lateral (Nueva carpeta / pizarra / Mover a…)',
+  'Entra desde la derecha 24 px con fundido (lenta 320 ms) y sus bloques llegan escalonados. El vidrio deja ver las carpetas de atrás, desenfocadas. Al crear, la tarjeta se va y la carpeta nueva aparece en la grilla con un muelle pequeño.',
+  frameHTML({ sb, overlay: card }),
+  async f => {
+    const c = $(f, '.float-card'), parts = $$(c, '.fc-head, .fc-body > *');
+    c.style.opacity = 0; await wait(300); c.style.opacity = '';
+    A(c, [{ opacity: 0, transform: 'translateX(24px)' }, { opacity: 1, transform: 'none' }], T.slow);
+    await Promise.all(parts.map((p, i) => A(p, [{ opacity: 0, transform: 'translateX(10px)' }, { opacity: 1, transform: 'none' }], T.slow, EO, 40 + i * 30)));
+    await wait(900);
+    const cta = $(c, '.cta');
+    await A(cta, [{ transform: 'scale(1)' }, { transform: 'scale(.97)' }], 80, EI);
+    await A(c, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(16px)' }], T.fast, EI);
+    const objs = $$(f, '.obj'); const last = objs[2];
+    await A(last, [{ opacity: 0, transform: 'scale(.8)' }, { opacity: 1, transform: 'scale(1)' }], T.slow, SP);
+    await wait(500);
+  });
+
+/* 04 · Entrar a una carpeta */
+const inside = `<div class="layer in" style="top:58px;background:var(--bg)"><div class="grid">${[
+  objHTML(folderSVG('cielo', 'flask'), 'Laboratorio', 'Hoy · 09:12'), objHTML(bookHTML('salvia'), 'Física II', 'Ayer · 19:40'),
+  objHTML(bookHTML('rosa', 84, 'A5'), 'Resumen parcial', '24 nov 2026'), objHTML(pdfHTML(), 'Guía de laboratorio', '23 nov 2026'),
+  objHTML(boardHTML('paper'), 'Esquema rápido', '20 nov 2026')].join('')}</div></div>`;
+add('carpeta', '04', 'Entrar a una carpeta',
+  'La solapa se abre (la carpeta «respira»), la grilla actual se aleja hacia la carpeta y se funde; el contenido nuevo crece desde ese mismo punto. El título cambia a la ruta con un deslizamiento corto. Al volver, lo mismo al revés.',
+  frameHTML({ sb, libOverlay: inside, hdr: { custom: `<div class="hdr-title" style="position:relative;width:300px;height:24px"><span class="t1" style="position:absolute;left:0">Documentos</span><span class="t2" style="position:absolute;left:0;opacity:0;white-space:nowrap"><span class="crumb">Carpetas</span> › Apuntes</span></div><div class="hdr-sp"></div><button class="icon-btn">${svgI('search')}</button><button class="icon-btn">${svgI('filter')}</button><button class="pill-new">${svgI('plus')}Nuevo</button>` } }),
+  async f => {
+    const grid = $(f, '.lib > .grid'), lay = $(f, '.layer.in'), fold = $$(grid, '.obj')[0], t1 = $(f, '.t1'), t2 = $(f, '.t2');
+    lay.style.opacity = 0; await wait(400);
+    const p = rel(f, fold), g = rel(f, grid), ox = p.x - g.x + p.w / 2, oy = p.y - g.y + p.h / 2;
+    grid.style.transformOrigin = lay.style.transformOrigin = `${ox}px ${oy}px`;
+    const fv = $(fold, '.vis');
+    await A(fv, [{ transform: 'none' }, { transform: 'translateY(-3px) scale(1.06)' }], T.base);
+    A(t1, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-6px)' }], T.base, EI);
+    A(t2, [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], T.slow, EO, 80);
+    A(grid, [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(1.08)' }], T.base, EI);
+    lay.style.opacity = '';
+    await A(lay, [{ opacity: 0, transform: 'scale(.92)' }, { opacity: 1, transform: 'scale(1)' }], T.slow, EO, 90);
+    await wait(1200);
+  });
+
+/* 05 · Papelera */
+add('papelera', '05', 'Mandar a la papelera',
+  'El documento se encoge y viaja en curva hasta «Papelera» del sidebar; el ícono da un pequeño salto y aparece el contador. Los demás objetos se recolocan deslizándose. Abajo sube el aviso con «Deshacer».',
+  frameHTML({ sb, libOverlay: `<div class="toast" style="opacity:0">${svgI('trash')}«Física II» se movió a la papelera<button class="tbtn">Deshacer</button><span class="k">Ctrl Z</span></div>` }),
+  async f => {
+    const objs = $$(f, '.lib .obj'), o = objs[4], trash = $$(f, '.sb .nav').find(n => n.textContent.includes('Papelera')), toast = $(f, '.toast');
+    await wait(400);
+    const a = rel(f, $(o, '.vis')), b = rel(f, $(trash, 'svg'));
+    const fl = $(o, '.vis').cloneNode(true); fl.className = 'flyer'; fl.style.left = a.x + 'px'; fl.style.top = a.y + 'px'; f.appendChild(fl);
+    o.style.visibility = 'hidden';
+    const dx = b.x - a.x - a.w / 2 + 8, dy = b.y - a.y - a.h / 2 + 8;
+    if (!REDUCED) await fl.animate([
+      { transform: 'translate(0,0) scale(1)', opacity: 1 },
+      { transform: `translate(${dx * .45}px, ${dy * .2 - 60}px) scale(.55) rotate(-8deg)`, opacity: 1, offset: .45 },
+      { transform: `translate(${dx}px, ${dy}px) scale(.12) rotate(-14deg)`, opacity: .2 }],
+      { duration: 460 * SPEED, easing: 'cubic-bezier(.5,0,.3,1)', fill: 'both' }).finished;
+    fl.remove();
+    const ic = $(trash, 'svg');
+    A(ic, [{ transform: 'none' }, { transform: 'translateY(-3px) rotate(-8deg)' }, { transform: 'none' }], 340, SP);
+    if (!$(trash, '.cnt')) trash.insertAdjacentHTML('beforeend', '<span class="cnt">1</span>');
+    A($(trash, '.cnt'), [{ transform: 'scale(.4)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], T.base, SP);
+    const after = objs.slice(5), before = after.map(e => rel(f, e));
+    o.style.display = 'none';
+    after.forEach((e, i) => { const n = rel(f, e); A(e, [{ transform: `translate(${before[i].x - n.x}px, ${before[i].y - n.y}px)` }, { transform: 'none' }], T.slow, EO, i * 25); });
+    await A(toast, [{ opacity: 0, transform: 'translate(-50%, 14px) scale(.98)' }, { opacity: 1, transform: 'translate(-50%, 0)' }], T.base, EO, 120);
+    await wait(1600);
+    await A(toast, [{ opacity: 1, transform: 'translate(-50%,0)' }, { opacity: 0, transform: 'translate(-50%, 8px)' }], T.fast, EI);
+  },
+  `<ul><li>Si se pulsa «Deshacer», el mismo viaje en sentido contrario: sale de la papelera y vuelve a su hueco.</li></ul>`);
+
+/* 06 · Claro ↔ Oscuro */
+add('tema', '06', 'Cambiar de Claro a Oscuro',
+  'Revelado circular desde el botón de luna (420 ms, salida). En Qt: se pinta una sola foto del tema nuevo y se recorta con un círculo que crece; cuesta lo mismo que un fundido.',
+  frameHTML({ sb, overlay: frameHTML({ sb, dark: true }).replace('<div class="frame-wrap">', '<div class="layer dk" style="z-index:30">').replace(/<\/div><\/div>$/, '</div></div>') }),
+  async f => {
+    const dk = $(f, '.layer.dk'), inner = $(dk, '.frame');
+    inner.style.transform = 'none'; inner.style.borderRadius = 0;
+    const btn = rel(f, $$(f, '.sb-icons .sb-btn')[0]); const cx = btn.x + btn.w / 2, cy = btn.y + btn.h / 2;
+    dk.style.clipPath = `circle(0px at ${cx}px ${cy}px)`; await wait(500);
+    A($$(f, '.sb-icons .sb-btn')[0], [{ transform: 'scale(1)' }, { transform: 'scale(.88)' }, { transform: 'scale(1)' }], T.base, SP);
+    if (REDUCED) { dk.style.clipPath = 'none'; await A(dk, [{ opacity: 0 }, { opacity: 1 }], 80); }
+    else await dk.animate([{ clipPath: `circle(0px at ${cx}px ${cy}px)` }, { clipPath: `circle(1400px at ${cx}px ${cy}px)` }], { duration: 420 * SPEED, easing: EO, fill: 'both' }).finished;
+    await wait(1300);
+    await A(dk, [{ opacity: 1 }, { opacity: 0 }], T.slow, EI);
+  });
+
+/* 07 · Sidebar */
+add('sidebar', '07', 'Cerrar y abrir el sidebar',
+  'Primero se funde el contenido del sidebar (120 ms), luego su ancho baja a 0 (320 ms) mientras la grilla se reacomoda; el botón para reabrir aparece junto al título. Al abrir, el orden inverso.',
+  frameHTML({ sb, hdr: { custom: `<button class="icon-btn reopen" style="margin-right:6px;width:0;overflow:hidden">${svgI('side')}</button><div class="hdr-title">Documentos</div><div class="hdr-sp"></div><button class="icon-btn">${svgI('search')}</button><button class="icon-btn">${svgI('filter')}</button><button class="pill-new">${svgI('plus')}Nuevo</button>` } }),
+  async f => {
+    const s = $(f, '.sb'), kids = [...s.children], re = $(f, '.reopen');
+    s.style.overflow = 'hidden'; await wait(500);
+    await Promise.all(kids.map(k => A(k, [{ opacity: 1 }, { opacity: 0 }], T.fast, EI)));
+    A(re, [{ opacity: 0, width: '0px' }, { opacity: 1, width: '32px' }], T.slow, EO, 120);
+    await A(s, [{ width: '214px', padding: '14px 10px 12px' }, { width: '0px', padding: '14px 0 12px' }], T.slow);
+    await wait(1100);
+    A(re, [{ opacity: 1, width: '32px' }, { opacity: 0, width: '0px' }], T.base, EI);
+    await A(s, [{ width: '0px', padding: '14px 0 12px' }, { width: '214px', padding: '14px 10px 12px' }], T.slow);
+    await Promise.all(kids.map((k, i) => A(k, [{ opacity: 0, transform: 'translateX(-6px)' }, { opacity: 1, transform: 'none' }], T.base, EO, i * 20)));
+  });
+
+/* 08 · Búsqueda */
+add('buscar', '08', 'Abrir la búsqueda',
+  'El campo se despliega desde la lupa hacia la izquierda y tapa el título (200 ms); el texto se escribe y la grilla se filtra: lo que no coincide se funde y lo que queda se reacomoda.',
+  frameHTML({ sb, hdr: { custom: `<div class="hdr-title">Documentos</div><div class="hdr-sp"></div><div class="sfield anim" style="opacity:0">${svgI('search')}<span class="q"></span><span class="caret"></span><span class="kbd" style="margin-left:auto">Esc</span></div><button class="icon-btn sbtn">${svgI('search')}</button><button class="icon-btn">${svgI('filter')}</button><button class="pill-new">${svgI('plus')}Nuevo</button>` } }),
+  async f => {
+    const fld = $(f, '.sfield'), q = $(fld, '.q'), objs = $$(f, '.lib .obj');
+    q.textContent = ''; await wait(500);
+    fld.style.opacity = '';
+    await A(fld, [{ opacity: 0, clipPath: 'inset(0 0 0 100% round 11px)' }, { opacity: 1, clipPath: 'inset(0 0 0 0 round 11px)' }], T.base);
+    for (const ch of 'físi') { q.textContent += ch; await wait(110); }
+    const keep = [4, 6], before = objs.map(e => rel(f, e));
+    await Promise.all(objs.map((e, i) => keep.includes(i) ? 0 : A(e, [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.94)' }], T.fast, EI)));
+    objs.forEach((e, i) => { if (!keep.includes(i)) e.style.display = 'none'; });
+    keep.forEach(i => { const n = rel(f, objs[i]); A(objs[i], [{ transform: `translate(${before[i].x - n.x}px, ${before[i].y - n.y}px)` }, { transform: 'none' }], T.slow); });
+    await wait(1400);
+  });
+
+/* 09 · Diálogo irreversible */
+add('dialogo', '09', 'Diálogo de confirmación (solo lo irreversible)',
+  'El fondo se oscurece y se desenfoca apenas (2 px) en 200 ms; el diálogo aparece desde 96 % con fundido. Es la única pieza con velo, porque es la única que bloquea.',
+  frameHTML({ sb, overlay: `<div class="scrim" style="opacity:0"></div><div class="dialog" style="opacity:0"><h3>¿Vaciar la papelera?</h3><p>Se borrarán 3 elementos para siempre. No se puede deshacer.</p><div class="row"><button class="ghost-btn">Cancelar</button><button class="cta danger">Vaciar</button></div></div>` }),
+  async f => {
+    const sc = $(f, '.scrim'), d = $(f, '.dialog');
+    await wait(500); sc.style.opacity = d.style.opacity = '';
+    A(sc, [{ opacity: 0 }, { opacity: 1 }], T.base);
+    await A(d, [{ opacity: 0, transform: 'translate(-50%,-50%) scale(.96)' }, { opacity: 1, transform: 'translate(-50%,-50%) scale(1)' }], T.base, EO, 40);
+    await wait(1400);
+    A(sc, [{ opacity: 1 }, { opacity: 0 }], T.fast, EI);
+    await A(d, [{ opacity: 1, transform: 'translate(-50%,-50%) scale(1)' }, { opacity: 0, transform: 'translate(-50%,-50%) scale(.98)' }], T.fast, EI);
+  });
+
+/* 10 · Vidrio sobre fondo de color (para apreciarlo) */
+add('vidrio', '10', 'Así se ve el vidrio',
+  'Escena estática para apreciar el material: menú y tarjeta encima de objetos de color. Translúcido, desenfoque 22 px, saturación un poco más alta y un brillo de 1 px arriba. En oscuro, el mismo material sobre grafito.',
+  frameHTML({ sb, libOverlay: nuevo.replace('top:52px', 'top:120px;right:auto;left:150px') }),
+  null);
+add('vidrio-osc', '10b', 'El vidrio en Modo Oscuro', 'Mismo material sobre grafito: translúcido oscuro, el brillo superior se reduce a 6 %.',
+  frameHTML({ sb, dark: true, libOverlay: nuevo.replace('top:52px', 'top:120px;right:auto;left:150px') }),
+  null);
+
+/* ---------- motor ---------- */
+document.getElementById('toc')?.remove();
+fitFrames();
+const runs = {};
+async function loop(sc) {
+  const token = runs[sc.id] = Symbol();
+  const f = document.querySelector(`#${sc.id} .frame`);
+  const html = f.innerHTML;
+  while (runs[sc.id] === token) {
+    f.innerHTML = html; f.style.transform = f.style.transform; // restaurar
+    try { await sc.play(f); } catch (e) { console.error(e); }
+    await wait(900);
+  }
+}
+const start = () => SCENES.filter(s => s.play).forEach(loop);
+document.querySelectorAll('.replay').forEach(b => b.onclick = () => loop(SCENES.find(s => s.id === b.dataset.id)));
+document.querySelectorAll('[data-speed]').forEach(b => b.onclick = () => { SPEED = +b.dataset.speed; document.querySelectorAll('[data-speed]').forEach(x => x.classList.toggle('on', x === b)); });
+document.getElementById('rm').onclick = e => { REDUCED = !REDUCED; e.target.classList.toggle('on', REDUCED); };
+window.addEventListener('resize', fitFrames);
+start();
+</script>
+</body>
+</html>

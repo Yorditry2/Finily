@@ -17,7 +17,10 @@ QString autosavePath();
 QJsonObject documentSettings(ShapeKind kind, bool hold, bool guides, bool swap,
                              PressureProfile profile, ThemeId theme,
                              BackgroundTemplate tpl, Viewport viewport,
-                             PageFormat pageFormat);
+                             PageFormat pageFormat,
+                             double templateScale = 1.0,
+                             int coverColorIndex = -1,
+                             int coverIconIndex = 0);
 
 QJsonObject serializePage(const PageData& document, bool& valid);
 
@@ -32,14 +35,26 @@ PageData deserializePage(const QJsonObject& root,
 // Renderiza una miniatura real de cualquier PageData (2x HiDPI).
 QImage renderPageThumbnail(const PageData& page, ThemeId themeId,
                            BackgroundTemplate fallbackTpl, PageFormat pageFormat,
-                           const QSize& size);
+                           const QSize& size, double templateScale = 1.0);
+
+struct NotebookFileMeta {
+    ThemeId themeId = ThemeId::DarkBoard;
+    BackgroundTemplate tpl = BackgroundTemplate::Dots;
+    PageFormat pageFormat = PageFormat::Infinite;
+    double templateScale = 1.0;
+    int coverColorIndex = -1;
+    int coverIconIndex = 0;
+    bool found = false;
+};
+
+NotebookFileMeta readNotebookMetadata(const QString& path);
 
 // Caché en disco de miniaturas de portada para la Biblioteca (HomeScreen).
 QString coverThumbnailPath(const QString& notebookPath);
 void saveCoverThumbnail(const QString& notebookPath, const QImage& thumbnail);
 void updateCoverThumbnailForPages(const QString& notebookPath, const QVector<PageData>& pages,
                                   ThemeId themeId, BackgroundTemplate fallbackTpl,
-                                  PageFormat pageFormat);
+                                  PageFormat pageFormat, double templateScale = 1.0);
 void moveCoverThumbnail(const QString& oldNotebookPath, const QString& newNotebookPath);
 void removeCoverThumbnail(const QString& notebookPath);
 QImage loadOrGenerateCoverThumbnail(const QString& notebookPath, const QDateTime& notebookModified);

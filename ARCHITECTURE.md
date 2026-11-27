@@ -1,18 +1,24 @@
 # Finily — Arquitectura Nativa Linux (C++20 + Qt 6)
 
-**Finily** es una pizarra digital y anotador nativo para Linux (Wayland/X11), construido con **C++20 + Qt 6 Widgets + QPainter + Poppler-Qt6**, diseñado para escritura ultra-fluida con tableta Wacom (200 Hz reales vía `QTabletEvent`), geometría inteligente estilo StarNote y dictado de clases.
+**Finily** es una pizarra digital y cuaderno de notas nativo para Linux (Wayland/X11) y Windows, construido con **C++20 + Qt 6 (Core, Gui, Network, Widgets, Pdf, Svg)**, diseñado para escritura a 200 Hz reales vía `QTabletEvent`, geometría inteligente con enlaces/imán y dictado o exportación de clases.
 
 ## Principios de diseño
-1. **Entrada nativa Wacom (`QTabletEvent`):** Presión hardware real (`0.0–1.0`), coordenadas flotantes sub-píxel a 200 Hz en Wayland (`zwp_tablet_v2`), detección automática de goma trasera.
-2. **Separación Motor vs. UI:**
-   - `src/core/Types.h` — Tipos y contratos compartidos (`StrokePoint`, `Stroke`, `ThemeConfig`, `PenPreset`, `Viewport`).
-   - `src/engine/InkEngine.{h,cpp}` — Estabilizador Gaussiano por velocidad (inspirado en Xournal++), interpolación Catmull-Rom, renderizado `QPainter` de ancho variable, tipos de línea (sólida/guiones/punteada/flechas), borrador por trazo y parcial.
-   - `src/ui/CanvasWidget.{h,cpp}` — Widget principal del lienzo con `QTabletEvent`, caché `QImage` estático + capa activa en vivo (`<0.5 ms`), zoom/pan, Undo/Redo y autoguardado JSON.
-   - `src/ui/FloatingToolbar.{h,cpp}` — Barra flotante minimalista estilo StarNote/Freenotes + pill de zoom.
-   - `src/ui/MainWindow.{h,cpp}` — Ventana nativa principal, atajos de teclado y coordinación entre barra y lienzo.
-3. **Compilación instantánea:** CMake + Ninja (`cmake -B build -G Ninja && cmake --build build`).
-
-## Hitos
-- **Hito 1:** App nativa Qt 6 Linux, entrada Wacom 200 Hz con presión real, tinta estilo Xournal++, estabilizador Gaussiano, tipos de línea, borrador dual, temas/plantillas, Undo/Redo y autoguardado.
-- **Hito 2:** Figuras editables con nodos (estilo StarNote), polilínea continua, raíz $\sqrt{\quad}$ auto-ajustable y líneas guía inteligentes.
-- **Hito 3:** Lazo + Enderezar letra (estilo Samsung Notes), pegar imágenes (`Ctrl+V`), importar/exportar PDF (`poppler-qt6` / `Qt6Pdf`).
+1. **Entrada nativa Wacom (`QTabletEvent`):** Presión hardware real (`0.0–1.0`), coordenadas sub-píxel en Wayland (`zwp_tablet_v2`), suavizado centrado sin retraso (`InkSmoother`) y detección de goma trasera / botones del Pad (`/dev/input/js*` con reconexión automática).
+2. **Separación estricta Núcleo / Motor / UI:**
+   - `src/core/`: Tipos compartidos (`Types.h`), utilidades sin dependencias de Widgets (`Utils.h`: ajustes centralizados, rutas de autoguardado, geometría de texto multilínea y ajuste de hoja), y protocolos tipados de marcas, resaltado, resortes físicos y tablas (`ShapeProtocols.h`).
+   - `src/engine/` (`finily_engine`, sin `Qt6::Widgets`):
+     - `NotebookDocument.{h,cpp}` — Modelo de documento del cuaderno, historial Undo/Redo, gestión de páginas y serialización/autoguardado por sesión con epochs de seguridad.
+     - `InkEngine.{h,cpp}` y `LiveStroke.{h,cpp}` — Tinta líquida, puntas de lápiz/resaltador, estabilizador Gaussiano por velocidad, renderizado incremental `LiveInkRenderer` y borrador por trazo o parcial.
+     - `GeometryEngine.{h,cpp}`, `GeometryInternal.h`, `GeometryEditing.cpp` y `RegionGeometry.{h,cpp}` — Primitivas 2D y sólidos 3D, guías inteligentes e imantado, auto-forma, marcas geométricas, detección topológica de regiones y borrador parcial de geometría.
+     - `HandwritingEngine.{h,cpp}` y `MathCnnWeights.h` — Reconocimiento matemático offline y Modo Ecuación.
+     - `LassoEngine.{h,cpp}` — Selección por lazo libre o rectangular, transformación afín y nivelación/ordenado de escritura.
+     - `PdfEngine.{h,cpp}` — Importación de PDF y exportación vectorial con `Qt6::Pdf`.
+     - `DocumentSerializer.{h,cpp}` — Persistencia `.finily` v1–v5, lectura rápida de metadatos y caché de portadas con bloqueo seguro entre hilos.
+     - `StickerLibrary.{h,cpp}`, `StickerCatalogInternal.h`, `StickerCatalogGeometry.cpp`, `StickerCatalogScience.cpp` — Catálogo modular de stickers geométricos/científicos y biblioteca de usuario.
+     - `ImageVectorizer.{h,cpp}` y `VisionExtractor.{h,cpp}` — Vectorización local instantánea y extracción asistida por IA con autenticación por cabecera HTTP.
+     - `UpdateManager.{h,cpp}` — Verificación HTTPS restringida a orígenes confiables, comparación SemVer y descarga verificada por SHA-256.
+   - `src/ui/` (Qt Widgets):
+     - `MainWindow.{h,cpp}` y `HomeScreen.{h,cpp}` — Ventana principal con `QStackedWidget` (biblioteca y editor con pestañas), sincronización de renombrado/borrado y guardado seguro al salir.
+     - `CanvasWidget.{h,cpp}`, `CanvasWidgetInternal.h`, `CanvasDocument.cpp`, `CanvasInput.cpp`, `CanvasRender.cpp`, `CanvasSelection.cpp` — Lienzo interactivo descompuesto por responsabilidad sobre `NotebookDocument`, caché estático + capa activa en vivo y menú radial.
+     - `FloatingToolbar.{h,cpp}`, `FloatingToolbarInternal.h`, `ToolbarIcons.{h,cpp}`, `ToolbarPopovers.cpp`, `IconLibrary.{h,cpp}` y `src/ui/popovers/{FilePopover,PaperPopover,ShapesPopover,StickersPopover,StrokePopover,ThumbnailPanel}.{h,cpp}` — Overlay flotante con cápsulas `GlassCapsule` pintadas con `QPainter` (inmunes a temas del sistema Qt6) y popovers como hijos directos registrados en `setMask()` (requisito Wayland/Wacom).
+3. **Compilación y pruebas modulares:** CMake + Ninja (`cmake -B build -G Ninja -DFINILY_BUILD_TESTS=ON && cmake --build build && ctest --test-dir build --output-on-failure`) con 6 suites QtTest aisladas bajo `tests/`.

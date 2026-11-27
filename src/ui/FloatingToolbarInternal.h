@@ -20,6 +20,9 @@
 
 namespace finily {
 
+enum class ToolbarDockPos { Izquierda, Arriba, Abajo };
+enum class PageNavDirection { Horizontal, Vertical };
+
 inline constexpr QSize thumbnailSize(124, 82);
 
 inline constexpr double kPenLevels[10] = {0.6, 1.0, 1.5, 2.2, 3.2, 4.5, 6.5, 9.5, 14.0, 22.0};
@@ -52,12 +55,6 @@ inline QWidget* makeDivider(QWidget* parent) {
     divider->setObjectName("finilyDivider");
     divider->setFixedHeight(1);
     return divider;
-}
-
-inline QLabel* makeSectionTitle(const QString& text, QWidget* parent) {
-    auto* label = new QLabel(text, parent);
-    label->setObjectName("finilyTitle");
-    return label;
 }
 
 inline void polishButton(QToolButton* button) {
@@ -94,6 +91,8 @@ inline void makeMenuRow(QToolButton* button) {
 // QWidget planos para que el estilo de sistema Qt6 (Caelestia / KDE / Breeze)
 // jamás la sobreescriba con cuadrados gris carbón.
 class GlassCapsule : public QWidget {
+    Q_OBJECT
+
 public:
     explicit GlassCapsule(QWidget* parent = nullptr)
         : QWidget(parent) {
@@ -102,6 +101,15 @@ public:
         setAutoFillBackground(false);
         setFocusPolicy(Qt::NoFocus);
     }
+
+    ~GlassCapsule() override = default;
+
+    virtual void applyTheme(const ThemeConfig& theme, const QString& qss) {
+        setCapsuleTheme(theme);
+        setStyleSheet(qss);
+    }
+
+    virtual void syncFromCanvas() {}
 
     void setCapsuleTheme(const ThemeConfig& theme) {
         switch (theme.id) {
@@ -171,6 +179,7 @@ public:
     explicit SwitchButton(QWidget* parent) : QToolButton(parent) {
         setCheckable(true);
         setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::NoFocus);
         setObjectName("finilySwitch");
     }
     void setColors(const QColor& text, const QColor& accent, bool dark) {
@@ -214,13 +223,6 @@ public:
         setFixedSize(28, 28);
     }
 
-    void setMarker(bool marker) {
-        if (m_marker == marker)
-            return;
-        m_marker = marker;
-        update();
-    }
-
     void setDotColor(const QColor& color) {
         if (m_color == color)
             return;
@@ -252,23 +254,8 @@ protected:
             painter.drawEllipse(center, r + 3.5, r + 3.5);
         }
         painter.setPen(QPen(m_rim, 1.0));
-        if (m_marker) {
-            QColor fill = m_color;
-            fill.setAlpha(150);
-            painter.setBrush(fill);
-            QPainterPath tip;
-            tip.moveTo(center + QPointF(-7.5, 4.5));
-            tip.lineTo(center + QPointF(-2.5, -7.0));
-            tip.lineTo(center + QPointF(7.5, -7.0));
-            tip.lineTo(center + QPointF(2.5, 4.5));
-            tip.closeSubpath();
-            painter.drawPath(tip);
-            painter.setPen(QPen(m_color, 2.4, Qt::SolidLine, Qt::RoundCap));
-            painter.drawLine(center + QPointF(-8.0, 7.5), center + QPointF(8.0, 7.5));
-        } else {
-            painter.setBrush(m_color);
-            painter.drawEllipse(center, r, r);
-        }
+        painter.setBrush(m_color);
+        painter.drawEllipse(center, r, r);
         if (isChecked()) {
             QPen ring(m_accent, 2.0);
             painter.setPen(ring);
@@ -281,7 +268,6 @@ private:
     QColor m_color{Qt::white};
     QColor m_accent{"#60a5fa"};
     QColor m_rim{0, 0, 0, 60};
-    bool m_marker = false;
 };
 
 // Punto de vista previa en vivo del popover "Trazo".

@@ -11,8 +11,15 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Widgets Pdf Svg)
 
 add_library(finily_engine STATIC
     src/core/Types.h
+    src/core/Utils.h
+    src/core/ShapeProtocols.h
     src/engine/DocumentSerializer.h
     src/engine/DocumentSerializer.cpp
+    src/engine/LibraryStore.h
+    src/engine/LibraryStore.cpp
+    src/engine/LibraryFolders.cpp
+    src/engine/NotebookDocument.h
+    src/engine/NotebookDocument.cpp
     src/engine/InkEngine.h
     src/engine/InkEngine.cpp
     src/engine/LiveStroke.h
@@ -30,9 +37,16 @@ add_library(finily_engine STATIC
     src/engine/PdfEngine.h
     src/engine/PdfEngine.cpp
     src/engine/StickerLibrary.h
+    src/engine/StickerCatalogInternal.h
+    src/engine/StickerCatalogGeometry.cpp
+    src/engine/StickerCatalogScience.cpp
     src/engine/StickerLibrary.cpp
     src/engine/UpdateManager.h
     src/engine/UpdateManager.cpp
+    src/engine/ImageVectorizer.h
+    src/engine/ImageVectorizer.cpp
+    src/engine/VisionExtractor.h
+    src/engine/VisionExtractor.cpp
 )
 
 target_include_directories(finily_engine PUBLIC src)
@@ -44,7 +58,9 @@ add_executable(finily
     src/ui/CanvasWidgetInternal.h
     src/ui/CanvasWidget.cpp
     src/ui/CanvasDocument.cpp
+    src/ui/CanvasInput.cpp
     src/ui/CanvasRender.cpp
+    src/ui/CanvasSelection.cpp
     src/ui/IconLibrary.h
     src/ui/IconLibrary.cpp
     src/ui/FloatingToolbar.h
@@ -53,9 +69,44 @@ add_executable(finily
     src/ui/ToolbarIcons.cpp
     src/ui/FloatingToolbar.cpp
     src/ui/ToolbarPopovers.cpp
-    src/ui/ToolbarThumbnails.cpp
+    src/ui/popovers/FilePopover.h
+    src/ui/popovers/FilePopover.cpp
+    src/ui/popovers/PaperPopover.h
+    src/ui/popovers/PaperPopover.cpp
+    src/ui/popovers/ShapesPopover.h
+    src/ui/popovers/ShapesPopover.cpp
+    src/ui/popovers/StickersPopover.h
+    src/ui/popovers/StickersPopover.cpp
+    src/ui/popovers/StrokePopover.h
+    src/ui/popovers/StrokePopover.cpp
+    src/ui/popovers/ThumbnailPanel.h
+    src/ui/popovers/ThumbnailPanel.cpp
+    src/ui/home/HomeTheme.h
+    src/ui/home/HomeTheme.cpp
+    src/ui/home/HomeIcons.cpp
+    src/ui/home/HomeSidebar.h
+    src/ui/home/HomeSidebar.cpp
+    src/ui/home/HomeHeader.h
+    src/ui/home/HomeHeader.cpp
+    src/ui/home/FolderCards.h
+    src/ui/home/FolderCards.cpp
+    src/ui/home/NotebookCards.h
+    src/ui/home/NotebookCards.cpp
+    src/ui/home/CreateMenu.h
+    src/ui/home/CreateMenu.cpp
+    src/ui/home/GlassSheet.h
+    src/ui/home/GlassSheet.cpp
+    src/ui/home/NewFolderSheet.h
+    src/ui/home/NewFolderSheet.cpp
+    src/ui/home/NewBoardSheet.h
+    src/ui/home/NewBoardSheet.cpp
+    src/ui/home/NewNotebookSheet.h
+    src/ui/home/NewNotebookSheet.cpp
+    src/ui/home/UpdateBanner.h
+    src/ui/home/UpdateBanner.cpp
     src/ui/HomeScreen.h
     src/ui/HomeScreen.cpp
+    src/ui/HomeScreenActions.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
 )
@@ -80,8 +131,22 @@ endif()
 if(FINILY_BUILD_TESTS)
     enable_testing()
     find_package(Qt6 REQUIRED COMPONENTS Test)
-    add_executable(finily_tests tests/test_engines.cpp)
-    target_link_libraries(finily_tests PRIVATE finily_engine Qt6::Test)
-    add_test(NAME finily_tests COMMAND finily_tests)
-    set_tests_properties(finily_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    macro(finily_add_test name source)
+        add_executable(${name} ${source})
+        target_link_libraries(${name} PRIVATE finily_engine Qt6::Test)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(${name} PRIVATE -Wall -Wextra)
+        elseif(MSVC)
+            target_compile_options(${name} PRIVATE /utf-8)
+        endif()
+        add_test(NAME ${name} COMMAND ${name})
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endmacro()
+    finily_add_test(test_ink_and_live tests/test_ink_and_live.cpp)
+    finily_add_test(test_geometry_and_regions tests/test_geometry_and_regions.cpp)
+    finily_add_test(test_lasso tests/test_lasso.cpp)
+    finily_add_test(test_handwriting tests/test_handwriting.cpp)
+    finily_add_test(test_document_and_pdf tests/test_document_and_pdf.cpp)
+    finily_add_test(test_library_store tests/test_library_store.cpp)
+    finily_add_test(test_vision_and_updates tests/test_vision_and_updates.cpp)
 endif()

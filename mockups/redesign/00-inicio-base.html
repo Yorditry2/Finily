@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finily — Inicio base</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="_shell.css">
+<style>
+  /* Menú + Nuevo: filas de dos líneas */
+  .newmenu { width: 262px; right: 18px; top: 52px; }
+  .newmenu .mi { height: 46px; gap: 11px; }
+  .newmenu .mi .ico { width: 30px; height: 30px; border-radius: 9px; background: var(--field); display: inline-flex; align-items: center; justify-content: center; color: var(--icon); flex-shrink: 0; }
+  .newmenu .mi.hov .ico { background: var(--accent); color: var(--accent-fg); }
+  .newmenu .mi .t { display: flex; flex-direction: column; gap: 1px; }
+  .newmenu .mi .t b { font-weight: 600; font-size: 12.5px; color: var(--text); }
+  .newmenu .mi .t span { font-size: 11px; color: var(--muted); }
+  /* Sidebar colapsado: botón para reabrir antes del título */
+  .hdr .reopen { margin-right: 8px; }
+  /* Carpeta abierta: subcarpetas en fila superior */
+  .section-lbl { padding: 2px 28px 0; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+  .grid.tight { padding-top: 8px; padding-bottom: 6px; }
+  /* Tarjeta Nueva pizarra */
+  .np-hero { height: 148px; position: relative; background-color: #1A1B22; background-image: linear-gradient(rgba(255,255,255,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.07) 1px, transparent 1px); background-size: 18px 18px; color: #F4F4F5; }
+  .np-hero .np-chip { position: absolute; left: 14px; top: 12px; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; background: rgba(255,255,255,.12); font-weight: 600; font-size: 11px; }
+  .np-hero .x { position: absolute; right: 12px; top: 10px; width: 26px; height: 26px; border-radius: 50%; background: rgba(255,255,255,.12); display: flex; align-items: center; justify-content: center; }
+  .np-hero .x svg { width: 13px; height: 13px; }
+  .np-hero .ttl { position: absolute; left: 14px; right: 14px; bottom: 12px; display: flex; align-items: center; justify-content: space-between; font-size: 16px; font-weight: 700; letter-spacing: -.01em; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,.18); }
+  .np-hero .ttl svg { width: 14px; height: 14px; opacity: .6; }
+  .np-row { display: flex; align-items: center; justify-content: space-between; }
+  .np-row .hex { font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); }
+  .swrow { display: flex; justify-content: space-between; }
+  .swrow span { width: 26px; height: 26px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(15,23,42,.12); }
+  .swrow span.on { box-shadow: 0 0 0 2px var(--ring), 0 0 0 3.5px var(--accent); }
+  .swrow span.more { background: conic-gradient(#E78FA8, #E1C0A2, #EDE09A, #92BFA9, #92B5DD, #B3A2DC, #E78FA8); position: relative; }
+  .swrow span.more::after { content: '+'; position: absolute; inset: 4px; border-radius: 50%; background: var(--surface); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px; color: var(--icon); }
+  .tpls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .tpls i { height: 54px; border-radius: 10px; background-color: #F6F6F4; box-shadow: inset 0 0 0 1px rgba(15,23,42,.1); }
+  .tpls i.on { box-shadow: 0 0 0 2px var(--ring), 0 0 0 3.5px var(--accent); }
+  .tpls .grid-t { background-image: linear-gradient(rgba(15,23,42,.22) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,.22) 1px, transparent 1px); background-size: 9px 9px; }
+  .tpls .dots-t { background-image: radial-gradient(rgba(15,23,42,.35) 1px, transparent 1.3px); background-size: 9px 9px; }
+  .tpls .lines-t { background-image: linear-gradient(rgba(15,23,42,.22) 1px, transparent 1px); background-size: 100% 9px; }
+  .ruler { height: 34px; border-radius: 10px; background: var(--field); position: relative; overflow: hidden; }
+  .ruler .tk { position: absolute; bottom: 0; width: 1px; background: var(--guide); }
+  .ruler .thumb { position: absolute; top: 5px; width: 14px; height: 24px; border-radius: 6px; background: var(--surface); box-shadow: 0 1px 4px rgba(15,23,42,.3); }
+  .rlab { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--faint); padding: 0 4px; }
+  .stepper { display: inline-flex; align-items: center; gap: 10px; height: 26px; padding: 0 8px; border-radius: 8px; background: var(--field); font-weight: 600; font-size: 12px; }
+  .stepper span { color: var(--muted); }
+  .chips { display: flex; gap: 8px; }
+  .chip2 { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 999px; background: var(--field); font-weight: 600; font-size: 11.5px; color: var(--icon); }
+  .chip2.dash { background: transparent; border: 1px dashed rgba(15,23,42,.2); color: var(--muted); }
+  .chip2 svg { width: 13px; height: 13px; }
+  .colorpop { position: absolute; right: 374px; top: 160px; width: 236px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border-pop); box-shadow: var(--shadow-card); padding: 14px; display: flex; flex-direction: column; gap: 12px; z-index: 16; }
+  .colorpop .pal { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .colorpop .pal span { width: 26px; height: 26px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(15,23,42,.12); }
+  .colorpop .pal span.on { box-shadow: 0 0 0 2px var(--ring), 0 0 0 3.5px var(--accent); }
+  .sv { height: 110px; border-radius: 10px; background: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, #3F5F8A); position: relative; }
+  .sv::after { content: ''; position: absolute; left: 34%; top: 72%; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.3); }
+  .hue { height: 10px; border-radius: 999px; background: linear-gradient(90deg, red, #ff0, lime, cyan, blue, #f0f, red); position: relative; }
+  .hue::after { content: ''; position: absolute; left: 60%; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: #fff; transform: translate(-50%, -50%); box-shadow: 0 1px 3px rgba(0,0,0,.35); }
+.frame.dark .swrow span, .frame.dark .colorpop .pal span { box-shadow: inset 0 0 0 1px rgba(255,255,255,.16); }
+  .frame.dark .swrow span.on, .frame.dark .colorpop .pal span.on { box-shadow: 0 0 0 2px var(--ring), 0 0 0 3.5px var(--accent); }
+  .frame.dark .chip2.dash { border-color: rgba(255,255,255,.2); }
+</style>
+</head>
+<body>
+<div class="page-title">Inicio · base (claro y oscuro)</div>
+<p class="hint">Reemplaza a 01–04. Mismo contenido aprobado, ahora construido sobre la base compartida de 07–10: un solo juego de tokens, objetos sin cajas, iconos de línea fina y ni un emoji. El modo oscuro no es otro diseño: solo cambia los tokens.</p>
+<nav class="toc" id="toc"></nav>
+<div id="out" style="display:contents"></div>
+
+<script src="_shell.js"></script>
+<script>
+const S = [];
+const sbFolders = { active: 'docs', folders: true };
+
+S.push(scene('claro', '01', 'Inicio · Modo Claro',
+  'Pantalla por defecto. Una sola fila de cabecera: título a la izquierda; buscar, filtrar y + Nuevo a la derecha. Tema y ajustes viven al pie del sidebar.',
+  frameHTML({ sb: sbFolders })));
+
+S.push(scene('oscuro', '02', 'Inicio · Modo Oscuro',
+  'Marfil sobre Grafito. Mismas piezas, solo cambian los tokens; las carpetas y portadas mantienen su color y ganan una sombra más profunda.',
+  frameHTML({ sb: sbFolders, dark: true })));
+
+const nuevo = `<div class="menu newmenu">${[
+  ['pen', 'Nota rápida', 'Abre un lienzo al instante', 'Ctrl N', 'hov'],
+  ['board', 'Pizarra infinita', 'Lienzo sin límites'],
+  ['book', 'Cuaderno', 'Portada, hojas y plantilla'],
+  '-',
+  ['folder', 'Carpeta', 'Agrupa documentos'],
+  ['pdf', 'Importar PDF', 'Para anotar encima'],
+].map(r => r === '-' ? '<div class="msep"></div>' : `<div class="mi ${r[4] || ''}"><span class="ico">${svgI(r[0])}</span><span class="t"><b>${r[1]}</b><span>${r[2]}</span></span>${r[3] ? `<span class="k"><span class="kbd">${r[3]}</span></span>` : ''}</div>`).join('')}</div>`;
+
+S.push(scene('nuevo', '03', 'Menú + Nuevo',
+  'Único punto para crear cualquier cosa. Cada fila con icono, nombre y una línea de ayuda; el atajo solo en la acción más usada.',
+  frameHTML({ sb: sbFolders, libOverlay: nuevo })));
+
+S.push(scene('nuevo-oscuro', '04', 'Menú + Nuevo · Oscuro',
+  'Comprobación del menú sobre grafito.',
+  frameHTML({ sb: sbFolders, dark: true, libOverlay: nuevo })));
+
+S.push(scene('carpeta', '05', 'Dentro de una carpeta',
+  'Ruta en el título (clic en «Carpetas» para subir). Las subcarpetas van primero en su propia fila; el árbol del sidebar marca dónde estás.',
+  frameHTML({
+    sb: { active: 'none', folders: true },
+    hdr: { title: ['Carpetas', 'Apuntes'] },
+    body: `<div class="section-lbl" style="margin-top:14px">Carpetas</div><div class="grid tight">${[
+      objHTML(folderSVG('cielo', 'flask'), 'Laboratorio', 'Hoy · 09:12'),
+      objHTML(folderSVG('lavanda', 'music'), 'Teoría', '21 nov 2026')].join('')}</div>
+      <div class="section-lbl">Documentos</div><div class="grid tight">${[
+      objHTML(bookHTML('salvia'), 'Física II', 'Ayer · 19:40'),
+      objHTML(bookHTML('rosa', 84, 'A5'), 'Resumen parcial', '24 nov 2026'),
+      objHTML(pdfHTML(), 'Guía de laboratorio', '23 nov 2026'),
+      objHTML(boardHTML('paper'), 'Esquema rápido', '20 nov 2026')].join('')}</div>`
+  }).replace('<span class="tdot" style="background:#E78FA8"></span>Apuntes</div>', '<span class="tdot" style="background:#E78FA8"></span>Apuntes</div>').replace('<div class="nav"><span class="tdot" style="background:#E78FA8">', '<div class="nav on"><span class="tdot" style="background:#E78FA8">')));
+
+S.push(scene('colapsado', '06', 'Sidebar colapsado',
+  'Se cierra del todo (0 px, sin barra de iconos). El botón para reabrirlo aparece antes del título; la grilla aprovecha el ancho con 5 columnas.',
+  frameHTML({
+    sidebar: false,
+    hdr: { custom: `<button class="icon-btn reopen">${svgI('side')}</button><div class="hdr-title">Documentos</div><div class="hdr-sp"></div>
+      <button class="icon-btn">${svgI('search')}</button><button class="icon-btn">${svgI('filter')}</button><button class="pill-new">${svgI('plus')}Nuevo</button>` },
+    body: `<div class="grid" style="grid-template-columns:repeat(5,1fr)">${LIB.map(f => f()).join('')}</div>`
+  })));
+
+const np = (withPop) => `<div class="float-card" style="top:62px">
+    <div class="np-hero"><span class="np-chip">${svgI('board')}Pizarra</span><span class="x">${svgI('x')}</span>
+      <div class="ttl">Pizarra sin título${svgI('pencil')}</div></div>
+    <div class="fc-body" style="padding-top:14px">
+      <div class="np-row"><span class="kicker">Fondo</span><span class="hex">#1A1B22</span></div>
+      <div class="swrow">${['#1A1B22', '#16302A', '#1E2A44', '#FFFFFF', '#FAF7EE', '#F7E6EC'].map((c, i) => `<span class="${i === 0 ? 'on' : ''}" style="background:${c}"></span>`).join('')}<span class="more${withPop ? ' on' : ''}"></span></div>
+      <span class="kicker">Plantilla</span>
+      <div class="tpls"><i></i><i class="grid-t on"></i><i class="dots-t"></i><i class="lines-t"></i></div>
+      <div class="np-row"><span class="kicker">Trama</span><span class="stepper"><span>−</span>5 mm<span>+</span></span></div>
+      <div><div class="ruler">${Array.from({ length: 37 }, (_, i) => `<span class="tk" style="left:${8 + i * 7.9}px;height:${i % 5 === 0 ? 12 : 6}px"></span>`).join('')}<span class="thumb" style="left:72px"></span></div>
+        <div class="rlab"><span>3</span><span><b style="color:var(--text)">5</b></span><span>8</span><span>10</span><span>12</span></div></div>
+      <div class="chips"><span class="chip2">${svgI('folder')}Sin carpeta${svgI('chevD')}</span><span class="chip2 dash">${svgI('hash')}Etiqueta</span></div>
+      <button class="cta">Crear pizarra</button>
+    </div></div>
+  ${withPop ? `<div class="colorpop"><div class="np-row"><b style="font-size:12.5px">Color de fondo</b><span class="fc-close">${svgI('x')}</span></div>
+    <div class="pal">${['#0F1014', '#1A1B22', '#16302A', '#1E2A44', '#2A1E33', '#2B2520', '#FFFFFF', '#FAF7EE', '#F3EEE3', '#EEF0F3', '#E8EAE4', '#E6E2DA'].map((c, i) => `<span class="${i === 1 ? 'on' : ''}" style="background:${c}"></span>`).join('')}</div>
+    <div class="sv"></div><div class="hue"></div>
+    <div class="field"><span style="width:16px;height:16px;border-radius:50%;background:#1A1B22"></span><input value="#1A1B22"></div></div>` : ''}`;
+
+S.push(scene('pizarra', '07', 'Nueva pizarra infinita',
+  'La tarjeta aprobada, ahora con los mismos componentes que «Nueva carpeta»: cabecera grande de vista previa, secciones con rótulo pequeño y botón principal Tinta. Las 4 plantillas siguen en neutro fijo.',
+  frameHTML({ sb: sbFolders, overlay: np(false) })));
+
+S.push(scene('pizarra-color', '08', 'Nueva pizarra · elegir otro color',
+  'El selector flota a la izquierda de la tarjeta sin taparla ni empujarla.',
+  frameHTML({ sb: sbFolders, overlay: np(true) })));
+
+S.push(scene('pizarra-oscuro', '09', 'Nueva pizarra · Oscuro',
+  'Comprobación de la tarjeta sobre grafito.',
+  frameHTML({ sb: sbFolders, dark: true, overlay: np(false) })));
+
+document.getElementById('out').innerHTML = S.join('');
+document.getElementById('toc').innerHTML = [...document.querySelectorAll('.scene')].map(s => `<a href="#${s.id}">${s.querySelector('h2').textContent.slice(2)}</a>`).join('');
+fitFrames();
+</script>
+</body>
+</html>

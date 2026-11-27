@@ -1,7 +1,5 @@
 #include "ui/ToolbarIcons.h"
 
-#include "ui/IconLibrary.h"
-
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
@@ -26,76 +24,11 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
     const QPen pen(color, 2.1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     painter.setPen(pen);
 
-    if (kind == "home") {
-        // Casita nítida: tejado, cuerpo y puerta (2.1 px, trazos redondeados).
-        painter.drawPolyline(QPolygonF() << QPointF(3.6, 10.6) << QPointF(11.0, 4.2) << QPointF(18.4, 10.6));
-        painter.drawPolyline(QPolygonF() << QPointF(5.6, 9.4) << QPointF(5.6, 18.0) << QPointF(16.4, 18.0)
-                                         << QPointF(16.4, 9.4));
-        painter.drawPolyline(QPolygonF() << QPointF(9.3, 18.0) << QPointF(9.3, 13.2) << QPointF(13.0, 13.2)
-                                         << QPointF(13.0, 18.0));
-    } else if (kind == "undo") {
-        QPainterPath curve;
-        curve.moveTo(16.5, 16.0);
-        curve.cubicTo(16.5, 10.5, 13.0, 8.0, 8.0, 8.0);
-        painter.drawPath(curve);
-        painter.drawPolyline(QPolygonF() << QPointF(11.0, 5.0) << QPointF(7.5, 8.0) << QPointF(11.0, 11.0));
-    } else if (kind == "redo") {
-        QPainterPath curve;
-        curve.moveTo(5.5, 16.0);
-        curve.cubicTo(5.5, 10.5, 9.0, 8.0, 14.0, 8.0);
-        painter.drawPath(curve);
-        painter.drawPolyline(QPolygonF() << QPointF(11.0, 5.0) << QPointF(14.5, 8.0) << QPointF(11.0, 11.0));
-    } else if (kind == "pen") {
-        QPainterPath nib;
-        nib.moveTo(4.0, 18.5);
-        nib.lineTo(4.0, 15.5);
-        nib.lineTo(7.0, 18.5);
-        nib.closeSubpath();
-        painter.drawPath(nib);
-        painter.drawLine(QPointF(5.6, 16.9), QPointF(16.5, 6.0));
-        painter.drawLine(QPointF(16.5, 6.0), QPointF(18.5, 4.0));
-    } else if (kind == "ballpoint") {
-        painter.drawLine(QPointF(5.0, 17.5), QPointF(17.5, 5.0));
-        painter.drawEllipse(QPointF(18.2, 4.2), 1.3, 1.3);
-        painter.drawLine(QPointF(8.5, 14.0), QPointF(10.5, 16.0));
-    } else if (kind == "highlighter") {
-        QPen thick(color, 4.6, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin);
-        painter.setPen(thick);
-        painter.drawLine(QPointF(8.0, 14.5), QPointF(14.5, 8.0));
-        painter.setPen(pen);
-        painter.drawLine(QPointF(4.5, 18.0), QPointF(8.0, 14.5));
-    } else if (kind == "eraser") {
-        painter.save();
-        painter.translate(11.0, 11.0);
-        painter.rotate(-42.0);
-        painter.drawRoundedRect(QRectF(-6.0, -4.0, 12.0, 8.0), 2.0, 2.0);
-        painter.drawLine(QPointF(1.8, -4.0), QPointF(1.8, 4.0));
-        painter.restore();
-    } else if (kind == "hand") {
-        painter.drawLine(QPointF(11.0, 4.5), QPointF(11.0, 17.5));
-        painter.drawLine(QPointF(4.5, 11.0), QPointF(17.5, 11.0));
-        painter.drawPolyline(QPolygonF() << QPointF(9.0, 6.5) << QPointF(11.0, 4.5) << QPointF(13.0, 6.5));
-        painter.drawPolyline(QPolygonF() << QPointF(9.0, 15.5) << QPointF(11.0, 17.5) << QPointF(13.0, 15.5));
-        painter.drawPolyline(QPolygonF() << QPointF(6.5, 9.0) << QPointF(4.5, 11.0) << QPointF(6.5, 13.0));
-        painter.drawPolyline(QPolygonF() << QPointF(15.5, 9.0) << QPointF(17.5, 11.0) << QPointF(15.5, 13.0));
-    } else if (kind == "stroke") {
-        QPainterPath stroke;
-        stroke.moveTo(3.5, 16.5);
-        stroke.cubicTo(8.0, 9.0, 12.0, 18.5, 18.5, 6.5);
-        painter.strokePath(stroke, pen);
-    } else if (kind == "paper") {
+    if (kind == "paper") {
         painter.drawRoundedRect(QRectF(5.5, 3.5, 11.0, 15.0), 2.0, 2.0);
         painter.drawLine(QPointF(8.0, 7.5), QPointF(14.0, 7.5));
         painter.drawLine(QPointF(8.0, 11.0), QPointF(14.0, 11.0));
         painter.drawLine(QPointF(8.0, 14.5), QPointF(12.0, 14.5));
-    } else if (kind == "shapes") {
-        painter.drawEllipse(QPointF(8.0, 7.5), 4.2, 4.2);
-        painter.drawRoundedRect(QRectF(9.0, 9.5, 8.5, 8.5), 1.5, 1.5);
-    } else if (kind == "stickers") {
-        // Tarjeta/pizarra con triángulo geométrico y rayita de fórmula abajo
-        painter.drawRoundedRect(QRectF(3.2, 3.2, 15.6, 15.6), 2.8, 2.8);
-        painter.drawPolygon(QPolygonF{{11.0, 6.2}, {15.0, 12.2}, {7.0, 12.2}});
-        painter.drawLine(QPointF(6.8, 15.4), QPointF(15.2, 15.4));
     } else if (kind == "polyline") {
         const QVector<QPointF> vertices = {QPointF(3.5, 16.0), QPointF(8.5, 9.0), QPointF(13.0, 13.5),
                                            QPointF(18.5, 6.0)};
@@ -107,27 +40,6 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
         painter.setBrush(Qt::NoBrush);
     } else if (kind == "shape-line") {
         painter.drawLine(QPointF(4.0, 17.5), QPointF(18.0, 4.5));
-    } else if (kind == "shape-arrow") {
-        painter.drawLine(QPointF(4.0, 17.5), QPointF(17.5, 5.0));
-        painter.drawLine(QPointF(17.5, 5.0), QPointF(12.0, 5.6));
-        painter.drawLine(QPointF(17.5, 5.0), QPointF(16.6, 10.6));
-    } else if (kind == "shape-polygon") {
-        QPolygonF hex;
-        for (int i = 0; i < 6; ++i) {
-            const double a = std::numbers::pi / 6.0 + i * std::numbers::pi / 3.0;
-            hex << QPointF(11.0 + 7.4 * std::cos(a), 11.0 + 7.4 * std::sin(a));
-        }
-        painter.drawPolygon(hex);
-    } else if (kind == "shape-arrow2") {
-        painter.drawLine(QPointF(4.5, 17.0), QPointF(17.5, 5.0));
-        painter.drawPolyline(QPolygonF() << QPointF(12.0, 5.6) << QPointF(17.5, 5.0) << QPointF(16.6, 10.6));
-        painter.drawPolyline(QPolygonF() << QPointF(5.4, 11.4) << QPointF(4.5, 17.0) << QPointF(10.0, 16.4));
-    } else if (kind == "shape-arrowcurve") {
-        QPainterPath arc;
-        arc.moveTo(3.5, 16.5);
-        arc.cubicTo(6.0, 5.0, 13.0, 4.5, 18.0, 11.0);
-        painter.strokePath(arc, pen);
-        painter.drawPolyline(QPolygonF() << QPointF(13.6, 11.2) << QPointF(18.0, 11.0) << QPointF(17.6, 6.6));
     } else if (kind == "shape-tri-right") {
         painter.drawPolygon(QPolygonF() << QPointF(4.5, 4.5) << QPointF(18.0, 17.5) << QPointF(4.5, 17.5));
         painter.drawPolyline(QPolygonF() << QPointF(4.5, 13.5) << QPointF(8.5, 13.5) << QPointF(8.5, 17.5));
@@ -141,8 +53,6 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
             poly << QPointF(11.0 + 7.4 * std::cos(a), 11.0 + 7.4 * std::sin(a));
         }
         painter.drawPolygon(poly);
-    } else if (kind == "shape-circle") {
-        painter.drawEllipse(QPointF(11.0, 11.0), 6.5, 6.5);
     } else if (kind == "shape-ellipse") {
         painter.drawEllipse(QPointF(11.0, 11.0), 7.5, 4.5);
     } else if (kind == "shape-triangle") {
@@ -179,44 +89,6 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
         painter.setPen(Qt::NoPen);
         painter.drawEllipse(QPointF(11.0, 12.0), 1.3, 1.3);
         painter.setBrush(Qt::NoBrush);
-    } else if (kind == "page-delete") {
-        // Papelera sutil para eliminar la página actual.
-        painter.drawLine(QPointF(5.5, 6.5), QPointF(16.5, 6.5));
-        painter.drawLine(QPointF(9.0, 6.5), QPointF(9.0, 4.5));
-        painter.drawLine(QPointF(13.0, 6.5), QPointF(13.0, 4.5));
-        painter.drawLine(QPointF(9.0, 4.5), QPointF(13.0, 4.5));
-        painter.drawPolyline(QPolygonF() << QPointF(7.0, 6.5) << QPointF(7.8, 17.5) << QPointF(14.2, 17.5)
-                                         << QPointF(15.0, 6.5));
-        painter.drawLine(QPointF(10.0, 9.5), QPointF(10.0, 14.5));
-        painter.drawLine(QPointF(12.0, 9.5), QPointF(12.0, 14.5));
-    } else if (kind == "lasso") {
-        QPen dashed(color, 2.0, Qt::DashLine, Qt::RoundCap, Qt::RoundJoin);
-        painter.setPen(dashed);
-        painter.drawEllipse(QRectF(5.0, 3.5, 12.5, 9.0));
-        painter.setPen(pen);
-        painter.drawLine(QPointF(9.5, 12.0), QPointF(7.5, 16.5));
-        painter.drawEllipse(QPointF(7.0, 18.0), 1.7, 1.7);
-    } else if (kind == "text") {
-        // Glifo 'T' nítido: barra superior + asta central.
-        painter.drawLine(QPointF(4.0, 4.5), QPointF(18.0, 4.5));
-        painter.drawLine(QPointF(11.0, 4.5), QPointF(11.0, 18.0));
-        painter.drawLine(QPointF(8.5, 4.5), QPointF(8.5, 7.0));
-        painter.drawLine(QPointF(13.5, 4.5), QPointF(13.5, 7.0));
-    } else if (kind == "laser") {
-        // Punto láser brillante con haz: núcleo coral-rojo fijo (#f87171)
-        // + rayos y estela con el color del tema.
-        painter.setBrush(QColor("#f87171"));
-        painter.setPen(Qt::NoPen);
-        painter.drawEllipse(QPointF(7.0, 15.5), 2.6, 2.6);
-        painter.setBrush(Qt::NoBrush);
-        painter.setPen(pen);
-        for (const QPointF& dir : {QPointF(0.0, -1.0), QPointF(0.87, -0.5), QPointF(1.0, 0.0),
-                                   QPointF(0.5, 0.87), QPointF(-0.5, 0.87), QPointF(-1.0, 0.0)}) {
-            painter.drawLine(QPointF(7.0, 15.5) + dir * 4.2, QPointF(7.0, 15.5) + dir * 6.6);
-        }
-        QPen beam(color, 2.4, Qt::SolidLine, Qt::RoundCap);
-        painter.setPen(beam);
-        painter.drawLine(QPointF(9.6, 12.9), QPointF(18.0, 4.5));
     } else if (kind == "shape-curve") {
         // Arco suave editable.
         QPainterPath arc;
@@ -246,13 +118,6 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
         painter.drawPolygon(QPolygonF{{4.5, 6.0}, {13.5, 6.0}, {18.0, 16.0}, {4.5, 16.0}});
     } else if (kind == "shape-trapezoid") {
         painter.drawPolygon(QPolygonF{{6.0, 5.5}, {17.0, 8.0}, {18.5, 16.5}, {3.5, 15.0}});
-    } else if (kind == "shape-poly-7") {
-        QPolygonF poly;
-        for (int i = 0; i < 7; ++i) {
-            const double a = -1.5708 + i * (6.283185 / 7.0);
-            poly << QPointF(11.0 + 7.2 * std::cos(a), 11.0 + 7.2 * std::sin(a));
-        }
-        painter.drawPolygon(poly);
     } else if (kind == "shape-3d-cube") {
         painter.drawRect(QRectF(4.0, 7.5, 9.5, 9.5));
         painter.drawLine(QPointF(4.0, 7.5), QPointF(8.0, 4.0));
@@ -332,6 +197,17 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
         painter.setBrush(color);
         painter.drawEllipse(QPointF(11.0, 11.0), 3.6, 3.6);
         painter.setBrush(Qt::NoBrush);
+    } else if (kind == "mark-divider") {
+        painter.drawLine(QPointF(3.0, 17.0), QPointF(7.6, 13.5));
+        painter.drawLine(QPointF(14.4, 8.5), QPointF(19.0, 5.0));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(QPointF(11.0, 11.0), 3.4, 3.4);
+    } else if (kind == "mark-wall") {
+        painter.drawLine(QPointF(3.0, 8.5), QPointF(19.0, 8.5));
+        for (int i = 0; i < 5; ++i) {
+            const double x = 4.5 + i * 3.5;
+            painter.drawLine(QPointF(x, 8.5), QPointF(x - 2.6, 14.5));
+        }
     } else if (kind == "mark-bar") {
         painter.drawLine(QPointF(3.5, 16.5), QPointF(18.5, 5.5));
         painter.setPen(Qt::NoPen);
@@ -350,37 +226,6 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
         painter.drawLine(QPointF(3.5, 16.5), QPointF(18.5, 5.5));
         painter.drawPolyline(QPolygonF{{6.8, 9.2}, {11.8, 10.4}, {10.4, 15.4}});
         painter.drawPolyline(QPolygonF{{10.2, 6.8}, {15.2, 8.0}, {13.8, 13.0}});
-    } else if (kind == "notebook-new") {
-        painter.drawRoundedRect(QRectF(4.5, 3.5, 13.0, 15.0), 2.0, 2.0);
-        painter.drawLine(QPointF(4.5, 7.0), QPointF(17.5, 7.0));
-        painter.drawLine(QPointF(11.0, 10.5), QPointF(11.0, 16.0));
-        painter.drawLine(QPointF(8.5, 13.2), QPointF(13.5, 13.2));
-    } else if (kind == "notebook-open") {
-        painter.drawPolyline(QPolygonF() << QPointF(3.0, 16.5) << QPointF(3.0, 6.0) << QPointF(8.0, 6.0)
-                                         << QPointF(10.0, 8.0) << QPointF(17.0, 8.0));
-        painter.drawPolyline(QPolygonF() << QPointF(3.0, 16.5) << QPointF(5.5, 10.0) << QPointF(20.0, 10.0)
-                                         << QPointF(17.5, 16.5) << QPointF(3.0, 16.5));
-    } else if (kind == "notebook-save") {
-        painter.drawPolygon(QPolygonF() << QPointF(4.0, 4.0) << QPointF(16.5, 4.0) << QPointF(18.5, 6.0)
-                                        << QPointF(18.5, 18.5) << QPointF(4.0, 18.5));
-        painter.drawRect(QRectF(7.0, 12.5, 8.5, 6.0));
-        painter.drawRect(QRectF(7.5, 4.5, 7.0, 4.0));
-    } else if (kind == "notebook-save-as") {
-        painter.drawPolygon(QPolygonF() << QPointF(3.5, 4.5) << QPointF(14.5, 4.5) << QPointF(16.5, 6.5)
-                                        << QPointF(16.5, 12.5) << QPointF(3.5, 12.5));
-        painter.drawRect(QRectF(6.0, 9.0, 8.0, 3.5));
-        QPen edit(color, 2.1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-        painter.setPen(edit);
-        painter.drawLine(QPointF(12.5, 18.5), QPointF(19.0, 12.0));
-        painter.drawLine(QPointF(19.0, 12.0), QPointF(19.5, 14.5));
-        painter.drawLine(QPointF(19.5, 14.5), QPointF(13.0, 19.0));
-    } else if (kind == "file") {
-        painter.drawLine(QPointF(3.5, 5.5), QPointF(8.0, 5.5));
-        painter.drawLine(QPointF(8.0, 5.5), QPointF(10.0, 8.0));
-        painter.drawLine(QPointF(10.0, 8.0), QPointF(18.5, 8.0));
-        painter.drawRoundedRect(QRectF(3.5, 8.0, 15.0, 9.5), 1.5, 1.5);
-        painter.drawLine(QPointF(7.5, 12.0), QPointF(14.5, 12.0));
-        painter.drawLine(QPointF(7.5, 14.5), QPointF(12.5, 14.5));
     } else if (kind == "more") {
         painter.setPen(Qt::NoPen);
         painter.setBrush(color);
@@ -392,9 +237,6 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
     } else if (kind == "present") {
         painter.drawRoundedRect(QRectF(3.5, 4.5, 15.0, 10.0), 2.5, 2.5);
         painter.drawLine(QPointF(8.0, 18.0), QPointF(14.0, 18.0));
-    } else if (kind == "clean") {
-        painter.drawEllipse(QPointF(11.0, 11.0), 7.0, 4.8);
-        painter.drawLine(QPointF(5.5, 16.5), QPointF(16.5, 5.5));
     } else if (kind == "restore") {
         painter.setBrush(color);
         painter.setPen(Qt::NoPen);
@@ -409,6 +251,10 @@ QPixmap glyphPixmap(const QString& kind, const QColor& color) {
         painter.drawPolyline(QPolygonF() << QPointF(13.5, 5.5) << QPointF(8.0, 11.0) << QPointF(13.5, 16.5));
     } else if (kind == "chevron-right") {
         painter.drawPolyline(QPolygonF() << QPointF(8.5, 5.5) << QPointF(14.0, 11.0) << QPointF(8.5, 16.5));
+    } else if (kind == "chevron-up") {
+        painter.drawPolyline(QPolygonF() << QPointF(5.5, 13.5) << QPointF(11.0, 8.0) << QPointF(16.5, 13.5));
+    } else if (kind == "chevron-down") {
+        painter.drawPolyline(QPolygonF() << QPointF(5.5, 8.5) << QPointF(11.0, 14.0) << QPointF(16.5, 8.5));
     } else if (kind == "plus") {
         painter.drawLine(QPointF(11.0, 5.0), QPointF(11.0, 17.0));
         painter.drawLine(QPointF(5.0, 11.0), QPointF(17.0, 11.0));
@@ -524,11 +370,8 @@ QIcon dockIcon(const QString& kind, const QColor& rest, const QColor& active) {
     return icon;
 }
 
-QIcon glyphIcon(const QString& kind, const QColor& color, const QColor& onColor) {
-    QIcon icon(glyphPixmap(kind, color));
-    if (onColor.isValid())
-        icon.addPixmap(glyphPixmap(kind, onColor), QIcon::Normal, QIcon::On);
-    return icon;
+QIcon glyphIcon(const QString& kind, const QColor& color) {
+    return QIcon(glyphPixmap(kind, color));
 }
 
 // Miniaturas visuales reales para el tarrito de pintura (sólido, tono suave, rayado, punteado).
@@ -712,14 +555,6 @@ QPixmap contextIconPixmap(const QString& kind, const QColor& color) {
         p.drawRoundedRect(QRectF(5.0, 5.0, 8.0, 9.8), 1.4, 1.4);
         p.drawLine(QPointF(7.6, 7.6), QPointF(7.6, 12.2));
         p.drawLine(QPointF(10.4, 7.6), QPointF(10.4, 12.2));
-    } else if (kind == "group") {
-        p.drawRoundedRect(QRectF(3.5, 3.5, 6.5, 6.5), 1.4, 1.4);
-        p.drawRoundedRect(QRectF(8.0, 8.0, 6.5, 6.5), 1.4, 1.4);
-    } else if (kind == "ungroup") {
-        p.drawRoundedRect(QRectF(3.0, 3.0, 5.5, 5.5), 1.2, 1.2);
-        p.drawRoundedRect(QRectF(9.5, 9.5, 5.5, 5.5), 1.2, 1.2);
-        p.drawLine(QPointF(11.5, 4.0), QPointF(14.0, 6.5));
-        p.drawLine(QPointF(4.0, 11.5), QPointF(6.5, 14.0));
     } else if (kind == "check") {
         p.drawLine(QPointF(3.5, 9.5), QPointF(7.2, 13.2));
         p.drawLine(QPointF(7.2, 13.2), QPointF(14.5, 5.0));
@@ -729,19 +564,6 @@ QPixmap contextIconPixmap(const QString& kind, const QColor& color) {
         p.drawLine(QPointF(3.5, 12.5), QPointF(14.5, 5.5));
         p.drawEllipse(QPointF(3.5, 12.5), 1.4, 1.4);
         p.drawEllipse(QPointF(14.5, 5.5), 1.4, 1.4);
-    } else if (kind == "totext") {
-        p.drawLine(QPointF(4.5, 5.0), QPointF(13.5, 5.0));
-        p.drawLine(QPointF(9.0, 5.0), QPointF(9.0, 14.0));
-        p.drawLine(QPointF(7.0, 14.0), QPointF(11.0, 14.0));
-    } else if (kind == "bookmark") {
-        QPainterPath bm;
-        bm.moveTo(5.0, 3.5);
-        bm.lineTo(13.0, 3.5);
-        bm.lineTo(13.0, 14.5);
-        bm.lineTo(9.0, 11.5);
-        bm.lineTo(5.0, 14.5);
-        bm.closeSubpath();
-        p.drawPath(bm);
     } else if (kind == "stabilizer") {
         QPainterPath wave;
         wave.moveTo(2.5, 11.5);
@@ -756,24 +578,6 @@ QPixmap contextIconPixmap(const QString& kind, const QColor& color) {
         half.arcTo(QRectF(3.8, 3.8, 10.4, 10.4), 90.0, -180.0);
         half.closeSubpath();
         p.drawPath(half);
-    } else if (kind == "eraser-stroke") {
-        QPainterPath wave;
-        wave.moveTo(2.5, 12.0);
-        wave.cubicTo(6.0, 5.5, 12.0, 12.5, 15.5, 6.0);
-        QColor faint = color;
-        faint.setAlpha(135);
-        p.setPen(QPen(faint, 1.5, Qt::SolidLine, Qt::RoundCap));
-        p.drawPath(wave);
-        p.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap));
-        p.drawLine(QPointF(6.2, 5.8), QPointF(11.8, 12.2));
-        p.drawLine(QPointF(11.8, 5.8), QPointF(6.2, 12.2));
-    } else if (kind == "eraser-partial") {
-        p.drawLine(QPointF(2.0, 9.0), QPointF(5.2, 9.0));
-        p.drawLine(QPointF(12.8, 9.0), QPointF(16.0, 9.0));
-        QPen dash(color, 1.4, Qt::CustomDashLine, Qt::RoundCap);
-        dash.setDashPattern({2.0, 2.0});
-        p.setPen(dash);
-        p.drawEllipse(QPointF(9.0, 9.0), 3.6, 3.6);
     } else if (kind == "lasso-free") {
         QPen dash(color, 1.5, Qt::CustomDashLine, Qt::RoundCap);
         dash.setDashPattern({2.2, 2.5});
@@ -786,24 +590,6 @@ QPixmap contextIconPixmap(const QString& kind, const QColor& color) {
         dash.setDashPattern({2.2, 2.5});
         p.setPen(dash);
         p.drawRoundedRect(QRectF(3.5, 4.0, 11.0, 10.0), 1.5, 1.5);
-    } else if (kind == "line-style") {
-        p.drawLine(QPointF(3.0, 5.5), QPointF(15.0, 5.5));
-        QPen dash(color, 1.6, Qt::CustomDashLine, Qt::RoundCap);
-        dash.setDashPattern({3.0, 2.5});
-        p.setPen(dash);
-        p.drawLine(QPointF(3.0, 9.5), QPointF(15.0, 9.5));
-        QPen dot(color, 1.8, Qt::CustomDashLine, Qt::RoundCap);
-        dot.setDashPattern({0.2, 2.8});
-        p.setPen(dot);
-        p.drawLine(QPointF(3.0, 13.5), QPointF(15.0, 13.5));
-    } else if (kind == "lock") {
-        p.drawRoundedRect(QRectF(4.5, 8.5, 9.0, 6.5), 1.6, 1.6);
-        p.drawArc(QRectF(6.2, 3.8, 5.6, 7.0), 0, 180 * 16);
-    } else if (kind == "minus") {
-        p.drawLine(QPointF(4.5, 9.0), QPointF(13.5, 9.0));
-    } else if (kind == "plus") {
-        p.drawLine(QPointF(4.5, 9.0), QPointF(13.5, 9.0));
-        p.drawLine(QPointF(9.0, 4.5), QPointF(9.0, 13.5));
     } else if (kind == "more") {
         p.setPen(Qt::NoPen);
         p.setBrush(color);
@@ -902,6 +688,64 @@ QPixmap templatePixmap(BackgroundTemplate tpl, const QColor& color) {
             painter.drawLine(QPointF(5.0, 16.0), QPointF(41.0, 16.0));
             painter.drawLine(QPointF(5.0, 22.0), QPointF(41.0, 22.0));
             break;
+        case BackgroundTemplate::Engineering: {
+            QColor minor = color;
+            minor.setAlpha(95);
+            painter.setPen(QPen(minor, 0.8));
+            for (double x = 8.0; x <= 38.0; x += 4.5)
+                painter.drawLine(QPointF(x, 3.5), QPointF(x, 28.5));
+            for (double y = 7.0; y <= 26.0; y += 4.5)
+                painter.drawLine(QPointF(3.5, y), QPointF(42.5, y));
+            painter.setPen(pen);
+            painter.drawLine(QPointF(17.0, 3.0), QPointF(17.0, 29.0));
+            painter.drawLine(QPointF(30.5, 3.0), QPointF(30.5, 29.0));
+            painter.drawLine(QPointF(3.0, 16.0), QPointF(43.0, 16.0));
+            break;
+        }
+        case BackgroundTemplate::Isometric: {
+            QPen isoPen(color, 0.9);
+            painter.setPen(isoPen);
+            for (const double x : {11.0, 20.0, 29.0, 37.0})
+                painter.drawLine(QPointF(x, 3.5), QPointF(x, 28.5));
+            painter.drawLine(QPointF(5.0, 10.0), QPointF(40.0, 28.0));
+            painter.drawLine(QPointF(16.0, 3.5), QPointF(42.0, 18.0));
+            painter.drawLine(QPointF(4.0, 20.0), QPointF(21.0, 28.5));
+            painter.drawLine(QPointF(5.0, 22.0), QPointF(40.0, 4.0));
+            painter.drawLine(QPointF(18.0, 28.5), QPointF(42.0, 15.0));
+            break;
+        }
+        case BackgroundTemplate::Cornell: {
+            QPen accent(QColor(239, 68, 68, 195), 1.2);
+            painter.setPen(QPen(color, 1.0));
+            for (const double y : {12.5, 17.5, 22.0})
+                painter.drawLine(QPointF(4.5, y), QPointF(41.5, y));
+            painter.setPen(accent);
+            painter.drawLine(QPointF(3.0, 8.0), QPointF(43.0, 8.0));
+            painter.drawLine(QPointF(13.5, 8.0), QPointF(13.5, 24.5));
+            painter.drawLine(QPointF(3.0, 24.5), QPointF(43.0, 24.5));
+            break;
+        }
+        case BackgroundTemplate::TwoColumn: {
+            QColor faint = color;
+            faint.setAlpha(105);
+            painter.setPen(QPen(faint, 0.9));
+            for (const double y : {10.0, 16.0, 22.0})
+                painter.drawLine(QPointF(4.5, y), QPointF(41.5, y));
+            painter.setPen(QPen(color, 1.3, Qt::DashLine));
+            painter.drawLine(QPointF(23.0, 3.5), QPointF(23.0, 28.5));
+            break;
+        }
+        case BackgroundTemplate::School: {
+            QPen accent(QColor(239, 68, 68, 195), 1.1);
+            painter.setPen(QPen(color, 1.0));
+            for (const double y : {13.5, 19.0, 24.5})
+                painter.drawLine(QPointF(4.5, y), QPointF(41.5, y));
+            painter.setPen(accent);
+            painter.drawLine(QPointF(11.0, 3.0), QPointF(11.0, 29.0));
+            painter.drawLine(QPointF(3.0, 7.5), QPointF(43.0, 7.5));
+            painter.drawLine(QPointF(3.0, 9.6), QPointF(43.0, 9.6));
+            break;
+        }
     }
     return pixmap;
 }

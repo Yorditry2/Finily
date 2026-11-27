@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/Types.h"
-#include "engine/StickerLibrary.h"
+#include "ui/FloatingToolbarInternal.h"
 
 #include <QColor>
 #include <QPointer>
@@ -10,87 +10,79 @@
 #include <QWidget>
 
 class QButtonGroup;
-class QComboBox;
-class QFrame;
-class QGridLayout;
+class QHBoxLayout;
 class QLabel;
+class QLineEdit;
 class QPropertyAnimation;
-class QPushButton;
-class QSlider;
+class QResizeEvent;
 class QTabletEvent;
 class QTimer;
 class QToolButton;
 
-class QLabel;
-class QLineEdit;
-class QListWidget;
-class QHBoxLayout;
-class QVBoxLayout;
 namespace finily {
 
 class CanvasWidget;
-class GlassCapsule;        // cápsula de cristal antialias, inmune al estilo de sistema (cpp)
-class ColorDotButton;      // punto de color antialias con anillo de selección (cpp)
-class StrokePreviewWidget; // punto de vista previa del trazo (definido en el .cpp)
+class FilePopover;
+class PaperPopover;
+class ShapesPopover;
+class StickersPopover;
+class StrokePopover;
+class ThumbnailPanel;
 
-// Barra flotante minimalista estilo StarNote/Freenotes que se superpone al
-// CanvasWidget con el cromo dividido en DOS cápsulas de cristal despejadas:
-//   1. Pill compacta de utilidades (arriba-izquierda): Inicio, Deshacer/Rehacer,
-//      popovers "Trazo", "Papel" y "Archivo", y modo interfaz limpia.
-//   2. Dock vertical de papelería (izquierda por defecto, acoplable
-//      Arriba/Abajo desde "Papel"): instrumentos realistas pintados a mano
-//      (pluma fuente, 5 bolígrafos de colores favoritos, borrador rosa) con
-//      animación táctil de deslizamiento, más un divisor y las herramientas
-//      secundarias compactas debajo.
-// Todo el cromo visual se deriva de ThemeConfig: las superficies son
-// GlassCapsule pintadas a mano (el estilo de sistema Qt6 — Caelestia/KDE —
-// jamás las sobreescribe) y los controles usan QSS explícito con background
-// transparent. Pill de zoom (abajo-derecha) y pill de páginas (abajo-izquierda)
-// completan el cromo.
+// Barra flotante superpuesta al CanvasWidget con cápsulas GlassCapsule
+// inmunes al tema del sistema y popovers como hijos directos (Wayland-safe).
 class FloatingToolbar : public QWidget {
     Q_OBJECT
 
 public:
-    // Posición acoplable del dock de papelería ("Posición de barra").
-    enum class DockPos { Izquierda, Arriba, Abajo };
+    using DockPos = ToolbarDockPos;
+    using PageNavDirection = finily::PageNavDirection;
+
+    struct TabEntry {
+        QString title;
+        bool dirty = false;
+        bool active = false;
+    };
 
     explicit FloatingToolbar(CanvasWidget* canvas, QWidget* parent = nullptr);
 
-    // Sincroniza botones, sliders, presets y tema con el estado del lienzo.
     void refreshFromCanvas();
+    void setNotebookTabs(const QVector<TabEntry>& tabs);
 
-    // Tab: oculta la interfaz dejando solo un pequeño botón de restauración.
     void toggleCleanUi();
     bool isCleanUi() const { return m_cleanUi; }
 
     void selectTool(ToolType tool);
     void selectPreset(int index); // 0..4
+    QString presetShortcut(int index) const;
+    PageNavDirection pageNavDirection() const { return m_pageNavDir; }
+    void setPageNavDirection(PageNavDirection dir);
     void openStickersPopover();
 
-    // Diálogos de importación/exportación (también disparados por Ctrl+O / Ctrl+E).
     void importPdfDialog();
     void exportPdfDialog();
 
-    // Cuaderno .finily (también disparados por Ctrl+N / Ctrl+Mayús+O /
-    // Ctrl+S / Ctrl+Mayús+S). Todos cierran los popovers automáticamente.
     void newDocumentAction();
     void openNotebookDialog();
     void saveNotebookAction();
     void saveNotebookAsDialog();
-    // Pregunta Guardar / No guardar / Cancelar si hay cambios sin guardar.
-    // Devuelve true si se puede continuar con la acción.
     bool confirmDiscardChanges(const QString& action);
 
-    // Toast flotante estilo StarNote: pill centrada que aparece con fundido,
-    // se sostiene 1.2 s y se desvanece sola (también alimenta updateOverlayMask).
     void showToast(const QString& message);
     void setUpdateAvailable(const QString& version);
 
 signals:
-    // Botón 'Inicio' de la pill: volver a la biblioteca de cuadernos.
     void homeRequested();
     void renameRequested(const QString& newName);
     void checkForUpdatesRequested();
+    void vectorizeSelectedImageRequested();
+    void extractSelectedImageRequested();
+    void configureAiApiRequested();
+    void newTabRequested();
+    void switchTabRequested(int index);
+    void closeTabRequested(int index);
+    void pageNavDirectionChanged(finily::FloatingToolbar::PageNavDirection dir);
+    void presetsChanged();
 
 public slots:
     void setDocumentTitle(const QString& title, bool unsaved);
@@ -101,28 +93,74 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    struct ToolbarCanvasState {
+        ToolType tool = ToolType::Pen;
+        QRgb inkColor = 0;
+        double strokeSize = 0.0;
+        LinePattern linePattern = LinePattern::Solid;
+        LineEnding lineEnding = LineEnding::None;
+        double stabilizer = 0.0;
+        double highlighterOpacity = 0.0;
+        EraserMode eraserMode = EraserMode::Stroke;
+        double eraserSize = 0.0;
+        bool eraserPreserveShapes = false;
+        bool eraserOnlyHighlight = false;
+        double pressureSensitivity = 0.0;
+        ThemeId themeId = ThemeId::DarkBoard;
+        BackgroundTemplate backgroundTemplate = BackgroundTemplate::Blank;
+        PageFormat pageFormat = PageFormat::Infinite;
+        double templateScale = 1.0;
+        bool canUndo = false;
+        bool canRedo = false;
+        double zoom = 1.0;
+        ShapeKind shapeKind = ShapeKind::Line;
+        int polygonSides = 6;
+        int triangleVariant = 0;
+        int quadVariant = 0;
+        int solidKind = 0;
+        QString congruenceMarkSpec;
+        bool holdToShapeEnabled = true;
+        bool smartGuidesEnabled = true;
+        bool mathBeautifyEnabled = false;
+        bool swapPenButtons = false;
+        int cursorStyle = 0;
+        bool drawingPolyline = false;
+        bool hasSelection = false;
+        bool hasSelectedShape = false;
+        bool hasSelectedAxes = false;
+        bool hasSelectedStrokes = false;
+        bool hasSelectedImage = false;
+        bool hasSelectedText = false;
+        bool hasLassoSelection = false;
+        bool canGroupSelection = false;
+        bool canUngroupSelection = false;
+        bool activelyDragging = false;
+        bool lassoRectMode = false;
+        int penTip = 0;
+        int highlighterTip = 0;
+        ShadePattern shadePattern = ShadePattern::Soft;
+        int pdfPageCount = 0;
+        int currentPageIndex = 0;
+        int pageCount = 1;
+        bool cleanUi = false;
+        DockPos dockPos = DockPos::Izquierda;
+        PageNavDirection pageNavDir = PageNavDirection::Horizontal;
+        bool valid = false;
+
+        bool operator==(const ToolbarCanvasState&) const = default;
+    };
+
     void initPresets();
     void loadPresets();
     void savePresets();
     void buildUtilityPill();
+    void buildTabBarPill();
     void buildTopRight();
-    void buildThumbPanel();
-    void rebuildThumbs();
-    void refreshPageThumbnail();
-    void showPageMenu(const QPoint& globalPosition, int clickedRow = -1);
     void buildDock();
     void layoutDock();
     void buildZoomPill();
     void buildPagePill();
     void buildRestoreButton();
-    void buildStrokePopover();
-    void buildPaperPopover();
-    void buildShapesPopover();
-    void buildStickersPopover();
-    void rebuildStickersGrid();
-    void buildFilePopover();
-    void rebuildRecentGallery();
-    void rememberRecentImage(const QString& path);
     void buildContextPill();
     void showSelectionMenu(const QPoint& globalPosition);
     void editSelectionProperties();
@@ -132,6 +170,7 @@ private:
     void applyThemeStylesheet();
     QString buildStylesheet(const ThemeConfig& theme) const;
     void refreshIcons();
+    void updateTitleDot();
 
     void positionChildren();
     QPoint popoverPosition(const GlassCapsule* popover, const QWidget* anchor) const;
@@ -140,14 +179,8 @@ private:
     void openPopover(GlassCapsule* popover, QWidget* anchor);
     void closePopovers();
 
-    // Sombras suaves reales (QGraphicsDropShadowEffect, 1 por widget elevado).
     void applyShadow(QWidget* widget);
     void refreshShadowColors();
-    // Punto de vista previa en vivo del popover "Trazo".
-    void updateStrokePreview();
-    void updateFillSwatches();
-    void updateTipIcons();
-    // Posición acoplable del dock ("Posición de barra": Izquierda/Arriba/Abajo).
     void loadDockPosition();
     void setDockPosition(DockPos pos);
 
@@ -155,31 +188,31 @@ private:
     void syncActivePresetFromCanvas();
     void updateStationery();
     void updateZoomLabel();
-    void onClearClicked();
-    void disarmClearButton();
+    void showFavoritesMenu(QWidget* anchor);
+    void editPresetMenu(int index, const QPoint& globalPos);
+    void saveCurrentToPreset(int index);
+    void updatePageNavButtons();
+    void updatePresetButtons();
 
     QPointer<CanvasWidget> m_canvas;
 
-    // Estado
     ThemeId m_theme = ThemeId::DarkBoard;
     QVector<PenPreset> m_presets;
-    bool m_presetsRestored = false;   // los presets vinieron de QSettings
-    QString m_lastPresetsSig;         // evita reescrituras de QSettings sin cambios
+    bool m_presetsRestored = false;
+    QString m_lastPresetsSig;
     int m_activePreset = 0;
     QVector<QColor> m_palette;
     bool m_cleanUi = false;
-    bool m_clearArmed = false;
+    bool m_titleUnsaved = false;
     bool m_updatingUi = false;
-    QString m_lastStateSig;
+    ToolbarCanvasState m_lastCanvasState;
 
-    // Pill compacta de utilidades (arriba-izquierda) — cápsula de cristal
+    // Pill superior izquierda (utilidades) y barra de pestañas
     GlassCapsule* m_pill = nullptr;
+    GlassCapsule* m_tabBarPill = nullptr;
+    QHBoxLayout* m_tabBarLayout = nullptr;
+    int m_tabCount = 1;
     GlassCapsule* m_topRight = nullptr;
-    GlassCapsule* m_thumbPanel = nullptr;
-    QListWidget* m_thumbList = nullptr;
-    QToolButton* m_thumbActions = nullptr;
-    int m_thumbCurrent = -1;
-    QTimer* m_thumbTimer = nullptr;
     QToolButton* m_pagesBtn = nullptr;
     QLabel* m_titleLabel = nullptr;
     QLineEdit* m_titleEdit = nullptr;
@@ -187,42 +220,34 @@ private:
     QToolButton* m_homeBtn = nullptr;
     QToolButton* m_undoBtn = nullptr;
     QToolButton* m_redoBtn = nullptr;
-    QToolButton* m_mathModeBtn = nullptr;
     QToolButton* m_paperBtn = nullptr;
+    QToolButton* m_fileBtn = nullptr;
     QToolButton* m_cleanBtn = nullptr;
 
-    // Dock vertical de papelería (izquierda por defecto) — cápsula de cristal
+    // Dock de herramientas y colores rápidos
     GlassCapsule* m_dock = nullptr;
     DockPos m_dockPos = DockPos::Izquierda;
-    QButtonGroup* m_toolGroup = nullptr;     // selección exclusiva de las 10 herramientas
-    QVector<QToolButton*> m_writingBtns;     // 4 útiles ilustrados SVG: Pluma, Bolígrafo, Resaltador, Borrador
+    QButtonGroup* m_toolGroup = nullptr;
+    QVector<QToolButton*> m_writingBtns;
     QVector<ToolType> m_writingKinds;
-    QVector<QString> m_writingIcons;
     QWidget* m_dockDivider = nullptr;
-    static constexpr int kTrayDots = 5;          // tintas rápidas del estuche
     QWidget* m_trayDivider = nullptr;
     QVector<ColorDotButton*> m_trayDots;
-    QToolButton* m_trayMoreBtn = nullptr;
-    ColorDotButton* m_trayColorBtn = nullptr;
-    QVector<QToolButton*> m_secondaryBtns;   // 6 herramientas duotono SVG: Figuras, Polilínea, Lazo, Texto, Láser, Mano
+    QVector<QToolButton*> m_secondaryBtns;
     QVector<ToolType> m_secondaryKinds;
     QVector<QString> m_secondaryIcons;
-    QString m_lastInkIconSig;
-
-    // Popover "Figuras" y barra contextual de figuras/polilínea
-    GlassCapsule* m_shapesPopover = nullptr;
     QToolButton* m_shapeBtn = nullptr;
-    QVector<QToolButton*> m_shapeKindBtns;
-    QVector<ShapeKind> m_shapeKindSpecs;
-    QVector<int> m_shapeSidesSpecs;   // 0 no aplica, o nº de lados del polígono
-    QVector<int> m_shapeTriSpecs;     // -1 no aplica, o variante de triángulo
-    QVector<int> m_shapeQuadSpecs;    // -1 no aplica, o variante de cuadrilátero
-    QVector<int> m_shapeSolidSpecs;   // -1 no aplica, o tipo de sólido 3D (0..9)
-    QVector<bool> m_shapeDimensionSpecs;
-    QVector<QString> m_shapeMarkSpecs; // "" no aplica, o marca de congruencia ("mark:zigzag", etc.)
-    QComboBox* m_shapeEndings = nullptr;
-    QToolButton* m_holdToShapeBtn = nullptr;
-    QToolButton* m_smartGuidesBtn = nullptr;
+    QToolButton* m_stickersBtn = nullptr;
+
+    // Popovers y panel de miniaturas (hijos directos de FloatingToolbar)
+    StrokePopover* m_strokePopover = nullptr;
+    PaperPopover* m_paperPopover = nullptr;
+    ShapesPopover* m_shapesPopover = nullptr;
+    StickersPopover* m_stickersPopover = nullptr;
+    FilePopover* m_filePopover = nullptr;
+    ThumbnailPanel* m_thumbPanel = nullptr;
+
+    // Pill contextual de selección / polilínea
     GlassCapsule* m_contextPill = nullptr;
     QToolButton* m_finishPolylineBtn = nullptr;
     QToolButton* m_closePolylineBtn = nullptr;
@@ -232,132 +257,42 @@ private:
     QToolButton* m_ctxDeleteBtn = nullptr;
     QToolButton* m_selectionActions = nullptr;
 
-    // Popover "Fórmulas y Stickers de Geometría"
-    QToolButton* m_stickersBtn = nullptr;
-    GlassCapsule* m_stickersPopover = nullptr;
-    QLineEdit* m_stickerSearchEdit = nullptr;
-    QWidget* m_stickerGridHost = nullptr;
-    QGridLayout* m_stickerGrid = nullptr;
-    QVector<QToolButton*> m_stickerCatBtns;
-    QVector<QToolButton*> m_stickerStyleBtns;
-    QString m_activeStickerCategory = QStringLiteral("Todos");
-    StickerStyle m_stickerStyle = StickerStyle::CleanWithTitle;
+    // Pill contextual de marcas en arista
+    GlassCapsule* m_edgeMarkPill = nullptr;
+    QVector<ColorDotButton*> m_edgeMarkDots;
+    QPointF m_edgeMarkWorldPos;
 
-    // Popover "Archivo / Cuaderno / PDF"
-    GlassCapsule* m_filePopover = nullptr;
-    QToolButton* m_fileBtn = nullptr;
-    QToolButton* m_newNotebookBtn = nullptr;
-    QToolButton* m_openNotebookBtn = nullptr;
-    QToolButton* m_saveNotebookBtn = nullptr;
-    QToolButton* m_saveNotebookAsBtn = nullptr;
-    QToolButton* m_importPdfBtn = nullptr;
-    QToolButton* m_importImageBtn = nullptr;
-    QToolButton* m_pasteBtn = nullptr;
-    QWidget* m_recentGalleryWrap = nullptr;
-    QHBoxLayout* m_recentGalleryRow = nullptr;
-    QToolButton* m_exportBtn = nullptr;
-    QLabel* m_pdfInfoLabel = nullptr;
-
-    // Pill de zoom (inferior derecha) — cápsula de cristal antialias
+    // Pills inferiores (zoom y páginas) y botón de restauración
     GlassCapsule* m_zoomPill = nullptr;
     QToolButton* m_zoomOutBtn = nullptr;
     QToolButton* m_zoomResetBtn = nullptr;
     QToolButton* m_zoomInBtn = nullptr;
 
-    // Pill contextual de selección / marcas en arista
-    GlassCapsule* m_edgeMarkPill = nullptr;
-    QPointF m_edgeMarkWorldPos;
-
-    // Pill de páginas (inferior izquierda) — cápsula de cristal antialias
     GlassCapsule* m_pagePill = nullptr;
     QToolButton* m_pagePrevBtn = nullptr;
     QLabel* m_pageLabel = nullptr;
     QToolButton* m_pageNextBtn = nullptr;
     QToolButton* m_pageAddBtn = nullptr;
-
-    // Botón diminuto de restauración (modo interfaz limpia)
     QToolButton* m_restoreBtn = nullptr;
-
-    // Popover "Trazo"
-    GlassCapsule* m_strokePopover = nullptr;
-    QWidget* m_strokeStyleSection = nullptr;
-    QWidget* m_penTipSection = nullptr;
-    QVector<QToolButton*> m_penTipBtns;
-    QWidget* m_hlTipSection = nullptr;
-    QVector<QToolButton*> m_hlTipBtns;
-    QWidget* m_lassoModeSection = nullptr;
-    QToolButton* m_lassoFreeBtn = nullptr;
-    QToolButton* m_lassoRectBtn = nullptr;
-    QWidget* m_strokeGeometrySection = nullptr;
-    QWidget* m_fillStyleSection = nullptr;
-    QVector<QPair<QToolButton*, ShadePattern>> m_fillStyles;
-    QWidget* m_stabilizerRow = nullptr;
-    QWidget* m_hlOpacityRow = nullptr;
-    QLabel* m_hlOpacityIcon = nullptr;
-    QSlider* m_hlOpacitySlider = nullptr;
-    QWidget* m_eraserSection = nullptr;
-    QVector<ColorDotButton*> m_swatches;
-    QToolButton* m_customColorBtn = nullptr;
-    QLabel* m_sizeLabel = nullptr;
-    QSlider* m_sizeSlider = nullptr;
-    QVector<QToolButton*> m_patternBtns;
-    QLabel* m_stabilizerIcon = nullptr;
-    QLabel* m_stabilizerLabel = nullptr;
-    QSlider* m_stabilizerSlider = nullptr;
-    QLabel* m_pressureLabel = nullptr;
-    QSlider* m_pressureSlider = nullptr;
-    QToolButton* m_mathBeautifyBtn = nullptr;
-    QToolButton* m_strokeBeautifyBtn = nullptr;
-    QVector<QToolButton*> m_cursorBtns; // 0 = Lapicito, 1 = Aro, 2 = Cruz
-    QToolButton* m_eraserStrokeBtn = nullptr;
-    QToolButton* m_eraserPartialBtn = nullptr;
-    QVector<QToolButton*> m_eraserFilterBtns; // 0 = Todo, 1 = Sin figuras, 2 = Resaltado
-    StrokePreviewWidget* m_eraserPreview = nullptr;
-    QLabel* m_eraserSizeLabel = nullptr;
-    QSlider* m_eraserSizeSlider = nullptr;
-
-    // Popover "Papel"
-    GlassCapsule* m_paperPopover = nullptr;
-    QVector<QToolButton*> m_themeBtns;
-    QVector<ThemeId> m_themeSpecs;
-    QVector<QToolButton*> m_templateBtns;
-    QVector<QPair<QToolButton*, BackgroundTemplate>> m_templateSpecs;
-    // Formato de hoja: Infinita / Hoja A4 / Diapo 16:9
-    QVector<QToolButton*> m_formatBtns;
-    QVector<PageFormat> m_formatSpecs;
-    QPushButton* m_clearBtn = nullptr;
-    QTimer* m_clearTimer = nullptr;
 
     GlassCapsule* m_openPopover = nullptr;
     QWidget* m_popoverAnchor = nullptr;
 
-    // Toast flotante estilo StarNote (cápsula centrada con fundido automático).
+    // Toast flotante (usa QGraphicsOpacityEffect, sin QGraphicsDropShadowEffect)
     GlassCapsule* m_toastPill = nullptr;
     QLabel* m_toastLabel = nullptr;
     QTimer* m_toastTimer = nullptr;
     QPropertyAnimation* m_toastAnim = nullptr;
 
-    // Registro de todas las cápsulas para recolorearlas al cambiar de tema.
     QVector<GlassCapsule*> m_capsules;
-
-    // Animaciones suaves de popovers (140 ms) y pill (150 ms), OutCubic.
     QPointer<QPropertyAnimation> m_popoverAnim;
     QPointer<QPropertyAnimation> m_pillAnim;
 
-    // Vista previa en vivo del color/grosor de tinta (popover "Trazo").
-    StrokePreviewWidget* m_strokePreview = nullptr;
-
-    // Botones segmentados "Posición de barra" en el popover "Papel".
-    QToolButton* m_dockLeftBtn = nullptr;
-    QToolButton* m_dockTopBtn = nullptr;
-    QToolButton* m_dockBottomBtn = nullptr;
-
-    // Iconos (re)pintados con el color de texto del tema activo
     QVector<QPair<QToolButton*, QString>> m_studioUtilSpecs;
     QVector<QPair<QToolButton*, QString>> m_iconSpecs;
     QVector<QPair<QToolButton*, QString>> m_ctxIconSpecs;
-    QVector<QPair<QToolButton*, LinePattern>> m_patternSpecs;
-    QToolButton* m_updateBtn = nullptr;
+
+    PageNavDirection m_pageNavDir = PageNavDirection::Horizontal;
 };
 
 } // namespace finily

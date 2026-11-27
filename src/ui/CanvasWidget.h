@@ -3,20 +3,25 @@
 #include "core/Types.h"
 #include "engine/InkEngine.h"
 #include "engine/LiveStroke.h"
+#include "engine/NotebookDocument.h"
 #include "engine/StickerLibrary.h"
+
 #include <QElapsedTimer>
 #include <QImage>
+#include <QPointer>
 #include <QPolygonF>
 #include <QSet>
 #include <QTimer>
-#include <QWidget>
 #include <QVariantAnimation>
+#include <QWidget>
+
 #include <algorithm>
 #include <future>
 #include <memory>
 
 namespace finily {
 
+class InlineTextEditor;
 class VelocityGaussianStabilizer;
 
 struct SelectionStyle {
@@ -42,7 +47,10 @@ public:
     ShapeKind shapeKind() const { return m_shapeKind; }
     int polygonSides() const { return m_polygonSides; }
     int triangleVariant() const { return m_triangleVariant; }
-    void setTriangleVariant(int variant) { m_triangleVariant = std::clamp(variant, 0, 3); emit stateChanged(); }
+    void setTriangleVariant(int variant) {
+        m_triangleVariant = std::clamp(variant, 0, 3);
+        emit stateChanged();
+    }
     void setPolygonSides(int sides);
     int quadVariant() const { return m_quadVariant; }
     void setQuadVariant(int variant) { m_quadVariant = std::clamp(variant, 0, 4); emit stateChanged(); }
@@ -62,23 +70,30 @@ public:
     int cursorStyle() const { return m_cursorStyle; } // 0 = Lapicito, 1 = Aro, 2 = Cruz
     bool swapPenButtons() const { return m_swapPenButtons; }
     bool hasSelectedShape() const { return !m_selectedShapeId.isEmpty(); }
-    bool hasLassoSelection() const { return !m_selectedStrokeIds.isEmpty() || !m_selectedShapeIds.isEmpty()
-        || !m_selectedTextIds.isEmpty() || !m_selectedImageIds.isEmpty(); }
+    bool hasLassoSelection() const {
+        return !m_selectedStrokeIds.isEmpty() || !m_selectedShapeIds.isEmpty()
+            || !m_selectedTextIds.isEmpty() || !m_selectedImageIds.isEmpty();
+    }
     bool hasSelectedStrokes() const { return !m_selectedStrokeIds.isEmpty(); }
     bool canGroupSelection() const;
     bool canUngroupSelection() const;
     bool hasSelectedImage() const { return !m_selectedImageId.isEmpty(); }
+    bool hasExtractableImage() const { return selectedImage().has_value(); }
+    std::optional<ImageItem> selectedImage() const;
+    void insertExtractedContent(const QVector<ShapeItem>& shapes,
+                                const QVector<TextItem>& texts,
+                                bool selectAsGroup = true);
     bool hasSelectedText() const { return !m_selectedTextId.isEmpty(); }
     bool hasSelection() const;
     bool hasLockableSelection() const;
     bool isDrawingPolyline() const { return m_polylineActive; }
-    int pdfPageCount() const;
-    int documentPdfPageCount() const;
-    int currentPageIndex() const { return m_currentPageIndex; }
+    int pdfPageCount() const { return m_doc.pdfPageCount(); }
+    int documentPdfPageCount() const { return m_doc.documentPdfPageCount(); }
+    int currentPageIndex() const { return m_doc.currentPageIndex(); }
     QImage pageThumbnail(int index, const QSize& size) const;
-    int pageCount() const { return std::max(1, int(m_pages.size())); }
-    QString currentFilePath() const { return m_currentFilePath; }
-    void setCurrentFilePath(const QString& path) { m_currentFilePath = path; emit stateChanged(); }
+    int pageCount() const { return m_doc.pageCount(); }
+    QString currentFilePath() const { return m_doc.filePath(); }
+    void setCurrentFilePath(const QString& path) { m_doc.setFilePath(path); emit stateChanged(); }
     QRectF selectionScreenRect() const;
     bool isActivelyDragging() const { return m_mode != InteractionMode::None; }
     bool lassoRectMode() const { return m_lassoRectMode; }
@@ -105,15 +120,19 @@ public:
     double highlighterOpacity() const { return m_highlighterOpacity; }
     double pressureSensitivity() const { return m_pressureSensitivity; }
     PressureProfile pressureProfile() const { return m_pressureProfile; }
-    ThemeId themeId() const { return m_themeId; }
-    BackgroundTemplate backgroundTemplate() const;
-    PageFormat pageFormat() const { return m_pageFormat; }
-    Viewport viewport() const { return m_viewport; }
-    bool canUndo() const { return !m_undoStack.isEmpty(); }
-    bool canRedo() const { return !m_redoStack.isEmpty(); }
+    ThemeId themeId() const { return m_doc.themeId(); }
+    BackgroundTemplate backgroundTemplate() const { return m_doc.currentTemplate(); }
+    BackgroundTemplate defaultBackgroundTemplate() const { return m_doc.defaultTemplate(); }
+    double templateScale() const { return m_doc.templateScale(); }
+    CoverStyle coverStyle() const { return m_doc.coverStyle(); }
+    PageFormat pageFormat() const { return m_doc.pageFormat(); }
+    Viewport viewport() const { return m_doc.viewport(); }
+    bool canUndo() const { return m_doc.canUndo(); }
+    bool canRedo() const { return m_doc.canRedo(); }
     // Hay trabajo que no está en ningún .finily (el autoguardado no cuenta).
-    bool hasUnsavedChanges() const;
-    bool currentPageHasContent() const;
+    bool hasUnsavedChanges() const { return m_doc.hasUnsavedChanges(); }
+    bool currentPageHasContent() const { return m_doc.currentPageHasContent(); }
+    bool hasAnyContent() const { return m_doc.hasAnyContent(); }
 
     // State setters
     void setTool(ToolType tool);
@@ -135,16 +154,20 @@ public:
     void setStrokeSize(double size);
     void setLinePattern(LinePattern pattern);
     void setLineEnding(LineEnding ending);
-    void setStabilizer(double strength); // [0.0, 1.0]
-    void setHighlighterOpacity(double opacity); // [0.10, 0.70]
-    void setPressureSensitivity(double sensitivity); // [0.0, 1.0]
+    void setStabilizer(double strength);            // [0.0, 1.0]
+    void setHighlighterOpacity(double opacity);     // [0.10, 0.70]
+    void setPressureSensitivity(double sensitivity);// [0.0, 1.0]
     void setPressureProfile(PressureProfile profile);
     void setThemeId(ThemeId themeId);
     void setBackgroundTemplate(BackgroundTemplate tpl);
+    void setTemplateScale(double scale);
     void setPageFormat(PageFormat format);
 
     // Shape, polyline, lasso, image & PDF actions
     void stampCongruenceMarkAt(const QPointF& worldPos, const QString& markSpec);
+    void highlightSegmentAt(const QPointF& worldPos,
+                            const QColor& color = QColor(),
+                            int style = 0);
     void finishActivePolyline(bool closeShape = false);
     void cancelActivePolyline();
     void deleteSelectedShape();
@@ -167,7 +190,7 @@ public:
     bool pasteFromClipboard();
     bool importImageFile(const QString& filePath);
     bool importPdfFile(const QString& filePath, bool newNotebook = false);
-    bool exportToPdf(const QString& filePath) const;
+    bool exportToPdf(const QString& filePath);
 
     // Viewport controls
     void zoomByFactor(double factor, const QPointF& anchorScreenPos);
@@ -178,6 +201,7 @@ public:
     // Multi-page notebook navigation
     void addPage();
     void insertPage(int index, std::optional<BackgroundTemplate> background = {});
+    void insertPages(int index, const QVector<PageData>& pages);
     bool movePages(QVector<int> indices, int destination);
     void duplicatePages(QVector<int> indices);
     bool copyPages(QVector<int> indices);
@@ -194,11 +218,18 @@ public:
     void redo();
     void clearBoard();
     void newDocument();
-    bool createNotebook(const QString& path, ThemeId theme, BackgroundTemplate background, PageFormat format);
-    bool saveToFile(const QString& filePath, bool newFile = false);
+    bool createNotebook(const QString& path, ThemeId theme, BackgroundTemplate background,
+                        PageFormat format, double templateScale = 1.0, CoverStyle cover = {});
+    void startEphemeralDocument(ThemeId theme, BackgroundTemplate background,
+                                PageFormat format, double templateScale = 1.0,
+                                CoverStyle cover = {});
+    bool saveToFile(const QString& filePath, bool newFile = false, bool silent = false);
     bool loadFromFile(const QString& filePath);
-    void saveAutosave() const;   // programa un autoguardado diferido (1.5 s)
-    void flushAutosave();        // escribe ya el autoguardado pendiente
+    NotebookSession exportSession() const;
+    void importSession(const NotebookSession& session);
+    void saveAutosave();   // programa un autoguardado diferido (1.5 s)
+    void flushAutosave();  // escribe ya el autoguardado pendiente
+    void cancelPendingAutosave();
     void loadAutosave();
 
 signals:
@@ -248,17 +279,19 @@ private:
     QPointF screenToWorld(const QPointF& screen) const;
     void rebuildStaticCache();
     void invalidateStaticCache();
-    void beginInput(const QPointF& screenPos, double pressure, double tiltX, double tiltY, bool isHardwarePen, bool isEraserTip, Qt::MouseButton button, Qt::KeyboardModifiers mods);
-    void moveInput(const QPointF& screenPos, double pressure, double tiltX, double tiltY, bool isHardwarePen, bool isEraserTip, Qt::KeyboardModifiers mods);
-    void endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods);
-    void applyEraseAt(const QPointF& worldPos, bool trimToIntersections = false);
+    void finishTextEditor(bool accept);
+    void cancelPendingBeautify();
+    NotebookDocument::DocumentToolSettings toolSettingsForDocument() const;
+    void applyDocumentToolSettings(const NotebookDocument::DocumentToolSettings& settings);
+    void waitForAutosave();
+    bool preparePageChange();
+    void afterPageLoaded(bool structureChanged);
+    void writeAutosaveNow(bool async = true);
     void pushUndoSnapshot(const DocumentSnapshot& snapshot);
     void pushPageHistory();
-    bool preparePageChange();
-    void loadWorkingPage(int index, bool structureChanged);
-    void insertPages(int index, const QVector<PageData>& pages);
-    void writeAutosaveNow(bool async = true) const;
-    DocumentSnapshot currentSnapshot() const;
+    DocumentSnapshot currentSnapshot() const { return m_doc.currentSnapshot(); }
+
+    // Selection helpers (CanvasSelection.cpp)
     void updateCursorShape();
     QSet<QString> selectedItemIds() const;
     void cloneObjects(const DocumentSnapshot& source, const QSet<QString>& selection,
@@ -266,18 +299,59 @@ private:
     void expandLassoSelection(const QString& seed = {});
     QRectF lassoSelectionBounds() const;
     void changeSelectionGroup(bool group);
+    void flipSelectionAxis(bool horizontal);
+    void openInlineTextEditor(const TextItem& draft, const QPointF& anchorScreen,
+                              const QString& existingTextId,
+                              const QSet<QString>& strokesToReplace);
+
+    // Input state machine helpers (CanvasInput.cpp)
+    void beginInput(const QPointF& screenPos, double pressure, double tiltX, double tiltY,
+                    bool isHardwarePen, bool isEraserTip, Qt::MouseButton button,
+                    Qt::KeyboardModifiers mods);
+    void moveInput(const QPointF& screenPos, double pressure, double tiltX, double tiltY,
+                   bool isHardwarePen, bool isEraserTip, Qt::KeyboardModifiers mods);
+    void endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods);
+    void startShapeEdit(const ShapeItem& shape, InteractionMode mode, int handle = -1);
+    void startImageEdit(const ImageItem& image, int handle = -1);
+    void startSelectionTransform(int handle, const QPointF& world);
+    void selectTogether(const QString& id, const QPointF& world);
+    void beginFillAt(const QPointF& world);
+    bool tryBeginSelectTool(const QPointF& world);
+    bool tryBeginLassoTool(const QPointF& world);
+    bool tryBeginTextInput(const QPointF& screen, const QPointF& world, bool forceEdit);
+    void beginTextEditAt(const QPointF& screen, const QPointF& world);
+    void beginPolylineTap(const QPointF& screen, const QPointF& world);
+    void beginShapeInput(const QPointF& world);
+    void beginFreehandStroke(const QPointF& world, double pressure, double tiltX, double tiltY,
+                             bool hardware, Qt::KeyboardModifiers mods);
+    void moveText(const QPointF& world);
+    void movePan(const QPointF& screen);
+    void moveErase(const QPointF& world, Qt::KeyboardModifiers mods);
+    void moveLassoDraw(const QPointF& world);
+    void moveLassoTransform(const QPointF& world);
+    void moveImageTransform(const QPointF& world);
+    void moveShapeEdit(const QPointF& world);
+    void moveShapeCreate(const QPointF& world, Qt::KeyboardModifiers mods);
+    void moveFreehandStroke(const QPointF& world, double pressure, double tiltX, double tiltY,
+                            Qt::KeyboardModifiers mods);
+    void updateHoverCursors(const QPointF& world, bool eraser);
+    bool tryCommitFreehandGeometry(Qt::KeyboardModifiers mods);
+    void finishAutoGeometry(const ShapeItem& pulseShape);
+    void applyEraseAt(const QPointF& worldPos, bool trimToIntersections = false);
     void updateLinkedPreview(const QVector<ShapeItem>& original, const QSet<QString>& edited);
     void triggerHoldToShape();
     void flushPendingBeautify();
     ShapeItem* findShapeById(const QString& id);
     const ShapeItem* findShapeById(const QString& id) const;
 
+    // Viewport & overlays
     void animateViewport(const Viewport& target);
     void animateZoom(double factor);
     void clampFiniteViewport();
     QRectF activeFiniteSheetRect() const;
     void clearPenCursor();
     void updatePenCursor(const QPointF& world, bool visible);
+    void openRadialMenu(const QPointF& centerScreen);
     void updateRadialHover(const QPointF& screenPos);
     void commitRadialSelection(bool quickTap);
     QRect shapePulseRect() const;
@@ -301,26 +375,12 @@ private:
     int m_radialHoveredColor = -1;
     int m_radialHoveredTool = -1;
 
-    // Document & history
-    QVector<PageData> m_pages;
-    int m_currentPageIndex = 0;
-    QVector<Stroke> m_strokes;
-    QVector<ShapeItem> m_shapes;
-    QVector<ImageItem> m_images;
-    QVector<TextItem> m_texts;
-    struct HistoryEntry {
-        int pageIndex;
-        DocumentSnapshot content;
-        QVector<PageData> pages;
-    };
-    void restoreHistoryEntry(QVector<HistoryEntry>& source, QVector<HistoryEntry>& destination);
-    QVector<HistoryEntry> m_undoStack;
-    QVector<HistoryEntry> m_redoStack;
+    // Document & history (single source of truth)
+    NotebookDocument m_doc;
     QVector<PageData> m_copiedPages;
-    QString m_currentFilePath;
-    bool m_dirty = false;
     QTimer* m_autosaveTimer = nullptr;
-    mutable std::future<void> m_autosaveFuture;
+    std::future<void> m_autosaveFuture;
+    QPointer<InlineTextEditor> m_textEditor;
 
     // Active tool & styling
     ToolType m_tool = ToolType::Pen;
@@ -329,19 +389,20 @@ private:
     Qt::MouseButtons m_lastTabletButtons = Qt::NoButton;
     ShapeKind m_shapeKind = ShapeKind::Triangle;
     int m_triangleVariant = 0; // 0 libre, 1 rectángulo, 2 isósceles, 3 equilátero
-    int m_polygonSides = 6; // lados del polígono regular (herramienta Figuras > Polígono)
-    int m_quadVariant = 0;  // 0 polígono regular, 1 paralelogramo, 2 trapecio isósceles, 3 trapecio rectángulo, 4 trapezoide
-    int m_solidKind = 0;    // 0..9 sólidos 3D (Cubo, Prisma, Cilindro, Cono, Esfera, Pirámide, Tetraedro, Octaedro, TroncoCono, TroncoPirámide)
-    QString m_congruenceMarkSpec; // Si no está vacío en ToolType::Shape (ej. "mark:zigzag"), un toque sobre cualquier lado estampa la marca imantada
+    int m_polygonSides = 6;    // lados del polígono regular (herramienta Figuras > Polígono)
+    // 0 polígono regular, 1 paralelogramo, 2 trapecio isósceles, 3 trapecio rectángulo, 4 trapezoide
+    int m_quadVariant = 0;
+    int m_solidKind = 0;       // 0..9 sólidos 3D
+    QString m_congruenceMarkSpec;
     ShadePattern m_shadePattern = ShadePattern::Solid;
     bool m_holdToShapeEnabled = true;
     bool m_smartGuidesEnabled = true;
-    bool m_mathBeautifyEnabled = false; // Escritura libre por defecto; Modo Ecuación con ∑ (M)
+    bool m_mathBeautifyEnabled = false;
     bool m_autoColorOperators = true;
     QColor m_operatorColor = QColor("#ef4444");
-    int m_cursorStyle = 0; // 0 = Lapicito, 1 = Aro, 2 = Cruz
-    int m_penTip = 1; // 0 = Bolígrafo, 1 = Pluma, 2 = Plumón, 3 = Pincel
-    int m_highlighterTip = 0; // 0 = Biselado, 1 = Redondo, 2 = Recto
+    int m_cursorStyle = 0;      // 0 = Lapicito, 1 = Aro, 2 = Cruz
+    int m_penTip = 1;           // 0 = Bolígrafo, 1 = Pluma, 2 = Plumón, 3 = Pincel
+    int m_highlighterTip = 0;   // 0 = Biselado, 1 = Redondo, 2 = Recto
     EraserMode m_eraserMode = EraserMode::Stroke;
     double m_eraserSize = 18.0;
     bool m_eraserPreserveShapes = false;
@@ -354,10 +415,6 @@ private:
     double m_highlighterOpacity = 0.25;
     double m_pressureSensitivity = 0.5;
     PressureProfile m_pressureProfile = PressureProfile::Light;
-    ThemeId m_themeId = ThemeId::DarkBoard;
-    BackgroundTemplate m_template = BackgroundTemplate::Dots;
-    PageFormat m_pageFormat = PageFormat::Infinite;
-    Viewport m_viewport;
 
     // Live interaction state
     InteractionMode m_mode = InteractionMode::None;
@@ -376,9 +433,8 @@ private:
     QPointF m_holdLastWorld;
     bool m_holdSnappedToShape = false;
 
-    // Deferred smart handwriting beautification (waits ~950ms after finishing a word/line)
+    // Deferred smart handwriting beautification
     QTimer* m_beautifyTimer = nullptr;
-    int m_pendingBeautifyStart = -1;
     QRectF m_pendingBeautifyBox;
     QSet<QString> m_pendingBeautifyIds;
 
@@ -448,6 +504,8 @@ private:
 
     // Dual-layer backing cache for <0.5ms live drawing latency
     QImage m_staticCache;
+    QImage m_hlBackground;
+    QImage m_hlInk;
     LiveInkRenderer m_liveInk;
     InkSmoother m_inkSmoother;
     QImage m_liveInkLayer;

@@ -1,28 +1,59 @@
 #include "CanvasWidget.h"
 #include "CanvasWidgetInternal.h"
-#include "engine/DocumentSerializer.h"
-#include "engine/GeometryEngine.h"
-#include "engine/InkEngine.h"
+#include "core/Utils.h"
 
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QHash>
-#include <QJsonArray>
-#include <QJsonObject>
-#include <QPainter>
+#include <QMetaObject>
+#include <QPointer>
 
 #include <algorithm>
 #include <chrono>
+#include <future>
+#include <optional>
+#include <utility>
 
 namespace finily {
+
+void CanvasWidget::finishTextEditor(bool accept) {
+    if (m_textEditor)
+        m_textEditor->finish(accept);
+}
+
+void CanvasWidget::cancelPendingBeautify() {
+    if (m_beautifyTimer)
+        m_beautifyTimer->stop();
+    m_pendingBeautifyBox = QRectF();
+    m_pendingBeautifyIds.clear();
+}
+
+NotebookDocument::DocumentToolSettings CanvasWidget::toolSettingsForDocument() const {
+    NotebookDocument::DocumentToolSettings settings;
+    settings.shapeKind = m_shapeKind;
+    settings.holdToShapeEnabled = m_holdToShapeEnabled;
+    settings.smartGuidesEnabled = m_smartGuidesEnabled;
+    settings.swapPenButtons = m_swapPenButtons;
+    settings.pressureProfile = m_pressureProfile;
+    return settings;
+}
+
+void CanvasWidget::applyDocumentToolSettings(const NotebookDocument::DocumentToolSettings& settings) {
+    m_shapeKind = settings.shapeKind;
+    m_holdToShapeEnabled = settings.holdToShapeEnabled;
+    m_smartGuidesEnabled = settings.smartGuidesEnabled;
+    m_swapPenButtons = settings.swapPenButtons;
+    m_pressureProfile = settings.pressureProfile;
+}
+
+void CanvasWidget::waitForAutosave() {
+    if (m_autosaveFuture.valid())
+        m_autosaveFuture.wait();
+}
 
 bool CanvasWidget::preparePageChange() {
     if (m_mode == InteractionMode::LaserTrail)
         m_mode = InteractionMode::None;
     if (m_mode != InteractionMode::None)
         return false;
-    finishTextEditor(this, true);
+    finishTextEditor(true);
     if (m_polylineActive)
         finishActivePolyline();
     flushPendingBeautify();
@@ -30,31 +61,48 @@ bool CanvasWidget::preparePageChange() {
     return true;
 }
 
-void CanvasWidget::loadWorkingPage(int index, bool structureChanged) {
+void CanvasWidget::afterPageLoaded(bool structureChanged) {
     m_zoomAnimation->stop();
     stopShapePulse();
     clearPenCursor();
     m_holdTimer->stop();
     m_laserTimer->stop();
     m_laserTrail.clear();
+    m_mode = InteractionMode::None;
     m_tabletActive = false;
-    m_currentPageIndex = index;
-    const auto& page = m_pages.at(index);
-    m_strokes = page.strokes;
-    m_shapes = page.shapes;
-    m_images = page.images;
-    m_texts = page.texts;
-    m_viewport = page.viewport;
-    if (m_viewport.x == 0 && m_viewport.y == 0 && m_viewport.zoom == 1) {
-        for (const auto& image : m_images) {
+    m_hasActiveStroke = false;
+    m_activeStroke = {};
+    m_liveInkPending = false;
+    m_liveInk.reset();
+    m_liveInkLayer = QImage();
+    m_radialOpen = false;
+    m_radialHoveredColor = -1;
+    m_radialHoveredTool = -1;
+    m_hasActiveShape = false;
+    m_holdSnappedToShape = false;
+    m_polylineActive = false;
+    m_lastPolylineTapMs = -1;
+    m_polylineVertices.clear();
+    m_polylineSnapClose = false;
+    m_showEraserCursor = false;
+    m_linkedPreview = false;
+    m_activeGuides.clear();
+    m_rightClickOnSelection = false;
+
+    Viewport& vp = m_doc.viewport();
+    if (!size().isEmpty() && vp.x == 0.0 && vp.y == 0.0 && vp.zoom == 1.0) {
+        bool fittedPdf = false;
+        for (const auto& image : m_doc.images()) {
             if (image.isPdfPage && !image.rect.isEmpty()) {
-                m_viewport = fittedPdfViewport(image.rect, size());
+                vp = fittedPdfViewport(image.rect, size());
+                fittedPdf = true;
                 break;
             }
         }
-        if (m_pageFormat != PageFormat::Infinite && m_viewport.x == 0 && m_viewport.y == 0)
-            m_viewport = fittedSheetViewport(m_pageFormat, size());
+        if (!fittedPdf && m_doc.pageFormat() != PageFormat::Infinite)
+            vp = fittedSheetViewport(m_doc.pageFormat(), size());
     }
+
     clampFiniteViewport();
     clearSelection();
     updateCursorShape();
@@ -63,555 +111,351 @@ void CanvasWidget::loadWorkingPage(int index, bool structureChanged) {
     if (structureChanged)
         emit pageStructureChanged();
     emit stateChanged();
-    emit viewportChanged(m_viewport.zoom);
+    emit viewportChanged(m_doc.viewport().zoom);
 }
 
 void CanvasWidget::goToPage(int index) {
-    if (index < 0 || index >= pageCount() || index == m_currentPageIndex || !preparePageChange())
+    if (index < 0 || index >= m_doc.pageCount() || index == m_doc.currentPageIndex()
+        || !preparePageChange())
         return;
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    loadWorkingPage(index, false);
+    if (m_doc.goToPage(index))
+        afterPageLoaded(false);
 }
 
-void CanvasWidget::addPage() { insertPage(m_currentPageIndex + 1); }
-void CanvasWidget::nextPage() { goToPage(m_currentPageIndex + 1); }
-void CanvasWidget::prevPage() { goToPage(m_currentPageIndex - 1); }
-void CanvasWidget::deleteCurrentPage() { deletePages({m_currentPageIndex}); }
+void CanvasWidget::addPage() {
+    insertPage(m_doc.currentPageIndex() + 1);
+}
+
+void CanvasWidget::nextPage() {
+    goToPage(m_doc.currentPageIndex() + 1);
+}
+
+void CanvasWidget::prevPage() {
+    goToPage(m_doc.currentPageIndex() - 1);
+}
+
+void CanvasWidget::deleteCurrentPage() {
+    deletePages({m_doc.currentPageIndex()});
+}
 
 void CanvasWidget::insertPage(int index, std::optional<BackgroundTemplate> background) {
     PageData page;
-    page.viewport = fittedSheetViewport(m_pageFormat, size());
+    page.viewport = fittedSheetViewport(m_doc.pageFormat(), size());
     page.background = background;
     insertPages(index, {page});
 }
 
 void CanvasWidget::insertPages(int index, const QVector<PageData>& pages) {
-    if (pages.isEmpty() || index < 0 || index > pageCount() || !preparePageChange())
+    if (pages.isEmpty() || index < 0 || index > m_doc.pageCount() || !preparePageChange())
         return;
-    pushPageHistory();
-    int position = index;
-    for (const auto& page : pages)
-        m_pages.insert(position++, page);
-    loadWorkingPage(index, true);
+    if (m_doc.insertPages(index, pages))
+        afterPageLoaded(true);
 }
 
 bool CanvasWidget::movePages(QVector<int> indices, int destination) {
-    indices = validPageIndices(std::move(indices), pageCount());
-    if (indices.isEmpty() || destination < 0 || destination > pageCount())
+    indices = validPageIndices(std::move(indices), m_doc.pageCount());
+    if (indices.isEmpty() || destination < 0 || destination > m_doc.pageCount())
         return false;
-    const int before = int(std::lower_bound(indices.cbegin(), indices.cend(), destination) - indices.cbegin());
+    const int before = int(std::lower_bound(indices.cbegin(), indices.cend(), destination)
+                           - indices.cbegin());
     const int target = destination - before;
     if (indices.last() - indices.first() + 1 == indices.size() && target == indices.first())
         return false;
     if (!preparePageChange())
         return false;
-    pushPageHistory();
-    QVector<PageData> moved;
-    for (int index : std::as_const(indices))
-        moved.append(m_pages.at(index));
-    for (auto it = indices.crbegin(); it != indices.crend(); ++it)
-        m_pages.removeAt(*it);
-    for (qsizetype i = 0; i < moved.size(); ++i)
-        m_pages.insert(target + i, moved.at(i));
-    loadWorkingPage(target, true);
+    if (!m_doc.movePages(std::move(indices), destination))
+        return false;
+    afterPageLoaded(true);
     return true;
 }
 
 void CanvasWidget::duplicatePages(QVector<int> indices) {
-    indices = validPageIndices(std::move(indices), pageCount());
+    indices = validPageIndices(std::move(indices), m_doc.pageCount());
     if (indices.isEmpty() || !preparePageChange())
         return;
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    QVector<PageData> copies;
-    for (int index : std::as_const(indices))
-        copies.append(m_pages.at(index));
-    insertPages(indices.last() + 1, copies);
+    if (m_doc.duplicatePages(std::move(indices)))
+        afterPageLoaded(true);
 }
 
 bool CanvasWidget::copyPages(QVector<int> indices) {
-    indices = validPageIndices(std::move(indices), pageCount());
+    indices = validPageIndices(std::move(indices), m_doc.pageCount());
     if (indices.isEmpty() || !preparePageChange())
         return false;
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    m_copiedPages.clear();
-    for (int index : std::as_const(indices)) {
-        m_copiedPages.append(m_pages.at(index));
-        if (!m_copiedPages.last().background)
-            m_copiedPages.last().background = m_template;
-    }
-    emit toastRequested(tr("Páginas copiadas · %1").arg(indices.size()));
+    m_copiedPages = m_doc.copyPages(indices);
+    if (m_copiedPages.isEmpty())
+        return false;
+    emit toastRequested(tr("Páginas copiadas · %1").arg(m_copiedPages.size()));
     return true;
 }
 
-void CanvasWidget::pastePages(int index) { insertPages(index, m_copiedPages); }
+void CanvasWidget::pastePages(int index) {
+    insertPages(index, m_copiedPages);
+}
 
 void CanvasWidget::deletePages(QVector<int> indices) {
-    indices = validPageIndices(std::move(indices), pageCount());
+    indices = validPageIndices(std::move(indices), m_doc.pageCount());
     if (indices.isEmpty() || !preparePageChange())
         return;
-    pushPageHistory();
-    const int current = m_currentPageIndex;
-    const auto firstAtOrAfter = std::lower_bound(indices.cbegin(), indices.cend(), current);
-    const int removedBefore = int(firstAtOrAfter - indices.cbegin());
-    for (auto it = indices.crbegin(); it != indices.crend(); ++it)
-        m_pages.removeAt(*it);
-    if (m_pages.isEmpty()) {
-        PageData blank;
-        blank.viewport = fittedSheetViewport(m_pageFormat, size());
-        m_pages.append(blank);
-    }
-    loadWorkingPage(std::min(current - removedBefore, int(m_pages.size()) - 1), true);
-}
-
-bool CanvasWidget::currentPageHasContent() const {
-    return !m_strokes.isEmpty() || !m_shapes.isEmpty() || !m_images.isEmpty() || !m_texts.isEmpty();
-}
-
-bool CanvasWidget::hasUnsavedChanges() const {
-    if (!m_dirty)
-        return false;
-    if (currentPageHasContent() || m_pages.size() > 1 || m_pageFormat != PageFormat::Infinite)
-        return true;
-    return !m_currentFilePath.isEmpty(); // un cuaderno guardado que se vació también es un cambio
-}
-
-DocumentSnapshot CanvasWidget::currentSnapshot() const {
-    return {m_strokes, m_shapes, m_images, m_texts};
+    if (m_doc.deletePages(std::move(indices), fittedSheetViewport(m_doc.pageFormat(), size())))
+        afterPageLoaded(true);
 }
 
 void CanvasWidget::pushUndoSnapshot(const DocumentSnapshot& snapshot) {
-    m_undoStack.append({m_currentPageIndex, snapshot, {}});
-    if (m_undoStack.size() > 50)
-        m_undoStack.removeFirst();
-    m_redoStack.clear();
-    m_redoStack.squeeze();
-    m_dirty = true;
+    m_doc.pushUndoSnapshot(snapshot);
 }
 
 void CanvasWidget::pushPageHistory() {
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    // Limitar copias de cuaderno completo en el historial para ahorrar memoria RAM
-    int fullPageEntries = 0;
-    for (qsizetype i = m_undoStack.size() - 1; i >= 0; --i) {
-        if (!m_undoStack[i].pages.isEmpty()) {
-            ++fullPageEntries;
-            if (fullPageEntries >= 12)
-                m_undoStack.removeAt(i);
-        }
-    }
-    m_undoStack.append({m_currentPageIndex, {}, m_pages});
-    if (m_undoStack.size() > 50)
-        m_undoStack.removeFirst();
-    m_redoStack.clear();
-    m_redoStack.squeeze();
-    m_dirty = true;
-}
-
-void CanvasWidget::restoreHistoryEntry(QVector<HistoryEntry>& source, QVector<HistoryEntry>& destination) {
-    if (source.isEmpty())
-        return;
-    auto entry = source.takeLast();
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    const bool structureChanged = !entry.pages.isEmpty();
-    if (structureChanged) {
-        destination.append({m_currentPageIndex, {}, m_pages});
-        m_pages = std::move(entry.pages);
-    } else {
-        auto& page = m_pages[entry.pageIndex];
-        destination.append({entry.pageIndex, {page.strokes, page.shapes, page.images, page.texts}, {}});
-        page.strokes = entry.content.strokes;
-        page.shapes = entry.content.shapes;
-        page.images = entry.content.images;
-        page.texts = entry.content.texts;
-    }
-    m_dirty = true;
-    loadWorkingPage(entry.pageIndex, structureChanged);
+    m_doc.pushPageHistory();
 }
 
 void CanvasWidget::undo() {
     if (m_mode != InteractionMode::None)
         return;
-    finishTextEditor(this, true);
+    finishTextEditor(true);
     if (m_polylineActive) {
         cancelActivePolyline();
         return;
     }
-    if (m_beautifyTimer)
-        m_beautifyTimer->stop();
-    m_pendingBeautifyStart = -1;
-    m_pendingBeautifyBox = QRectF();
-    m_pendingBeautifyIds.clear();
-    restoreHistoryEntry(m_undoStack, m_redoStack);
+    cancelPendingBeautify();
+    const auto res = m_doc.undo();
+    if (res.applied)
+        afterPageLoaded(res.structureChanged);
 }
 
 void CanvasWidget::redo() {
     if (m_mode != InteractionMode::None || m_polylineActive)
         return;
-    finishTextEditor(this, true);
-    if (m_beautifyTimer)
-        m_beautifyTimer->stop();
-    m_pendingBeautifyStart = -1;
-    m_pendingBeautifyBox = QRectF();
-    m_pendingBeautifyIds.clear();
-    restoreHistoryEntry(m_redoStack, m_undoStack);
+    finishTextEditor(true);
+    cancelPendingBeautify();
+    const auto res = m_doc.redo();
+    if (res.applied)
+        afterPageLoaded(res.structureChanged);
 }
 
 void CanvasWidget::clearBoard() {
     if (m_mode != InteractionMode::None)
         return;
-    finishTextEditor(this, true);
+    finishTextEditor(true);
     if (m_polylineActive)
         cancelActivePolyline();
-    if (m_strokes.isEmpty() && m_shapes.isEmpty() && m_texts.isEmpty()
-        && std::none_of(m_images.cbegin(), m_images.cend(), [](const auto& image) { return !image.isPdfPage; }))
-        return;
     flushPendingBeautify();
-    pushUndoSnapshot(currentSnapshot());
-    m_strokes.clear();
-    m_shapes.clear();
-    m_images.removeIf([](const auto& image) { return !image.isPdfPage; });
-    m_texts.clear();
+    if (!m_doc.clearCurrentPage())
+        return;
     clearSelection();
+    invalidateStaticCache();
     saveAutosave();
     emit stateChanged();
 }
 
 void CanvasWidget::newDocument() {
-    m_zoomAnimation->stop();
-    stopShapePulse();
-    clearPenCursor();
-    finishTextEditor(this, false);
-    m_holdTimer->stop();
-    m_laserTimer->stop();
-    m_laserTrail.clear();
-    m_beautifyTimer->stop();
-    m_pendingBeautifyStart = -1;
-    m_pendingBeautifyBox = QRectF();
-    m_pendingBeautifyIds.clear();
-    m_mode = InteractionMode::None;
-    m_tabletActive = false;
-    m_hasActiveStroke = false;
-    m_hasActiveShape = false;
-    m_holdSnappedToShape = false;
-    cancelActivePolyline();
-    m_strokes.clear();
-    m_shapes.clear();
-    m_images.clear();
-    m_texts.clear();
-    m_currentFilePath.clear();
-    m_pages = {PageData{}};
-    m_currentPageIndex = 0;
-    m_dirty = false;
-    m_undoStack.clear();
-    m_redoStack.clear();
-    m_showEraserCursor = false;
-    clearSelection();
-    m_viewport = fittedSheetViewport(m_pageFormat, size());
-    emit viewportChanged(m_viewport.zoom);
-    updateCursorShape();
-    saveAutosave();
-    emit pageStructureChanged();
-    emit stateChanged();
+    m_autosaveTimer->stop();
+    waitForAutosave();
+    finishTextEditor(false);
+    cancelPendingBeautify();
+    if (m_polylineActive)
+        cancelActivePolyline();
+    m_doc.resetNew(fittedSheetViewport(m_doc.pageFormat(), size()));
+    afterPageLoaded(true);
 }
 
 bool CanvasWidget::createNotebook(const QString& path, ThemeId theme, BackgroundTemplate background,
-                                  PageFormat format) {
+                                  PageFormat format, double templateScale, CoverStyle cover) {
     if (m_mode != InteractionMode::None || path.isEmpty())
         return false;
-    PageData page;
-    page.viewport = fittedSheetViewport(format, size());
-    const auto settings = documentSettings(m_shapeKind, m_holdToShapeEnabled, m_smartGuidesEnabled,
-                                           m_swapPenButtons, m_pressureProfile, theme, background,
-                                           page.viewport, format);
-    // El borrador anterior sigue abierto si falla la creación del archivo.
-    return serializeDocumentToFile(path, {page}, 0, settings, true) && loadFromFile(path);
-}
-
-bool CanvasWidget::saveToFile(const QString& path, bool newFile) {
-    if (!preparePageChange() || path.isEmpty())
-        return false;
-    syncWorkingPage(m_pages, m_currentPageIndex, currentSnapshot(), m_viewport);
-    const auto settings = documentSettings(m_shapeKind, m_holdToShapeEnabled, m_smartGuidesEnabled,
-                                           m_swapPenButtons, m_pressureProfile, m_themeId, m_template,
-                                           m_viewport, m_pageFormat);
-    if (!serializeDocumentToFile(path, m_pages, m_currentPageIndex, settings, newFile)) {
-        emit toastRequested(tr("No se pudo guardar el cuaderno"));
+    const bool hadPendingAutosave = m_autosaveTimer->isActive();
+    m_autosaveTimer->stop();
+    waitForAutosave();
+    if (!m_doc.createNotebook(path, theme, background, format,
+                              fittedSheetViewport(format, size()), toolSettingsForDocument(),
+                              templateScale, cover)) {
+        if (hadPendingAutosave)
+            saveAutosave();
         return false;
     }
-    m_currentFilePath = path;
-    m_dirty = false;
-    updateCoverThumbnailForPages(path, m_pages, m_themeId, m_template, m_pageFormat);
-    saveAutosave();
-    emit stateChanged();
-    emit toastRequested(tr("Guardado ✓"));
+    finishTextEditor(false);
+    cancelPendingBeautify();
+    if (m_polylineActive)
+        cancelActivePolyline();
+    m_color = getThemeConfig(m_doc.themeId()).defaultInk;
+    afterPageLoaded(true);
     return true;
 }
 
-void CanvasWidget::saveAutosave() const { m_autosaveTimer->start(); }
+void CanvasWidget::startEphemeralDocument(ThemeId theme, BackgroundTemplate background,
+                                          PageFormat format, double templateScale,
+                                          CoverStyle cover) {
+    m_autosaveTimer->stop();
+    waitForAutosave();
+    finishTextEditor(false);
+    cancelPendingBeautify();
+    if (m_polylineActive)
+        cancelActivePolyline();
+    m_doc.configureBlank(theme, background, format, templateScale, cover,
+                         fittedSheetViewport(format, size()));
+    m_color = getThemeConfig(m_doc.themeId()).defaultInk;
+    afterPageLoaded(true);
+    m_autosaveTimer->stop();
+}
+
+bool CanvasWidget::saveToFile(const QString& path, bool newFile, bool silent) {
+    if (path.isEmpty() || !preparePageChange())
+        return false;
+    m_autosaveTimer->stop();
+    waitForAutosave();
+    if (!m_doc.saveToFile(path, toolSettingsForDocument(), newFile)) {
+        emit toastRequested(tr("No se pudo guardar el cuaderno"));
+        return false;
+    }
+    saveAutosave();
+    emit stateChanged();
+    if (!silent)
+        emit toastRequested(tr("Guardado ✓"));
+    return true;
+}
+
+void CanvasWidget::saveAutosave() {
+    m_autosaveTimer->start(1500);
+}
+
+void CanvasWidget::cancelPendingAutosave() {
+    m_autosaveTimer->stop();
+}
 
 void CanvasWidget::flushAutosave() {
-    if (m_autosaveFuture.valid())
-        m_autosaveFuture.wait();
+    waitForAutosave();
     if (m_autosaveTimer->isActive()) {
         m_autosaveTimer->stop();
         writeAutosaveNow(false);
     }
 }
 
-void CanvasWidget::writeAutosaveNow(bool async) const {
+void CanvasWidget::writeAutosaveNow(bool async) {
     if (async && m_autosaveFuture.valid()
         && m_autosaveFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
         m_autosaveTimer->start(400);
         return;
     }
-    DocumentSnapshot document = currentSnapshot();
-    if (m_mode == InteractionMode::Erase)
-        document = m_snapshotBeforeErase;
-    if (m_mode == InteractionMode::ShapeDragHandle || m_mode == InteractionMode::ShapeMove
-        || m_mode == InteractionMode::ShapeScale)
-        document = m_snapshotBeforeShapeEdit;
-    if (m_mode == InteractionMode::LassoMove || m_mode == InteractionMode::LassoScale
-        || m_mode == InteractionMode::LassoRotate)
-        document = m_snapshotBeforeLassoTransform;
-    if (m_mode == InteractionMode::ImageMove || m_mode == InteractionMode::ImageResize)
-        document = m_snapshotBeforeImageEdit;
-    if (m_mode == InteractionMode::TextMove)
-        document = m_snapshotBeforeTextEdit;
-    const auto path = autosavePath();
-    if (!QDir().mkpath(QFileInfo(path).absolutePath()))
-        return;
-    auto* self = const_cast<CanvasWidget*>(this);
-    syncWorkingPage(self->m_pages, self->m_currentPageIndex, document, m_viewport);
-    auto settings = documentSettings(m_shapeKind, m_holdToShapeEnabled, m_smartGuidesEnabled,
-                                     m_swapPenButtons, m_pressureProfile, m_themeId, m_template,
-                                     m_viewport, m_pageFormat);
 
-    const QVector<PageData> pagesCopy = m_pages;
-    const int currentPageCopy = m_currentPageIndex;
-    const QString filePathCopy = m_currentFilePath;
-    const bool writeNotebook = !filePathCopy.isEmpty() && m_dirty;
-    if (writeNotebook)
-        self->m_dirty = false;
-    const bool sessionDirty = self->m_dirty;
-    // Renderizar la miniatura en el hilo GUI (QPainter/QFont en worker falla en Windows DirectWrite).
-    QImage coverThumbCopy;
-    if (writeNotebook && !pagesCopy.isEmpty()) {
-        const auto& first = pagesCopy.first();
-        const bool hasFirstContent = !first.strokes.isEmpty() || !first.shapes.isEmpty()
-            || !first.images.isEmpty() || !first.texts.isEmpty();
-        if (hasFirstContent)
-            coverThumbCopy = renderPageThumbnail(first, m_themeId, m_template, m_pageFormat, QSize(132, 170));
+    std::optional<DocumentSnapshot> overrideSnap;
+    switch (m_mode) {
+    case InteractionMode::Erase:
+        overrideSnap = m_snapshotBeforeErase;
+        break;
+    case InteractionMode::ShapeDragHandle:
+    case InteractionMode::ShapeMove:
+    case InteractionMode::ShapeScale:
+        overrideSnap = m_snapshotBeforeShapeEdit;
+        break;
+    case InteractionMode::LassoMove:
+    case InteractionMode::LassoScale:
+    case InteractionMode::LassoRotate:
+        overrideSnap = m_snapshotBeforeLassoTransform;
+        break;
+    case InteractionMode::ImageMove:
+    case InteractionMode::ImageResize:
+        overrideSnap = m_snapshotBeforeImageEdit;
+        break;
+    case InteractionMode::TextMove:
+        overrideSnap = m_snapshotBeforeTextEdit;
+        break;
+    default:
+        break;
     }
 
-    auto job = [=]() mutable {
-        if (writeNotebook) {
-            serializeDocumentToFile(filePathCopy, pagesCopy, currentPageCopy, settings);
-            saveCoverThumbnail(filePathCopy, coverThumbCopy);
-        }
-        settings.insert("sessionFilePath", filePathCopy);
-        settings.insert("sessionDirty", sessionDirty);
-        serializeDocumentToFile(path, pagesCopy, currentPageCopy, settings);
-    };
+    NotebookDocument::AutosaveJob job = m_doc.prepareAutosave(toolSettingsForDocument(), overrideSnap, true);
+    const uint64_t rev = job.revision;
+    const uint64_t epoch = job.sessionEpoch;
+    const bool wroteNotebook = job.writeNotebook;
 
+    waitForAutosave();
     if (async) {
-        if (m_autosaveFuture.valid())
-            m_autosaveFuture.wait();
-        m_autosaveFuture = std::async(std::launch::async, std::move(job));
+        m_autosaveFuture = std::async(
+            std::launch::async,
+            [guard = QPointer<CanvasWidget>(this),
+             job = std::move(job),
+             rev,
+             epoch,
+             wroteNotebook]() mutable {
+                const bool ok = NotebookDocument::executeAutosaveJob(std::move(job));
+                if (ok && wroteNotebook && guard) {
+                    QMetaObject::invokeMethod(
+                        guard,
+                        [guard, rev, epoch] {
+                            if (guard && guard->m_doc.sessionEpoch() == epoch) {
+                                guard->m_doc.markSaved(rev);
+                                emit guard->stateChanged();
+                            }
+                        },
+                        Qt::QueuedConnection);
+                }
+            });
     } else {
-        if (m_autosaveFuture.valid())
-            m_autosaveFuture.wait();
-        job();
+        if (NotebookDocument::executeAutosaveJob(std::move(job)) && wroteNotebook)
+            m_doc.markSaved(rev);
     }
 }
 
 void CanvasWidget::loadAutosave() {
-    const auto previousPath = m_currentFilePath;
-    const bool previousDirty = m_dirty;
-    if (!loadFromFile(autosavePath())) {
-        m_currentFilePath = previousPath;
-        m_dirty = previousDirty;
+    const bool hadPendingAutosave = m_autosaveTimer->isActive();
+    m_autosaveTimer->stop();
+    waitForAutosave();
+    NotebookDocument::DocumentToolSettings ts = toolSettingsForDocument();
+    if (!m_doc.loadAutosave(&ts)) {
+        if (hadPendingAutosave)
+            saveAutosave();
         return;
     }
-    // loadFromFile ya restauró la sesión; un autoguardado antiguo (sin datos de
-    // sesión) deja la ruta apuntando al propio autosave.json.
-    if (m_currentFilePath == autosavePath()) {
-        m_currentFilePath.clear();
-        m_dirty = true;
-    }
-    if (!m_currentFilePath.isEmpty() && !QFileInfo::exists(m_currentFilePath)) {
-        m_currentFilePath.clear();
-        m_dirty = true;
-    }
+    finishTextEditor(false);
+    cancelPendingBeautify();
+    if (m_polylineActive)
+        cancelActivePolyline();
+    applyDocumentToolSettings(ts);
+    m_color = getThemeConfig(m_doc.themeId()).defaultInk;
+    afterPageLoaded(true);
     m_autosaveTimer->stop();
-    emit stateChanged();
 }
 
 bool CanvasWidget::loadFromFile(const QString& path) {
     if (m_mode != InteractionMode::None)
         return false;
-    const auto root = loadDocumentFromFile(path);
-    if (root.isEmpty())
+    const bool hadPendingAutosave = m_autosaveTimer->isActive();
+    m_autosaveTimer->stop();
+    waitForAutosave();
+    NotebookDocument::DocumentToolSettings ts = toolSettingsForDocument();
+    if (!m_doc.loadFromFile(path, &ts, false)) {
+        if (hadPendingAutosave)
+            saveAutosave();
         return false;
-    m_zoomAnimation->stop();
-    stopShapePulse();
-    clearPenCursor();
-    finishTextEditor(this, false);
-    m_beautifyTimer->stop();
-    m_pendingBeautifyStart = -1;
-    m_pendingBeautifyBox = QRectF();
-    m_pendingBeautifyIds.clear();
-    QVector<PageData> pages;
-    QHash<QString, QVector<ImageItem>> pdfSources;
-    if (root.value("version").toInt() == 5)
-        for (const auto& value : root.value("pages").toArray())
-            pages.append(deserializePage(value.toObject(), pdfSources));
-    else
-        pages.append(deserializePage(root, pdfSources));
-    if (pages.isEmpty())
-        pages.append(PageData{});
-    m_liveInk.reset();
-    m_liveInkLayer = QImage();
-    m_radialOpen = false;
-    m_pages = std::move(pages);
-    m_currentPageIndex = std::clamp(root.value("currentPageIndex").toInt(), 0, int(m_pages.size()) - 1);
-    const auto page = m_pages[m_currentPageIndex];
-    m_strokes = page.strokes;
-    m_shapes = page.shapes;
-    m_images = page.images;
-    m_texts = page.texts;
-    m_viewport = page.viewport;
-    m_selectedTextId.clear();
-    m_laserTrail.clear();
-    m_laserTimer->stop();
-    m_hasActiveStroke = false;
-    m_undoStack.clear();
-    m_redoStack.clear();
-    m_selectedStrokeIds.clear();
-    m_selectedShapeIds.clear();
-    m_selectedTextIds.clear();
-    m_selectedImageIds.clear();
-    m_selectedImageId.clear();
-    m_lassoBounds = {};
-    m_lassoPolygon.clear();
-    m_linkedPreview = false;
-    m_polylineActive = false;
-    m_lastPolylineTapMs = -1;
-    m_polylineVertices.clear();
-    m_hasActiveShape = false;
-    m_selectedShapeId.clear();
-    m_activeGuides.clear();
-    const int shapeKind = root.value("shapeKind").toInt(int(ShapeKind::Triangle));
-    if (shapeKind >= 0 && shapeKind <= int(ShapeKind::AngleMarker)
-        && shapeKind != int(ShapeKind::ShadedRegion))
-        m_shapeKind = ShapeKind(shapeKind);
-    m_holdToShapeEnabled = root.value("holdToShapeEnabled").toBool(true);
-    m_smartGuidesEnabled = root.value("smartGuidesEnabled").toBool(true);
-    m_swapPenButtons = root.value("swapPenButtons").toBool(false);
-    const int profile = root.value("pressureProfile").toInt(int(PressureProfile::Light));
-    if (profile >= int(PressureProfile::Light) && profile <= int(PressureProfile::Firm))
-        m_pressureProfile = PressureProfile(profile);
-    const int format = root.value("pageFormat").toInt(int(PageFormat::Infinite));
-    m_pageFormat = format >= int(PageFormat::Infinite) && format <= int(PageFormat::Slide16x9)
-        ? PageFormat(format)
-        : PageFormat::Infinite;
-    const int theme = root.value("theme").toInt(0);
-    const int tpl = root.value("template").toInt(2);
-    if (theme >= 0 && theme <= int(ThemeId::PaperCream))
-        m_themeId = ThemeId(theme);
-    if (tpl >= 0 && tpl <= int(BackgroundTemplate::Ruled))
-        m_template = BackgroundTemplate(tpl);
-    m_color = getThemeConfig(m_themeId).defaultInk;
-    m_currentFilePath = path;
-    m_dirty = false;
-    if (root.contains("sessionFilePath")) {
-        m_currentFilePath = root.value("sessionFilePath").toString();
-        m_dirty = root.value("sessionDirty").toBool(false);
     }
-    if (m_pageFormat != PageFormat::Infinite && !size().isEmpty()) {
-        if (!currentPageHasContent())
-            m_viewport = fittedSheetViewport(m_pageFormat, size());
-        else
-            clampFiniteViewport();
-    }
-    invalidateStaticCache();
-    saveAutosave();
-    emit pageStructureChanged();
-    emit stateChanged();
-    emit viewportChanged(m_viewport.zoom);
+    finishTextEditor(false);
+    cancelPendingBeautify();
+    if (m_polylineActive)
+        cancelActivePolyline();
+    applyDocumentToolSettings(ts);
+    m_color = getThemeConfig(m_doc.themeId()).defaultInk;
+    afterPageLoaded(true);
     return true;
 }
 
-// Miniatura simplificada de una página (fondo del tema + trazos y figuras como polilíneas).
-QImage CanvasWidget::pageThumbnail(int index, const QSize& size) const {
-    QImage image(size * 2, QImage::Format_ARGB32_Premultiplied);
-    image.setDevicePixelRatio(2.0);
-    const auto theme = getThemeConfig(m_themeId);
-    image.fill(theme.background);
-    if (index < 0 || index >= m_pages.size())
-        return image;
-
-    const auto& page = m_pages.at(index);
-    const bool current = index == m_currentPageIndex;
-    const auto& strokes = current ? m_strokes : page.strokes;
-    const auto& shapes = current ? m_shapes : page.shapes;
-    const auto& images = current ? m_images : page.images;
-    const auto& texts = current ? m_texts : page.texts;
-    QRectF bounds = sheetRectForPageFormat(m_pageFormat);
-    for (const auto& item : images) {
-        if (item.isPdfPage) {
-            bounds = item.rect;
-            break;
-        }
-    }
-    for (const auto& item : images)
-        bounds = bounds.united(item.rect);
-    for (const auto& item : strokes)
-        bounds = bounds.united(item.bounds);
-    for (const auto& item : shapes)
-        bounds = bounds.united(item.bounds);
-    for (const auto& item : texts)
-        bounds = bounds.united(item.bounds);
-    if (bounds.isEmpty())
-        bounds = QRectF(0, 0, 1000, 700);
-    const double zoom = std::min((size.width() - 8.0) / bounds.width(),
-                                 (size.height() - 8.0) / bounds.height());
-    if (zoom <= 0)
-        return image;
-
-    QPainter painter(&image);
-    painter.setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
-    painter.translate(size.width() / 2.0, size.height() / 2.0);
-    painter.scale(zoom, zoom);
-    painter.translate(-bounds.center());
-    drawBackgroundTemplate(painter, page.background.value_or(m_template), theme, Viewport{0, 0, zoom}, bounds);
-    for (bool pdf : {true, false})
-        for (const auto& item : images)
-            if (item.isPdfPage == pdf)
-                painter.drawImage(item.rect, item.image);
-    for (const auto& shape : shapes)
-        if (shape.kind == ShapeKind::ShadedRegion)
-            drawShape(painter, shape);
-    for (const auto& stroke : strokes)
-        if (stroke.tool == ToolType::Highlighter)
-            drawStroke(painter, stroke);
-    for (const auto& shape : shapes)
-        if (shape.kind != ShapeKind::ShadedRegion)
-            drawShape(painter, shape);
-    for (const auto& stroke : strokes)
-        if (stroke.tool != ToolType::Highlighter)
-            drawStroke(painter, stroke);
-    for (const auto& item : texts)
-        drawTextItem(painter, item);
-    return image;
+NotebookSession CanvasWidget::exportSession() const {
+    return m_doc.exportSession();
 }
 
-int CanvasWidget::documentPdfPageCount() const {
-    int total = 0;
-    for (int i = 0; i < m_pages.size(); ++i) {
-        const auto& images = i == m_currentPageIndex ? m_images : m_pages.at(i).images;
-        total += int(std::count_if(images.cbegin(), images.cend(), [](const auto& item) { return item.isPdfPage; }));
-    }
-    return total;
+void CanvasWidget::importSession(const NotebookSession& session) {
+    m_autosaveTimer->stop();
+    waitForAutosave();
+    finishTextEditor(false);
+    cancelPendingBeautify();
+    if (m_polylineActive)
+        cancelActivePolyline();
+    m_doc.importSession(session);
+    m_color = getThemeConfig(m_doc.themeId()).defaultInk;
+    afterPageLoaded(true);
+    update();
+}
+
+QImage CanvasWidget::pageThumbnail(int index, const QSize& size) const {
+    return m_doc.pageThumbnail(index, size, templateScale());
 }
 
 } // namespace finily

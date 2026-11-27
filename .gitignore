@@ -10,5 +10,6 @@ CMakeUserPresets.json
 compile_commands.json
 *.swp
 .archify/
-mockups/
+mockups/*
+!mockups/redesign/
 *.finily.bak

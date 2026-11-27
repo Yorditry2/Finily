@@ -1,12 +1,13 @@
 #include "GeometryEngine.h"
 #include "GeometryInternal.h"
 #include "RegionGeometry.h"
+
 #include <QFontMetricsF>
 #include <QPainterPath>
 #include <QPainterPathStroker>
 #include <QPolygonF>
 #include <QTransform>
-#include <QUuid>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -15,13 +16,20 @@
 namespace finily {
 using namespace geometry_detail;
 namespace {
+
 QVector<QPointF> radicalSpine(const ShapeItem& shape) {
-    if(shape.vertices.size()<3)return {};
-    const auto base=shape.vertices[0],roof=shape.vertices[1];
-    const double h=std::max(1.0,std::abs(base.y()-roof.y()));
-    const double direction=base.y()>=roof.y()?1.0:-1.0;
-    const QPointF tick=base+QPointF(-h*.23,-direction*h*.36);
-    return {tick+QPointF(-h*.13,direction*h*.08),tick,base,roof,QPointF(shape.vertices[2].x(),roof.y())};
+    if (shape.vertices.size() < 3)
+        return {};
+    const auto base = shape.vertices[0];
+    const auto roof = shape.vertices[1];
+    const double h = std::max(1.0, std::abs(base.y() - roof.y()));
+    const double direction = base.y() >= roof.y() ? 1.0 : -1.0;
+    const QPointF tick = base + QPointF(-h * 0.23, -direction * h * 0.36);
+    return {tick + QPointF(-h * 0.13, direction * h * 0.08),
+            tick,
+            base,
+            roof,
+            QPointF(shape.vertices[2].x(), roof.y())};
 }
 struct ArcGeometry {
     QPointF center;
@@ -67,36 +75,44 @@ struct ShapeMeasurement {
     QRectF bounds;
 };
 
-struct TableGridSpec {
-    int rows = 1;
-    int cols = 1;
-};
-
-std::optional<TableGridSpec> parseTableSpec(const QString& label) {
-    const QString trimmed = label.trimmed();
-    if (!trimmed.startsWith(QStringLiteral("tabla:"), Qt::CaseInsensitive))
-        return std::nullopt;
-    const QString body = trimmed.mid(6).trimmed();
-    int sepIdx = body.indexOf(QLatin1Char('x'), 0, Qt::CaseInsensitive);
-    if (sepIdx < 0)
-        sepIdx = body.indexOf(QChar(0x00D7));
-    if ( sepIdx <= 0 || sepIdx + 1 >= body.size())
-        return std::nullopt;
-    bool okR = false, okC = false;
-    const int r = body.left(sepIdx).trimmed().toInt(&okR);
-    const int c = body.mid(sepIdx + 1).trimmed().toInt(&okC);
-    if (!okR || !okC || r < 1 || c < 1)
-        return std::nullopt;
-    return TableGridSpec{std::clamp(r, 1, 12), std::clamp(c, 1, 12)};
-}
-
 } // namespace
 
-bool geometry_detail::isMarkLabel(const QString& label) {
-    return label.startsWith(QStringLiteral("mark:"), Qt::CaseInsensitive);
-}
-
 namespace {
+
+QPainterPath buildPhysicsSpringPath(const ShapeItem& shape) {
+    QPainterPath path;
+    if (shape.vertices.size() < 2)
+        return path;
+    const QPointF a = shape.vertices[0];
+    const QPointF b = shape.vertices[1];
+    const QPointF d = b - a;
+    const double len = length(d);
+    if (len < 1e-3)
+        return path;
+    if (len < 16.0) {
+        path.moveTo(a);
+        path.lineTo(b);
+        return path;
+    }
+    const QPointF u = d / len;
+    const QPointF n(-u.y(), u.x());
+    const double stub = std::min(len * 0.14, 14.0);
+    const double coilSpan = std::max(4.0, len - 2.0 * stub);
+    const int coils = std::clamp(qRound(coilSpan / 13.0), 4, 14);
+    const double amp = std::clamp(shape.size * 3.0 + 6.0, 9.0, 16.0);
+    const QPointF start = a + u * stub;
+    const QPointF end = b - u * stub;
+    const double step = coilSpan / (coils * 2.0);
+    path.moveTo(a);
+    path.lineTo(start);
+    for (int i = 1; i < coils * 2; ++i) {
+        const double side = (i % 2 == 1) ? 1.0 : -1.0;
+        path.lineTo(start + u * (i * step) + n * (side * amp));
+    }
+    path.lineTo(end);
+    path.lineTo(b);
+    return path;
+}
 
 QPainterPath buildCongruenceMarkPath(const ShapeItem& shape, bool* outFilled = nullptr) {
     if (outFilled)
@@ -113,10 +129,10 @@ QPainterPath buildCongruenceMarkPath(const ShapeItem& shape, bool* outFilled = n
     const QPointF u = d / len;
     const QPointF n(-u.y(), u.x());
     const QPointF mid = (a + b) * 0.5;
-    const QString kind = shape.label.trimmed().toLower();
+    const EdgeMarkKind kind = parseEdgeMark(shape.label);
     const double amp = std::min(len * 0.32, std::clamp(shape.size * 1.45 + 2.2, 4.0, 8.2));
 
-    if (kind == QLatin1String("mark:zigzag")) {
+    if (kind == EdgeMarkKind::Zigzag) {
         // Serrucho: dientes de sierra nítidos a lo largo de toda la longitud [a, b]
         const double halfSpan = std::max(8.0, len * 0.5);
         const int teeth = std::clamp(qRound((2.0 * halfSpan) / 9.0), 2, 32);
@@ -129,7 +145,7 @@ QPainterPath buildCongruenceMarkPath(const ShapeItem& shape, bool* outFilled = n
         }
         return path;
     }
-    if (kind == QLatin1String("mark:spring")) {
+    if (kind == EdgeMarkKind::Spring) {
         // Resorte / ondas arqueadas suaves a lo largo de toda la longitud [a, b]
         const double halfSpan = std::max(8.0, len * 0.5);
         const int coils = std::clamp(qRound((2.0 * halfSpan) / 11.5), 2, 26);
@@ -145,7 +161,7 @@ QPainterPath buildCongruenceMarkPath(const ShapeItem& shape, bool* outFilled = n
         }
         return path;
     }
-    if (kind == QLatin1String("mark:dot")) {
+    if (kind == EdgeMarkKind::Dot) {
         // Bolita / punto relleno centrado sobre la arista
         if (outFilled)
             *outFilled = true;
@@ -153,7 +169,32 @@ QPainterPath buildCongruenceMarkPath(const ShapeItem& shape, bool* outFilled = n
         path.addEllipse(mid, r, r);
         return path;
     }
-    if (kind == QLatin1String("mark:bar")) {
+    if (kind == EdgeMarkKind::Divider) {
+        // Punto divisor limpio estilo GeoGebra (círculo nítido sin antenas; núcleo contrastado en drawShape)
+        if (outFilled)
+            *outFilled = true;
+        const double r = std::clamp(shape.size * 1.15 + 2.2, 3.8, 5.8);
+        path.addEllipse(mid, r, r);
+        return path;
+    }
+    if (kind == EdgeMarkKind::Wall || kind == EdgeMarkKind::WallFlip) {
+        // Superficie rugosa / pared / piso de Física: rayado diagonal 45° a lo largo del tramo [a, b]
+        const double side = (kind == EdgeMarkKind::WallFlip) ? -1.0 : 1.0;
+        const double hatchLen = std::clamp(shape.size * 2.6 + 5.0, 7.5, 13.0);
+        const double spacing = std::clamp(shape.size * 2.2 + 5.5, 7.5, 12.0);
+        const int count = std::max(2, int(std::floor(len / spacing)));
+        const double step = len / double(count);
+        const QPointF hatchDir = (n * side - u * 0.75);
+        const double hNorm = std::max(1e-6, length(hatchDir));
+        const QPointF hVec = (hatchDir / hNorm) * hatchLen;
+        for (int i = 0; i <= count; ++i) {
+            const QPointF base = a + u * (i * step);
+            path.moveTo(base);
+            path.lineTo(base + hVec);
+        }
+        return path;
+    }
+    if (kind == EdgeMarkKind::Bar) {
         // Bultito / rectángulo delgado redondeado a lo largo de la arista (estirable con handles)
         if (outFilled)
             *outFilled = true;
@@ -168,8 +209,8 @@ QPainterPath buildCongruenceMarkPath(const ShapeItem& shape, bool* outFilled = n
         xf.rotate(angleDeg);
         return xf.map(local);
     }
-    if (kind == QLatin1String("mark:tick1") || kind == QLatin1String("mark:tick2") || kind == QLatin1String("mark:tick3")) {
-        const int count = (kind == QLatin1String("mark:tick3")) ? 3 : (kind == QLatin1String("mark:tick2") ? 2 : 1);
+    if (kind == EdgeMarkKind::Tick1 || kind == EdgeMarkKind::Tick2 || kind == EdgeMarkKind::Tick3) {
+        const int count = (kind == EdgeMarkKind::Tick3) ? 3 : (kind == EdgeMarkKind::Tick2 ? 2 : 1);
         const double gap = std::clamp(shape.size * 1.4 + 2.4, 4.0, 7.5);
         const double tilt = std::min(2.0, amp * 0.28); // ligera inclinación elegante estilo libro de geometría
         for (int i = 0; i < count; ++i) {
@@ -180,8 +221,8 @@ QPainterPath buildCongruenceMarkPath(const ShapeItem& shape, bool* outFilled = n
         }
         return path;
     }
-    if (kind == QLatin1String("mark:parallel1") || kind == QLatin1String("mark:parallel2")) {
-        const int count = (kind == QLatin1String("mark:parallel2")) ? 2 : 1;
+    if (kind == EdgeMarkKind::Parallel1 || kind == EdgeMarkKind::Parallel2) {
+        const int count = (kind == EdgeMarkKind::Parallel2) ? 2 : 1;
         const double gap = std::clamp(shape.size * 1.5 + 3.0, 4.5, 8.5);
         const double wing = std::min(len * 0.30, std::clamp(shape.size * 1.6 + 2.6, 4.5, 9.0));
         for (int i = 0; i < count; ++i) {
@@ -585,7 +626,7 @@ QPainterPath geometry_detail::shapePath(const ShapeItem& shape) {
             path.arcTo(arc->circle(), arc->startDegrees, arc->sweepDegrees);
             if (shape.kind == ShapeKind::Sector)
                 path.closeSubpath();
-            else if (shape.kind == ShapeKind::AngleMarker && shape.label != QStringLiteral("auto_vertex")) {
+            else if (shape.kind == ShapeKind::AngleMarker && !isAutoVertexAngle(shape)) {
                 path.moveTo(v[1]);
                 path.lineTo(v[0]);
                 path.lineTo(v[2]);
@@ -640,7 +681,9 @@ QPainterPath geometry_detail::shapePath(const ShapeItem& shape) {
     }
     const auto points=shape.kind==ShapeKind::Radical?radicalSpine(shape):v;
     if(points.isEmpty())return path;
-    if (shape.kind == ShapeKind::Line && isMarkLabel(shape.label))
+    if (isPhysicsSpring(shape) && points.size() >= 2)
+        return buildPhysicsSpringPath(shape);
+    if (isEdgeMark(shape))
         return buildCongruenceMarkPath(shape);
     path.moveTo(points[0]);for(qsizetype i=1;i<points.size();++i)path.lineTo(points[i]);
     if(shape.kind==ShapeKind::Triangle||(shape.kind==ShapeKind::Polyline&&shape.closed))path.closeSubpath();
@@ -741,7 +784,10 @@ namespace {
 QVector<QPointF> snapTargets(const ShapeItem& shape) {
     const auto& v = shape.vertices;
     switch (shape.kind) {
-    case ShapeKind::Line: return {v[0], v[1], (v[0] + v[1]) * .5};
+    case ShapeKind::Line:
+        if (isDividerMark(shape) && v.size() >= 2)
+            return {(v[0] + v[1]) * 0.5};
+        return {v[0], v[1], (v[0] + v[1]) * .5};
     case ShapeKind::Circle: return v;
     case ShapeKind::Ellipse: return {ovalBounds(shape).center()};
     case ShapeKind::Rectangle: {
@@ -922,30 +968,35 @@ QVector<QPointF> closedCorners(QVector<QPointF> points,double epsilon) {
 }
 }
 QRectF computeShapeBounds(const ShapeItem& shape) {
-    auto bounds=shapePath(shape).boundingRect();const auto arrows=arrowPath(shape);
-    if(!arrows.isEmpty())bounds=bounds.united(arrows.boundingRect());
+    auto bounds = shapePath(shape).boundingRect();
+    const auto arrows = arrowPath(shape);
+    if (!arrows.isEmpty())
+        bounds = bounds.united(arrows.boundingRect());
     if (shape.kind == ShapeKind::Line && shape.linePattern == LinePattern::Dimension) {
         const double cap = std::clamp(shape.size * 3.2, 8.0, 22.0);
         bounds.adjust(-cap, -cap, cap, cap);
     }
-    if ((shape.kind == ShapeKind::AngleMarker && shape.label != QStringLiteral("auto_vertex"))
-        || shape.linePattern == LinePattern::Dimension)
+    if (hasEditableMeasurementLabel(shape))
         bounds = bounds.united(measurement(shape).bounds);
-    const double padding=std::max(0.0,shape.size)/2;
-    return bounds.adjusted(-padding,-padding,padding,padding);
+    double padding = std::max(0.0, shape.size) / 2.0;
+    if (highlightStyle(shape) == HighlightStyle::Glow)
+        padding = std::max(padding, std::max(10.0, shape.size * 1.75) * 0.5 + 2.0);
+    return bounds.adjusted(-padding, -padding, padding, padding);
 }
+
 QRectF shapeGeometryBounds(const ShapeItem& shape) {
     return shapePath(shape).boundingRect();
 }
 
 bool canFillShape(const ShapeItem& shape) {
     return shape.kind == ShapeKind::Circle || shape.kind == ShapeKind::Rectangle
-        || shape.kind == ShapeKind::Ellipse || shape.kind == ShapeKind::Triangle || shape.kind == ShapeKind::Sector
-        || (shape.kind == ShapeKind::Polyline && shape.closed);
+        || shape.kind == ShapeKind::Ellipse || shape.kind == ShapeKind::Triangle
+        || shape.kind == ShapeKind::Sector || (shape.kind == ShapeKind::Polyline && shape.closed);
 }
 
 bool supportsLineEnding(const ShapeItem& shape) {
-    return (shape.kind == ShapeKind::Line && shape.linePattern != LinePattern::Dimension && !isMarkLabel(shape.label))
+    return (shape.kind == ShapeKind::Line && shape.linePattern != LinePattern::Dimension
+            && !isEdgeMark(shape) && !isHighlightOverlay(shape) && !isPhysicsSpring(shape))
         || (shape.kind == ShapeKind::Polyline && !shape.closed) || shape.kind == ShapeKind::Curve;
 }
 
@@ -1034,17 +1085,21 @@ void scaleShape(ShapeItem& shape, QPointF anchor, double sx, double sy) {
         point = anchor + QPointF((point.x() - anchor.x()) * sx, (point.y() - anchor.y()) * sy);
     shape.bounds = computeShapeBounds(shape);
 }
-bool hitTestShape(const ShapeItem& shape,const QPointF& point,double tolerance) {
-    if(!shape.shadeVisible)return false;
-    const double radius=std::max(0.0,tolerance);
-    if(!computeShapeBounds(shape).adjusted(-radius,-radius,radius,radius).contains(point))return false;
-    if(shape.kind==ShapeKind::ShadedRegion)return shapePath(shape).contains(point);
-    if (shape.kind == ShapeKind::Line && isMarkLabel(shape.label))
+bool hitTestShape(const ShapeItem& shape, const QPointF& point, double tolerance) {
+    if (!shape.shadeVisible)
+        return false;
+    const double radius = std::max(0.0, tolerance);
+    if (!computeShapeBounds(shape).adjusted(-radius, -radius, radius, radius).contains(point))
+        return false;
+    if (shape.kind == ShapeKind::ShadedRegion)
+        return shapePath(shape).contains(point);
+    if (isEdgeMark(shape))
         return computeShapeBounds(shape).adjusted(-radius, -radius, radius, radius).contains(point);
-    QPainterPathStroker stroker;stroker.setWidth(std::max(.01,shape.size+2*radius));stroker.setCapStyle(Qt::RoundCap);stroker.setJoinStyle(Qt::RoundJoin);
-    if (((shape.kind == ShapeKind::AngleMarker && shape.label != QStringLiteral("auto_vertex"))
-         || shape.linePattern == LinePattern::Dimension)
-        && measurement(shape).bounds.contains(point))
+    QPainterPathStroker stroker;
+    stroker.setWidth(std::max(0.01, shape.size + 2.0 * radius));
+    stroker.setCapStyle(Qt::RoundCap);
+    stroker.setJoinStyle(Qt::RoundJoin);
+    if (hasEditableMeasurementLabel(shape) && measurement(shape).bounds.contains(point))
         return true;
     auto path=shapePath(shape);
     if(shape.kind==ShapeKind::Rectangle&&shape.vertices.size()>=2) {
@@ -1078,13 +1133,37 @@ void drawShape(QPainter& painter,const ShapeItem& shape) {
     QPen pen(shape.color,std::max(.01,shape.size),Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin);
     if(shape.linePattern==LinePattern::Dashed)pen.setDashPattern({4.0,2.5});
     if(shape.linePattern==LinePattern::Dotted)pen.setDashPattern({.01,2.2});
-    if (shape.kind == ShapeKind::Line && isMarkLabel(shape.label) && shape.vertices.size() >= 2) {
+    if (highlightStyle(shape) == HighlightStyle::Glow) {
+        const QPainterPath p = shapePath(shape);
+        QColor outer = shape.color;
+        outer.setAlphaF(0.28);
+        QColor mid = shape.color;
+        mid.setAlphaF(0.55);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(outer, std::max(10.0, shape.size * 1.75), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.drawPath(p);
+        painter.setPen(QPen(mid, std::max(5.5, shape.size * 1.0), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.drawPath(p);
+        painter.setPen(QPen(shape.color.lighter(115), std::max(2.4, shape.size * 0.42), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.drawPath(p);
+        painter.restore();
+        return;
+    }
+    if (isEdgeMark(shape) && shape.vertices.size() >= 2) {
         bool filled = false;
         const QPainterPath markPath = buildCongruenceMarkPath(shape, &filled);
         if (filled) {
             painter.setPen(Qt::NoPen);
             painter.setBrush(shape.color);
             painter.drawPath(markPath);
+            // Para punto divisor: pequeño núcleo contrastado limpio (estilo nodo GeoGebra, sin antenas)
+            if (isDividerMark(shape)) {
+                const QPointF mid = (shape.vertices[0] + shape.vertices[1]) * 0.5;
+                const double rInner = std::clamp(shape.size * 0.45 + 0.9, 1.5, 2.4);
+                const bool lightInk = (shape.color.lightness() > 140);
+                painter.setBrush(lightInk ? QColor(18, 22, 28, 235) : QColor(248, 250, 252, 235));
+                painter.drawEllipse(mid, rInner, rInner);
+            }
         } else {
             QPen markPen(shape.color, std::max(1.2, shape.size * 0.95), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
             painter.setPen(markPen);
@@ -1239,7 +1318,7 @@ void drawShape(QPainter& painter,const ShapeItem& shape) {
             }
         }
     }
-    if (shape.kind == ShapeKind::AngleMarker && shape.label != QStringLiteral("auto_vertex"))
+    if (shape.kind == ShapeKind::AngleMarker && !isAutoVertexAngle(shape))
         drawMeasurement(painter, shape, measurement(shape));
     painter.setPen(Qt::NoPen);painter.setBrush(shape.color);painter.drawPath(arrowPath(shape));painter.restore();
 }
@@ -1379,8 +1458,7 @@ RegionFace regionAt(QPointF point, const QVector<ShapeItem>& shapes, const QHash
 
 bool hasAttachableEnds(const ShapeItem& shape) {
     return shape.kind == ShapeKind::Line || shape.kind == ShapeKind::Curve || shape.kind == ShapeKind::Brace
-        || (shape.kind == ShapeKind::Polyline && !shape.closed)
-        || (shape.kind == ShapeKind::AngleMarker && shape.label == QStringLiteral("auto_vertex"));
+        || (shape.kind == ShapeKind::Polyline && !shape.closed) || isAutoVertexAngle(shape);
 }
 
 constexpr int centerAnchor = -1;
@@ -1501,7 +1579,7 @@ void bindEndpoints(QVector<ShapeItem>& shapes, qsizetype index, const ShapeItem*
                    const QSet<QString>& edited = {}) {
     auto& shape = shapes[index];
     if (!hasAttachableEnds(shape) || shape.vertices.size() < 2) return;
-    if (shape.kind == ShapeKind::AngleMarker && shape.label == QStringLiteral("auto_vertex") && shape.vertices.size() == 3) {
+    if (isAutoVertexAngle(shape) && shape.vertices.size() == 3) {
         QVector<ShapeAttachment> attachments;
         for (int vertex : {0, 1, 2}) {
             if (before && vertex < before->vertices.size()) {
@@ -1644,7 +1722,7 @@ bool updateShapeLinks(QVector<ShapeItem>& shapes, const QVector<ShapeItem>& orig
                             })) link.position += circleDirection(*oldTarget);
                     }
                     if (const auto point = attachmentPoint(shapes[target], link)) {
-                        if (shape.kind == ShapeKind::AngleMarker && shape.label == QStringLiteral("auto_vertex")) {
+                        if (isAutoVertexAngle(shape)) {
                             if (shape.vertices[link.vertex] != *point) {
                                 shape.vertices[link.vertex] = *point;
                                 shape.bounds = computeShapeBounds(shape);
@@ -1757,6 +1835,52 @@ SnapResult snapPointWithGuides(const QPointF& raw,const std::optional<QPointF>& 
             result.point=*anchor+QPointF(std::cos(radians),std::sin(radians))*length(delta);
             const QString lbl = (int(bestAngle) % 180 == 0) ? QStringLiteral("0°") : QStringLiteral("90°");
             result.guides.append({*anchor,result.point,lbl,true});
+        } else {
+            // Imán perpendicular (90°) respecto a cualquier arista recta cercana
+            const double deltaLen = length(delta);
+            const QPointF dirUnit = delta / deltaLen;
+            double bestPerpSin = std::sin(3.5 * std::numbers::pi / 180.0);
+            std::optional<QPointF> perpTarget;
+            QPointF perpFoot;
+            for (const auto& s : shapes) {
+                if ((!excluded.isEmpty() && s.id == excluded)
+                    || (s.kind != ShapeKind::Line && s.kind != ShapeKind::Triangle
+                        && s.kind != ShapeKind::Rectangle && s.kind != ShapeKind::Polyline
+                        && s.kind != ShapeKind::Solid3D)
+                    || isEdgeMark(s) || isHighlightOverlay(s) || isPhysicsSpring(s)
+                    || s.vertices.size() < 2)
+                    continue;
+                for (const auto& outline : shapeOutlines(s)) {
+                    for (qsizetype j = 1; j < outline.size(); ++j) {
+                        const QPointF a = outline[j - 1], b = outline[j];
+                        const double segLen = length(b - a);
+                        if (segLen < 10.0)
+                            continue;
+                        const QPointF u = (b - a) / segLen;
+                        const double sinErr = std::abs(dot(dirUnit, u));
+                        if (sinErr >= bestPerpSin)
+                            continue;
+                        const QPointF n(-u.y(), u.x());
+                        const double projAnchor = dot(*anchor - a, u) / segLen;
+                        const double projRaw = dot(raw - a, u) / segLen;
+                        const bool nearSeg = (projAnchor >= -0.15 && projAnchor <= 1.15)
+                            || (projRaw >= -0.15 && projRaw <= 1.15)
+                            || segmentDistance(*anchor, a, b) < 160.0 / zoom;
+                        if (!nearSeg)
+                            continue;
+                        bestPerpSin = sinErr;
+                        const double signedProj = dot(delta, n);
+                        perpTarget = *anchor + n * signedProj;
+                        perpFoot = a + u * std::clamp(dot(*anchor - a, u), 0.0, segLen);
+                    }
+                }
+            }
+            if (perpTarget) {
+                angleSnapped = true;
+                result.point = *perpTarget;
+                result.guides.append({*anchor, result.point, QStringLiteral("⊥ 90°"), true});
+                result.guides.append({*anchor, perpFoot, QString(), false});
+            }
         }
     }
     if(!angleSnapped) {
@@ -1771,8 +1895,14 @@ std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke) {
     if(stroke.points.size()<2)return std::nullopt;
     QVector<QPointF> p;double pathLength=0;
     for(const auto& sample:stroke.points){const QPointF point(sample.x,sample.y);if(p.isEmpty()||length(point-p.back())>.1){if(!p.isEmpty())pathLength+=length(point-p.back());p.append(point);}}
-    if(p.size()<2||pathLength<12)return std::nullopt;
-    ShapeItem shape;shape.id=QUuid::createUuid().toString(QUuid::WithoutBraces);shape.color=stroke.color;shape.size=stroke.size;shape.opacity=stroke.opacity;shape.linePattern=stroke.linePattern;
+    if (p.size() < 2 || pathLength < 12)
+        return std::nullopt;
+    ShapeItem shape;
+    shape.id = freshId();
+    shape.color = stroke.color;
+    shape.size = stroke.size;
+    shape.opacity = stroke.opacity;
+    shape.linePattern = stroke.linePattern;
     auto finish=[&](ShapeKind kind,QVector<QPointF> vertices,bool closed=false)->std::optional<ShapeItem>{shape.kind=kind;shape.vertices=vertices;shape.closed=closed;shape.bounds=computeShapeBounds(shape);return shape;};
 
     // 1. Straight Line
@@ -1946,7 +2076,40 @@ std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke) {
         }
     }
 
-    // 4. Smooth Open Curve / Arc (e.g. curved arrows, angle arcs, smooth curved lines!)
+    // 4. Ángulo recto abierto (trazo en "L" a ~90° antes del fallback de curva)
+    if (!isClosed && pathLength > 28.0 && chord > 14.0) {
+        qsizetype cornerIdx = -1;
+        double maxCornerDist = 0.0;
+        for (qsizetype i = 1; i + 1 < p.size(); ++i) {
+            const double d = segmentDistance(p[i], p.front(), p.back());
+            if (d > maxCornerDist) {
+                maxCornerDist = d;
+                cornerIdx = i;
+            }
+        }
+        if (cornerIdx > 0 && maxCornerDist >= std::max(14.0, chord * 0.18)) {
+            const QPointF p0 = p.front(), c = p[cornerIdx], p2 = p.back();
+            const double l1 = length(c - p0), l2 = length(p2 - c);
+            if (l1 > 12.0 && l2 > 12.0 && (l1 + l2) / pathLength > 0.88) {
+                double maxSegErr = 0.0;
+                for (qsizetype i = 1; i < cornerIdx; ++i)
+                    maxSegErr = std::max(maxSegErr, segmentDistance(p[i], p0, c));
+                for (qsizetype i = cornerIdx + 1; i + 1 < p.size(); ++i)
+                    maxSegErr = std::max(maxSegErr, segmentDistance(p[i], c, p2));
+                const QPointF u1 = (c - p0) / l1;
+                const QPointF u2 = (p2 - c) / l2;
+                const double cosAng = std::abs(dot(u1, u2)); // 0 => 90° exacto
+                if (maxSegErr <= std::max(7.5, std::min(l1, l2) * 0.14) && cosAng <= 0.31) {
+                    const QPointF n1(-u1.y(), u1.x());
+                    const double signedL2 = dot(p2 - c, n1);
+                    const QPointF p2Ortho = c + n1 * (signedL2 >= 0 ? l2 : -l2);
+                    return finish(ShapeKind::Polyline, {p0, c, p2Ortho}, false);
+                }
+            }
+        }
+    }
+
+    // 5. Smooth Open Curve / Arc (e.g. curved arrows, angle arcs, smooth curved lines!)
     if (!isClosed && chord > 14.0 && deviation >= std::max(6.0, chord * 0.06)) {
         // Pick the point at 50% arc length as the on-curve midpoint handle
         double halfLen = pathLength * 0.5, acc = 0.0;
