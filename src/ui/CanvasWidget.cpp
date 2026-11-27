@@ -763,8 +763,8 @@ void CanvasWidget::loadToolBanksAndSettings() {
             return static_cast<TabletAction>(raw);
         return def;
     };
-    m_stylusLowerAction = readTabletAction(QStringLiteral("tablet/lowerAction"), TabletAction::RightClickMenu);
-    m_stylusUpperAction = readTabletAction(QStringLiteral("tablet/upperAction"), TabletAction::HoldEraser);
+    m_stylusLowerAction = readTabletAction(QStringLiteral("tablet/lowerAction"), TabletAction::LastWriteTool);
+    m_stylusUpperAction = readTabletAction(QStringLiteral("tablet/upperAction"), TabletAction::Eraser);
     m_stylusEraserTipEnabled = settings->value(QStringLiteral("tablet/eraserTipEnabled"), true).toBool();
     m_swapPenButtons = settings->value(QStringLiteral("tablet/swapPenButtons"), false).toBool();
     m_radialMenuEnabled = settings->value(QStringLiteral("tablet/radialMenuEnabled"), true).toBool();

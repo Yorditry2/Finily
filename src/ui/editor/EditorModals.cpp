@@ -676,7 +676,7 @@ void EditorSettingsModal::buildSectionContent() {
         m_bodyLayout->addWidget(diagram);
 
         m_bodyLayout->addWidget(makeKicker(QStringLiteral("LÁPIZ"), m_pal, m_bodyHost));
-        const TabletAction lowerAct = m_canvas ? m_canvas->stylusLowerAction() : TabletAction::RightClickMenu;
+        const TabletAction lowerAct = m_canvas ? m_canvas->stylusLowerAction() : TabletAction::LastWriteTool;
         auto* lowerBtn = new EditorChipButton(tabletActionName(lowerAct) + QStringLiteral(" ▾"), m_bodyHost);
         lowerBtn->applyEditorTheme(m_dark);
         connect(lowerBtn, &EditorChipButton::clicked, this, [this, lowerBtn, refreshDiagram] {
@@ -690,7 +690,7 @@ void EditorSettingsModal::buildSectionContent() {
         });
         m_bodyLayout->addWidget(makeSettingRow(QStringLiteral("Botón lateral inferior"), lowerBtn, m_pal, m_bodyHost));
 
-        const TabletAction upperAct = m_canvas ? m_canvas->stylusUpperAction() : TabletAction::HoldEraser;
+        const TabletAction upperAct = m_canvas ? m_canvas->stylusUpperAction() : TabletAction::Eraser;
         auto* upperBtn = new EditorChipButton(tabletActionName(upperAct) + QStringLiteral(" ▾"), m_bodyHost);
         upperBtn->applyEditorTheme(m_dark);
         connect(upperBtn, &EditorChipButton::clicked, this, [this, upperBtn, refreshDiagram] {

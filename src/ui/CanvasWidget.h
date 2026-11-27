@@ -548,8 +548,8 @@ private:
     ToolStrokeBank m_highlighterBank;
     ToolStrokeBank m_eraserBank;
     ToolStrokeBank m_laserBank;
-    TabletAction m_stylusLowerAction = TabletAction::RightClickMenu;
-    TabletAction m_stylusUpperAction = TabletAction::HoldEraser;
+    TabletAction m_stylusLowerAction = TabletAction::LastWriteTool;
+    TabletAction m_stylusUpperAction = TabletAction::Eraser;
     bool m_stylusEraserTipEnabled = true;
     bool m_radialMenuEnabled = true;
     bool m_palmRejectionEnabled = true;

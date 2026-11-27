@@ -695,6 +695,46 @@ private slots:
         doc.markCoverThumbSaved(p1Job.revision);
         QVERIFY(!doc.isCoverThumbDirty());
     }
+
+    void textStyleAndImageOpacityRoundTrip() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("styles.finily"));
+
+        PageData page;
+        TextItem txt = makeText(QPointF(30.0, 40.0), QStringLiteral("E = mc^2"), 22.0, QColor("#18181B"));
+        txt.fontFamilyIndex = 2; // Mono
+        txt.bold = true;
+        txt.italic = true;
+        txt.bounds = textBounds(txt);
+        page.texts.push_back(txt);
+
+        ImageItem img;
+        img.id = freshId();
+        img.rect = QRectF(100.0, 120.0, 80.0, 60.0);
+        img.image = QImage(16, 12, QImage::Format_ARGB32);
+        img.image.fill(Qt::blue);
+        img.opacity = 0.45;
+        page.images.push_back(img);
+
+        const auto settings = documentSettings(ShapeKind::Triangle, true, true, false,
+                                               PressureProfile::Light, ThemeId::PaperLight,
+                                               BackgroundTemplate::Grid, Viewport{},
+                                               PageFormat::A4, 1.0, -1, 0, QColor());
+        QVERIFY(serializeDocumentToFile(path, {page}, 0, settings));
+
+        QHash<QString, QVector<ImageItem>> pdfSources;
+        const QJsonObject loaded = loadDocumentFromFile(path);
+        const QJsonArray pagesArr = loaded.value(QStringLiteral("pages")).toArray();
+        QCOMPARE(pagesArr.size(), 1);
+        const PageData restored = deserializePage(pagesArr.at(0).toObject(), pdfSources);
+        QCOMPARE(restored.texts.size(), 1);
+        QCOMPARE(restored.texts[0].fontFamilyIndex, 2);
+        QCOMPARE(restored.texts[0].bold, true);
+        QCOMPARE(restored.texts[0].italic, true);
+        QCOMPARE(restored.images.size(), 1);
+        QVERIFY(std::abs(restored.images[0].opacity - 0.45) < 1e-4);
+    }
 };
 
 QTEST_MAIN(TestDocumentAndPdf)

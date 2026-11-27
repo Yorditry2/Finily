@@ -670,7 +670,7 @@ void EditorTopBar::rebuildHits() {
     const qreal swatchSz = compact ? 17.0 : 20.0;
     const qreal colorStep = compact ? 20.0 : 24.0;
 
-    int toolsW = 14; // grip
+    int toolsW = 0;
     for (const auto& t : tools) {
         if (t.sepBefore)
             toolsW += int(sepGap);
@@ -683,8 +683,6 @@ void EditorTopBar::rebuildHits() {
     const int cx = std::clamp((W - reservedCenterW) / 2, leftBound, std::max(leftBound, rightBound - reservedCenterW));
 
     qreal x = cx;
-    m_hits.append({QRectF(x, y2 + 5, 12, 24), HitKind::Grip, 0, ToolType::Pen, false, {}, {}});
-    x += 14;
 
     for (const auto& t : tools) {
         if (t.sepBefore) {
@@ -829,11 +827,6 @@ void EditorTopBar::paintEvent(QPaintEvent* event) {
             continue;
         }
 
-        if (h.kind == HitKind::Grip) {
-            paintEditorGripDots(p, h.rect, m_pal.icon, hovered ? 0.85 : 0.45);
-            continue;
-        }
-
         if (h.kind == HitKind::WidthSlot) {
             const qreal mm = m_widths[std::clamp(h.index, 0, 2)];
             const bool adaptInk = (m_activeTool != ToolType::Highlighter && m_activeTool != ToolType::Laser);
@@ -957,12 +950,6 @@ void EditorTopBar::mousePressEvent(QMouseEvent* event) {
         else if (h.kind == HitKind::WidthSlot)
             emit fineWidthRequested(h.tool, QRect(mapTo(parentWidget(), h.rect.topLeft().toPoint()), h.rect.size().toSize()));
         return;
-    }
-
-    if (event->button() == Qt::LeftButton && h.kind == HitKind::Grip) {
-        m_draggingGrip = true;
-        m_dragStartGlobal = event->globalPosition().toPoint();
-        setCursor(Qt::ClosedHandCursor);
     }
 }
 
@@ -1166,8 +1153,6 @@ void EditorDetachedDock::rebuildLayoutAndHits() {
 
     if (vertical) {
         qreal y = 6.0;
-        m_hits.append({QRectF(11.0, y, 24.0, 14.0), HitKind::Grip, 0, ToolType::Pen, false, {}});
-        y += 18.0;
         for (const auto& t : tools) {
             if (t.sepBefore)
                 y += 7.0;
@@ -1195,8 +1180,6 @@ void EditorDetachedDock::rebuildLayoutAndHits() {
         setFixedSize(46, int(std::ceil(y + 6.0)));
     } else {
         qreal x = 6.0;
-        m_hits.append({QRectF(x, 11.0, 12.0, 24.0), HitKind::Grip, 0, ToolType::Pen, false, {}});
-        x += 14.0;
         for (const auto& t : tools) {
             if (t.sepBefore)
                 x += 8.0;
