@@ -4,22 +4,22 @@
 #include "ui/home/CreateMenu.h"
 #include "ui/home/FolderCards.h"
 #include "ui/home/HomeHeader.h"
+#include "ui/home/HomeMenu.h"
 #include "ui/home/HomeSidebar.h"
 #include "ui/home/HomeTheme.h"
 #include "ui/home/NewBoardSheet.h"
 #include "ui/home/NewFolderSheet.h"
 #include "ui/home/NewNotebookSheet.h"
 #include "ui/home/NotebookCards.h"
+#include "ui/home/TrashCards.h"
 #include "ui/home/UpdateBanner.h"
 
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
-#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMessageBox>
 #include <QPainter>
 #include <QPointer>
 #include <QPushButton>
@@ -40,6 +40,8 @@ HomeScreen::HomeScreen(QWidget* parent)
     setAutoFillBackground(false);
 
     m_dark = appSettings()->value(QStringLiteral("home/darkMode"), false).toBool();
+    // La papelera conserva 30 días; lo vencido se borra al abrir el programa.
+    LibraryStore::purgeExpiredTrash();
 
     buildLayout();
     buildOverlays();
@@ -59,6 +61,16 @@ HomeScreen::HomeScreen(QWidget* parent)
             else if (snapSheet == QLatin1String("board")) m_boardSheet->openCreate({}, pal, m_dark);
             else if (snapSheet == QLatin1String("notebook")) m_notebookSheet->openCreate({}, pal, m_dark);
             else if (snapSheet == QLatin1String("folder")) m_folderSheet->openCreate({}, pal, m_dark);
+            else if (snapSheet == QLatin1String("ctxdoc") && !m_cards.isEmpty())
+                showNotebookMenu(m_cards.first(), m_cards.first()->mapToGlobal(QPoint(120, 60)));
+            else if (snapSheet == QLatin1String("ctxfolder") && !m_folderCards.isEmpty())
+                showFolderMenu(m_folderCards.first()->meta(),
+                               m_folderCards.first()->mapToGlobal(QPoint(120, 60)), m_folderCards.first());
+            else if (snapSheet == QLatin1String("rename") && !m_cards.isEmpty()) m_cards.first()->beginRename();
+            else if (snapSheet == QLatin1String("toast"))
+                m_toast->showMessage(QStringLiteral("«Física» se movió a la papelera"), QStringLiteral("Deshacer"), [] {});
+            else if (snapSheet == QLatin1String("trash")) selectFilter(3);
+            else if (snapSheet == QLatin1String("confirm")) { selectFilter(3); askEmptyTrash(); }
         });
     }
 }
@@ -71,14 +83,8 @@ void HomeScreen::buildLayout() {
     m_sidebar = new HomeSidebar(this);
     connect(m_sidebar, &HomeSidebar::filterSelected, this, &HomeScreen::selectFilter);
     connect(m_sidebar, &HomeSidebar::folderSelected, this, &HomeScreen::openFolder);
-    connect(m_sidebar, &HomeSidebar::createSubfolderRequested, this, [this](const QString& parentRel) {
-        m_folderSheet->openCreate(parentRel, homePaletteFor(m_dark), m_dark);
-    });
-    connect(m_sidebar, &HomeSidebar::editFolderRequested, this, [this](const FolderMeta& meta) {
-        m_folderSheet->openEdit(meta, homePaletteFor(m_dark), m_dark);
-    });
-    connect(m_sidebar, &HomeSidebar::renameFolderRequested, this, &HomeScreen::renameFolderByPath);
-    connect(m_sidebar, &HomeSidebar::deleteFolderRequested, this, &HomeScreen::deleteFolderByPath);
+    connect(m_sidebar, &HomeSidebar::folderMenuRequested, this,
+            [this](const FolderMeta& meta, const QPoint& pos) { showFolderMenu(meta, pos, nullptr); });
     connect(m_sidebar, &HomeSidebar::collapseRequested, this, [this] { setSidebarCollapsed(true); });
     connect(m_sidebar, &HomeSidebar::continueDraftRequested, this,
             &HomeScreen::continueDraftRequested);
@@ -144,6 +150,10 @@ void HomeScreen::buildLayout() {
     emptyBox->addWidget(m_emptyLabel);
     m_emptyState->hide();
 
+    m_trashBar = new TrashInfoBar(m_gridContent);
+    connect(m_trashBar, &TrashInfoBar::emptyRequested, this, &HomeScreen::askEmptyTrash);
+    m_trashBar->hide();
+
     root->addWidget(mainPane, 1);
     setSidebarCollapsed(readAppSetting(QStringLiteral("home/sidebarCollapsed"), false).toBool());
 }
@@ -154,6 +164,10 @@ void HomeScreen::setSidebarCollapsed(bool collapsed) {
         m_sidebar->setVisible(!collapsed);
     if (m_header)
         m_header->setSidebarCollapsed(collapsed);
+    if (m_toast && m_scroll) {
+        const QPoint tl = m_scroll->mapTo(this, QPoint(0, 0));
+        m_toast->setArea(QRect(tl.x(), 0, m_scroll->width(), height()));
+    }
     QTimer::singleShot(0, this, &HomeScreen::relayoutGrid);
 }
 
@@ -184,8 +198,7 @@ void HomeScreen::buildOverlays() {
             [this](const QString& parentRel, const QString& name, int colorIdx, int iconIdx) {
                 QString err;
                 if (!LibraryStore::createFolder(parentRel, name, colorIdx, iconIdx, nullptr, &err)) {
-                    QMessageBox::warning(this, tr("Nueva carpeta"),
-                                         err.isEmpty() ? tr("No se pudo crear la carpeta.") : err);
+                    showError(err.isEmpty() ? QStringLiteral("No se pudo crear la carpeta.") : err);
                     return;
                 }
                 refreshLibrary();
@@ -217,6 +230,27 @@ void HomeScreen::buildOverlays() {
                 LibraryStore::setCoverStyle(filePath, style);
                 refreshLibrary();
             });
+
+    // Capas propias: menú contextual, aviso con «Deshacer» y confirmación irreversible.
+    m_menu = new HomeMenu(this);
+    m_toast = new HomeToast(this);
+    m_confirm = new ConfirmDialog(this);
+
+    auto* renameShortcut = new QShortcut(QKeySequence(Qt::Key_F2), this);
+    connect(renameShortcut, &QShortcut::activated, this, [this] {
+        if (ObjectCard* card = hoveredCard())
+            card->beginRename();
+    });
+    auto* trashShortcut = new QShortcut(QKeySequence(QKeySequence::Delete), this);
+    connect(trashShortcut, &QShortcut::activated, this, [this] {
+        ObjectCard* card = hoveredCard();
+        if (!card || card->isRenaming())
+            return;
+        if (auto* fc = qobject_cast<FolderCard*>(card))
+            moveToTrash(LibraryStore::resolveDirectory(fc->meta().relativePath), fc->meta().name, true);
+        else if (auto* nc = qobject_cast<NotebookCard*>(card))
+            moveToTrash(nc->filePath(), nc->title(), false);
+    });
 }
 
 
@@ -231,6 +265,16 @@ void HomeScreen::applyTheme() {
         m_header->applyTheme(pal, m_dark);
     if (m_createMenu)
         m_createMenu->applyTheme(pal, m_dark);
+    if (m_menu)
+        m_menu->applyTheme(m_dark);
+    if (m_confirm)
+        m_confirm->applyTheme(m_dark);
+    if (m_trashBar)
+        m_trashBar->setPalette(pal, m_dark);
+    for (TrashCard* tc : m_trashCards) {
+        if (tc)
+            tc->setPalette(pal, m_dark);
+    }
     for (FolderCard* fc : m_folderCards) {
         if (fc)
             fc->setPalette(pal, m_dark);
@@ -277,6 +321,10 @@ void HomeScreen::refreshLibrary() {
         if (card) card->deleteLater();
     }
     m_cards.clear();
+    for (TrashCard* tc : m_trashCards) {
+        if (tc) tc->deleteLater();
+    }
+    m_trashCards.clear();
 
     m_allFolders = LibraryStore::listAllFoldersTree();
     const QVector<NotebookMeta> allDocs = LibraryStore::listAllNotebooksRecursive();
@@ -301,19 +349,38 @@ void HomeScreen::refreshLibrary() {
     }
 
     const HomePalette pal = homePaletteFor(m_dark);
+    const QVector<TrashEntry> trash = LibraryStore::listTrash();
+    if (m_sidebar)
+        m_sidebar->setTrashCount(int(trash.size()));
+    if (m_trashBar) {
+        m_trashBar->setCount(int(trash.size()));
+        m_trashBar->setVisible(m_viewMode == ViewMode::Trash);
+    }
+    if (m_viewMode == ViewMode::Trash) {
+        for (const TrashEntry& entry : trash) {
+            auto* tc = new TrashCard(entry, m_gridContent);
+            tc->setPalette(pal, m_dark);
+            const QPointer<TrashCard> guard(tc);
+            connect(tc, &ObjectCard::menuRequested, this, [this, guard](const QPoint& pos) {
+                if (guard) showTrashMenu(guard.data(), pos);
+            });
+            m_trashCards.append(tc);
+        }
+        applySearchFilter(m_header ? m_header->searchText() : QString());
+        return;
+    }
     if (m_viewMode == ViewMode::Folder) {
         for (const FolderMeta& fm : LibraryStore::listFolders(m_currentFolder)) {
             auto* fc = new FolderCard(fm, m_gridContent);
             fc->setPalette(pal, m_dark);
             connect(fc, &FolderCard::openRequested, this, &HomeScreen::openFolder);
-            connect(fc, &FolderCard::newSubfolderRequested, this, [this](const QString& parentRel) {
-                m_folderSheet->openCreate(parentRel, homePaletteFor(m_dark), m_dark);
+            const QPointer<FolderCard> guard(fc);
+            connect(fc, &ObjectCard::menuRequested, this, [this, guard](const QPoint& pos) {
+                if (guard) showFolderMenu(guard->meta(), pos, guard.data());
             });
-            connect(fc, &FolderCard::editRequested, this, [this](const FolderMeta& meta) {
-                m_folderSheet->openEdit(meta, homePaletteFor(m_dark), m_dark);
+            connect(fc, &ObjectCard::renameCommitted, this, [this, rel = fm.relativePath](const QString& name) {
+                QTimer::singleShot(0, this, [this, rel, name] { renameFolderTo(rel, name); });
             });
-            connect(fc, &FolderCard::renameRequested, this, &HomeScreen::renameFolderByPath);
-            connect(fc, &FolderCard::deleteRequested, this, &HomeScreen::deleteFolderByPath);
             m_folderCards.append(fc);
         }
     }
@@ -323,19 +390,14 @@ void HomeScreen::refreshLibrary() {
     for (const NotebookMeta& meta : visibleDocs) {
         auto* card = new NotebookCard(meta, m_gridContent);
         card->setPalette(pal, m_dark);
-        card->setAvailableFolders(m_allFolders);
         connect(card, &NotebookCard::openRequested, this, &HomeScreen::openNotebookRequested);
         const QPointer<NotebookCard> guard(card);
-        connect(card, &NotebookCard::renameRequested, this, [this, guard] {
-            QTimer::singleShot(0, this, [this, guard] { if (guard) renameNotebook(guard.data()); });
+        connect(card, &ObjectCard::menuRequested, this, [this, guard](const QPoint& pos) {
+            if (guard) showNotebookMenu(guard.data(), pos);
         });
-        connect(card, &NotebookCard::deleteRequested, this, [this, guard] {
-            QTimer::singleShot(0, this, [this, guard] { if (guard) deleteNotebook(guard.data()); });
+        connect(card, &ObjectCard::renameCommitted, this, [this, path = meta.path](const QString& name) {
+            QTimer::singleShot(0, this, [this, path, name] { renameNotebookTo(path, name); });
         });
-        connect(card, &NotebookCard::editCoverRequested, this, [this](const NotebookMeta& m) {
-            m_notebookSheet->openEditCover(m, homePaletteFor(m_dark), m_dark);
-        });
-        connect(card, &NotebookCard::moveToFolderRequested, this, &HomeScreen::moveNotebook);
         m_cards.append(card);
     }
 
@@ -343,7 +405,7 @@ void HomeScreen::refreshLibrary() {
 }
 
 void HomeScreen::selectFilter(int index) {
-    m_viewMode = (index == 1) ? ViewMode::Recientes : ViewMode::Todos;
+    m_viewMode = index == 3 ? ViewMode::Trash : index == 1 ? ViewMode::Recientes : ViewMode::Todos;
     m_currentFolder.clear();
     refreshLibrary();
 }
@@ -365,6 +427,10 @@ void HomeScreen::applySearchFilter(const QString& text) {
         if (fc)
             fc->setHidden(!fc->matchesSearch(needle));
     }
+    for (TrashCard* tc : m_trashCards) {
+        if (tc)
+            tc->setHidden(!tc->matchesSearch(needle));
+    }
     const int docFilter = (m_viewMode == ViewMode::Recientes) ? 1 : 0;
     for (NotebookCard* card : m_cards) {
         if (card)
@@ -383,10 +449,15 @@ void HomeScreen::updateHeaderAndEmptyState() {
     for (const NotebookCard* card : m_cards) {
         if (card && !card->isHidden()) ++visibleDocs;
     }
+    for (const TrashCard* tc : m_trashCards) {
+        if (tc && !tc->isHidden()) ++visibleDocs;
+    }
     const int totalVisible = visibleFolders + visibleDocs;
     if (m_header) {
         if (m_viewMode == ViewMode::Folder)
             m_header->setFolderBreadcrumb(m_currentFolder);
+        else if (m_viewMode == ViewMode::Trash)
+            m_header->setSectionTitle(QStringLiteral("Papelera"));
         else
             m_header->setSectionTitle(QStringLiteral("Documentos"));
     }
@@ -398,6 +469,7 @@ void HomeScreen::updateHeaderAndEmptyState() {
         if (m_emptyLabel) {
             m_emptyLabel->setText(
                 searching ? QStringLiteral("No hay elementos que coincidan con la búsqueda")
+                : m_viewMode == ViewMode::Trash ? QStringLiteral("La papelera está vacía.")
                 : m_viewMode == ViewMode::Folder
                     ? QStringLiteral("Esta carpeta está vacía. Usa «Nuevo» para crear algo aquí.")
                     : QStringLiteral("Tu biblioteca está vacía. Empieza con «Nuevo»."));
@@ -413,7 +485,8 @@ void HomeScreen::relayoutGrid() {
     constexpr int cardH = ObjectCard::kCardHeight;
     constexpr int minGap = 12;
     constexpr int rowGap = 18;
-    constexpr int top = 18;
+    const bool trashView = m_viewMode == ViewMode::Trash && m_trashBar;
+    const int top = trashView ? 18 + m_trashBar->height() + 6 : 18;
 
     const int contentWidth = m_scroll->viewport()->width() - 14;
     const int columns = std::max(1, (contentWidth + minGap) / (cardW + minGap));
@@ -428,6 +501,12 @@ void HomeScreen::relayoutGrid() {
         if (card && !card->isHidden())
             items.append(card);
     }
+    for (TrashCard* tc : m_trashCards) {
+        if (tc && !tc->isHidden())
+            items.append(tc);
+    }
+    if (trashView)
+        m_trashBar->setGeometry(0, 12, std::max(0, contentWidth), m_trashBar->height());
 
     int index = 0;
     for (QWidget* w : items) {

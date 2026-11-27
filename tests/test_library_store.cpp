@@ -6,6 +6,7 @@
 #include "engine/LibraryStore.h"
 #include "engine/NotebookDocument.h"
 
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -313,6 +314,50 @@ private slots:
         QVERIFY(!QFileInfo::exists(deletedAbs));
         QCOMPARE(LibraryStore::listAllFoldersTreeInDirectories({libDir.path()}).size(), 0);
         QCOMPARE(LibraryStore::listAllNotebooksRecursiveInDirectories({libDir.path()}).size(), 0);
+    }
+
+    void trashMoveRestoreAndPurge() {
+        ScopedTestPaths paths;
+        QTemporaryDir lib;
+        QVERIFY(lib.isValid());
+        qputenv("FINILY_LIBRARY_DIR", lib.path().toUtf8());
+        const QString root = LibraryStore::libraryDirectories().first();
+        QCOMPARE(root, lib.path());
+
+        QVERIFY(QDir().mkpath(QDir(root).filePath(QStringLiteral("Apuntes/Clases"))));
+        const QString doc = QDir(root).filePath(QStringLiteral("Apuntes/Tema.finily"));
+        QFile f(doc);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{}");
+        f.close();
+
+        QString docId;
+        QVERIFY(LibraryStore::moveToTrash(doc, &docId));
+        QVERIFY(!QFileInfo::exists(doc));
+        QString folderId;
+        QVERIFY(LibraryStore::moveToTrash(QDir(root).filePath(QStringLiteral("Apuntes/Clases")), &folderId));
+
+        // La papelera queda oculta para la biblioteca.
+        QVERIFY(LibraryStore::listFoldersInDirectories({root}, QStringLiteral("Apuntes")).isEmpty());
+        const auto items = LibraryStore::listTrash();
+        QCOMPARE(items.size(), 2);
+        for (const TrashEntry& e : items)
+            QCOMPARE(e.originalRelative, QStringLiteral("Apuntes"));
+
+        // Restaurar con conflicto de nombre -> «Tema (2)».
+        QFile clash(doc);
+        QVERIFY(clash.open(QIODevice::WriteOnly));
+        clash.close();
+        QString restored;
+        QVERIFY(LibraryStore::restoreFromTrash(docId, &restored));
+        QCOMPARE(QFileInfo(restored).fileName(), QStringLiteral("Tema (2).finily"));
+        QCOMPARE(LibraryStore::listTrash().size(), 1);
+
+        QVERIFY(!LibraryStore::restoreFromTrash(QStringLiteral("../x")));
+        QCOMPARE(LibraryStore::purgeExpiredTrash(30), 0);
+        QCOMPARE(LibraryStore::purgeExpiredTrash(-1), 1);
+        QVERIFY(LibraryStore::listTrash().isEmpty());
+        qunsetenv("FINILY_LIBRARY_DIR");
     }
 };
 

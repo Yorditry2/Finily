@@ -5,10 +5,14 @@
 #include "ui/home/LibraryObjects.h"
 
 #include <QContextMenuEvent>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPropertyAnimation>
+
+#include <functional>
 
 namespace finily {
 namespace {
@@ -69,8 +73,9 @@ void ObjectCard::paintEvent(QPaintEvent*) {
     nf.setWeight(QFont::Medium);
     painter.setFont(nf);
     painter.setPen(m_pal.text);
-    painter.drawText(QRectF(10, kNameTop, w, 17), Qt::AlignHCenter | Qt::AlignVCenter,
-                     QFontMetrics(nf).elidedText(nameText(), Qt::ElideRight, int(w)));
+    if (!m_renameEdit)
+        painter.drawText(QRectF(10, kNameTop, w, 17), Qt::AlignHCenter | Qt::AlignVCenter,
+                         QFontMetrics(nf).elidedText(nameText(), Qt::ElideRight, int(w)));
 
     QFont df = font();
     df.setPixelSize(11);
@@ -107,7 +112,7 @@ void ObjectCard::leaveEvent(QEvent*) {
 void ObjectCard::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && rect().contains(event->pos())) {
         if (moreButtonRect().adjusted(-3, -3, 3, 3).contains(event->position()))
-            showMenu(mapToGlobal(moreButtonRect().bottomLeft().toPoint() + QPoint(0, 4)));
+            emit menuRequested(mapToGlobal(moreButtonRect().bottomLeft().toPoint() + QPoint(0, 4)));
         else
             activate();
     }
@@ -120,7 +125,64 @@ void ObjectCard::mouseDoubleClickEvent(QMouseEvent* event) {
 }
 
 void ObjectCard::contextMenuEvent(QContextMenuEvent* event) {
-    showMenu(event->globalPos());
+    emit menuRequested(event->globalPos());
+}
+
+namespace {
+// Esc cancela; Enter lo resuelve returnPressed.
+class RenameKeyFilter : public QObject {
+public:
+    RenameKeyFilter(QObject* parent, std::function<void()> onCancel)
+        : QObject(parent), m_onCancel(std::move(onCancel)) {}
+protected:
+    bool eventFilter(QObject* o, QEvent* e) override {
+        if (e->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) {
+            m_onCancel();
+            return true;
+        }
+        return QObject::eventFilter(o, e);
+    }
+private:
+    std::function<void()> m_onCancel;
+};
+} // namespace
+
+void ObjectCard::beginRename() {
+    if (m_renameEdit)
+        return;
+    const tokens::Palette tk = tokens::paletteFor(m_dark);
+    m_renameEdit = new QLineEdit(renameText(), this);
+    m_renameEdit->setAlignment(Qt::AlignCenter);
+    m_renameEdit->setFrame(false);
+    QFont nf = font();
+    nf.setPixelSize(12);
+    nf.setWeight(QFont::Medium);
+    m_renameEdit->setFont(nf);
+    m_renameEdit->setStyleSheet(QStringLiteral(
+        "QLineEdit { background: %1; color: %2; border: 1.5px solid %3; border-radius: 6px;"
+        " padding: 0 4px; selection-background-color: %4; selection-color: %2; }")
+        .arg(tk.surface.name(), tk.text.name(), tk.accent.name(), tk.soft.name(QColor::HexArgb)));
+    m_renameEdit->setGeometry(8, int(kNameTop) - 3, width() - 16, 23);
+    m_renameEdit->installEventFilter(new RenameKeyFilter(m_renameEdit, [this] { finishRename(false); }));
+    connect(m_renameEdit, &QLineEdit::returnPressed, this, [this] { finishRename(true); });
+    connect(m_renameEdit, &QLineEdit::editingFinished, this, [this] { finishRename(true); });
+    m_renameEdit->show();
+    m_renameEdit->setFocus(Qt::OtherFocusReason);
+    m_renameEdit->selectAll();
+    update();
+}
+
+void ObjectCard::finishRename(bool commit) {
+    if (!m_renameEdit)
+        return;
+    QLineEdit* edit = m_renameEdit;
+    m_renameEdit = nullptr; // evita reentrar con editingFinished
+    const QString text = edit->text().trimmed();
+    edit->hide();
+    edit->deleteLater();
+    update();
+    if (commit && !text.isEmpty() && text != renameText())
+        emit renameCommitted(text);
 }
 
 } // namespace finily

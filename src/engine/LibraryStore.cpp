@@ -176,6 +176,10 @@ void collectFinilyFilesRecursive(const QString& rootDir, const QString& currentD
 } // namespace
 
 QStringList LibraryStore::libraryDirectories() {
+    // Pruebas y capturas de desarrollo: una biblioteca aislada.
+    const QString overrideDir = qEnvironmentVariable("FINILY_LIBRARY_DIR");
+    if (!overrideDir.isEmpty())
+        return {overrideDir};
     QStringList directories;
     const auto documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     if (!documents.isEmpty())

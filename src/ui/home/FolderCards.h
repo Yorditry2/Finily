@@ -17,23 +17,15 @@ public:
 
 signals:
     void openRequested(const QString& relativePath);
-    void newSubfolderRequested(const QString& relativePath);
-    void editRequested(const finily::FolderMeta& meta);
-    void renameRequested(const QString& relativePath);
-    void deleteRequested(const QString& relativePath);
 
 protected:
     void paintVisual(QPainter& painter, const QPointF& bottomCenter) override;
     QString nameText() const override { return m_meta.name; }
     QString detailText() const override;
     void activate() override { emit openRequested(m_meta.relativePath); }
-    void showMenu(const QPoint& globalPos) override;
 
 private:
     FolderMeta m_meta;
 };
-
-// Menú contextual provisional (QMenu con estilo) hasta la fase 5.
-QString provisionalMenuStyle(const HomePalette& pal);
 
 } // namespace finily

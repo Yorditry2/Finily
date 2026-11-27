@@ -26,15 +26,15 @@ public:
     void setSelectedFolder(const QString& relativePath);
     void setFolders(const QVector<FolderMeta>& folders);
     void setDraftVisible(bool visible);
+    void setTrashCount(int count);
+
+    static constexpr int kTrashFilter = 3; // índice de filtro de la vista Papelera
     void applyTheme(const HomePalette& pal, bool dark);
 
 signals:
     void filterSelected(int filterIndex);
     void folderSelected(const QString& relativePath);
-    void createSubfolderRequested(const QString& parentRelativePath);
-    void editFolderRequested(const finily::FolderMeta& meta);
-    void renameFolderRequested(const QString& relativePath);
-    void deleteFolderRequested(const QString& relativePath);
+    void folderMenuRequested(const finily::FolderMeta& meta, const QPoint& globalPos);
     void continueDraftRequested();
     void darkModeToggled(bool dark);
     void collapseRequested();
@@ -61,6 +61,7 @@ private:
     QVector<SidebarNavRow*> m_folderRows;
 
     SidebarNavRow* m_draftRow = nullptr;
+    SidebarNavRow* m_trashRow = nullptr;
     QWidget* m_footLine = nullptr;
     SidebarIconButton* m_themeBtn = nullptr;
 };

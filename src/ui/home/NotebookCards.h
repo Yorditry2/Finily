@@ -18,27 +18,20 @@ public:
     QString title() const { return m_meta.title; }
     const NotebookMeta& meta() const { return m_meta; }
 
-    void setAvailableFolders(const QVector<FolderMeta>& folders);
     bool matchesSearch(const QString& needle) const;
     bool matchesFilter(int filter) const;
 
 signals:
     void openRequested(const QString& filePath);
-    void renameRequested();
-    void deleteRequested();
-    void editCoverRequested(const finily::NotebookMeta& meta);
-    void moveToFolderRequested(const QString& filePath, const QString& targetRelativeFolder);
 
 protected:
     void paintVisual(QPainter& painter, const QPointF& bottomCenter) override;
     QString nameText() const override { return m_meta.title; }
     QString detailText() const override;
     void activate() override { emit openRequested(m_meta.path); }
-    void showMenu(const QPoint& globalPos) override;
 
 private:
     NotebookMeta m_meta;
-    QVector<FolderMeta> m_folders;
 };
 
 } // namespace finily

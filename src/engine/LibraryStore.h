@@ -39,6 +39,17 @@ struct FolderMeta {
     int directSubfolders = 0;
 };
 
+// Elemento en la papelera de la biblioteca (<raíz>/.papelera/<id>/<nombre>).
+struct TrashEntry {
+    QString id;
+    QString name;             // nombre visible (sin .finily)
+    QString originalRelative; // carpeta de origen relativa a la raíz ("" = raíz)
+    QString rootDir;
+    QString itemPath;         // ruta absoluta actual dentro de la papelera
+    bool isFolder = false;
+    QDateTime deletedAt;
+};
+
 // Acceso a disco, caché de metadatos, carpetas/subcarpetas, portadas y
 // preferencias de creación fuera de la UI (sin Qt6::Widgets).
 class LibraryStore {
@@ -103,6 +114,18 @@ public:
                              QString* outError = nullptr);
     static bool deleteFolderInDirectory(const QString& rootDir, const QString& relativePath,
                                         QString* outAbsPath = nullptr, QString* outError = nullptr);
+
+    // Papelera (implementado en LibraryTrash.cpp). Mover es reversible;
+    // solo deleteFromTrash / emptyTrash / purgeExpiredTrash borran de verdad.
+    static constexpr int kTrashRetentionDays = 30;
+    static bool moveToTrash(const QString& absolutePath, QString* outId = nullptr,
+                            QString* outError = nullptr);
+    static QVector<TrashEntry> listTrash();
+    static bool restoreFromTrash(const QString& id, QString* outRestoredPath = nullptr,
+                                 QString* outError = nullptr);
+    static bool deleteFromTrash(const QString& id, QString* outError = nullptr);
+    static int emptyTrash();
+    static int purgeExpiredTrash(int days = kTrashRetentionDays);
 
     // Preferencias y borradores
     static NewDocumentSpec lastUsedQuickNoteSpec();

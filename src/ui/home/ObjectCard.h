@@ -4,6 +4,7 @@
 
 #include <QWidget>
 
+class QLineEdit;
 class QPropertyAnimation;
 
 namespace finily {
@@ -25,6 +26,14 @@ public:
     void setHoverProgress(qreal v);
     virtual void setPalette(const HomePalette& pal, bool dark);
 
+    // Renombrar en línea (F2): un campo sobre el nombre; Enter o clic fuera guarda, Esc cancela.
+    void beginRename();
+    bool isRenaming() const { return m_renameEdit != nullptr; }
+
+signals:
+    void menuRequested(const QPoint& globalPos);
+    void renameCommitted(const QString& newName);
+
 protected:
     // Base del área visual: el objeto se apoya aquí y crece hacia arriba.
     QPointF visualBottomCenter() const;
@@ -32,7 +41,8 @@ protected:
     virtual QString nameText() const = 0;
     virtual QString detailText() const = 0;
     virtual void activate() = 0;
-    virtual void showMenu(const QPoint& globalPos) = 0;
+    // Texto inicial del campo al renombrar (por defecto, el nombre visible).
+    virtual QString renameText() const { return nameText(); }
 
     void paintEvent(QPaintEvent* event) override;
     void enterEvent(QEnterEvent* event) override;
@@ -46,9 +56,11 @@ protected:
 
 private:
     QRectF moreButtonRect() const;
+    void finishRename(bool commit);
 
     qreal m_hover = 0.0;
     QPropertyAnimation* m_anim = nullptr;
+    QLineEdit* m_renameEdit = nullptr;
 };
 
 } // namespace finily

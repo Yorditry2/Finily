@@ -8,7 +8,7 @@
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QMenu>
+#include <QContextMenuEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollArea>
@@ -45,6 +45,8 @@ public:
     bool isFolder() const { return m_isFolder; }
 
     void setTrailing(const QString& icon) { m_trailing = icon; update(); }
+    // Contador a la derecha (.cnt del mockup), p. ej. elementos en la papelera.
+    void setCount(int n) { m_count = n; update(); }
     void setActive(bool active) {
         if (m_active != active) {
             m_active = active;
@@ -55,10 +57,7 @@ public:
 
 signals:
     void clicked();
-    void newSubfolderRequested(const QString& relPath);
-    void editRequested(const finily::FolderMeta& meta);
-    void renameRequested(const QString& relPath);
-    void deleteRequested(const QString& relPath);
+    void menuRequested(const finily::FolderMeta& meta, const QPoint& globalPos);
 
 protected:
     void paintEvent(QPaintEvent*) override {
@@ -88,10 +87,19 @@ protected:
         painter.setFont(font);
         painter.setPen(m_active ? m_pal.text : m_pal.icon);
         const int textX = int(x) + (m_isFolder ? 18 : 25);
-        const int textW = std::max(10, width() - textX - (m_trailing.isEmpty() ? 8 : 28));
+        const int textW = std::max(10, width() - textX - (m_trailing.isEmpty() && m_count <= 0 ? 8 : 28));
         painter.drawText(QRect(textX, 0, textW, height()), Qt::AlignLeft | Qt::AlignVCenter,
                          QFontMetrics(font).elidedText(m_label, Qt::ElideRight, textW));
 
+        if (m_count > 0) {
+            QFont cf = font;
+            cf.setPixelSize(11);
+            cf.setWeight(QFont::Medium);
+            painter.setFont(cf);
+            painter.setPen(m_pal.faint);
+            painter.drawText(QRect(width() - 40, 0, 31, height()), Qt::AlignRight | Qt::AlignVCenter,
+                             QString::number(m_count));
+        }
         if (!m_trailing.isEmpty())
             paintUiIcon(&painter, QRectF(width() - 21, (height() - 13) / 2.0, 13, 13), m_trailing,
                         m_pal.faint);
@@ -104,30 +112,15 @@ protected:
             emit clicked();
         QWidget::mouseReleaseEvent(event);
     }
-    // Provisional hasta la fase 5 (menú contextual propio, mockup 07).
     void contextMenuEvent(QContextMenuEvent* event) override {
-        if (!m_isFolder)
-            return;
-        QMenu menu(this);
-        menu.setStyleSheet(QStringLiteral(
-            "QMenu { background: %1; border: 1px solid %2; border-radius: 12px; padding: 6px; }"
-            "QMenu::item { color: %3; padding: 7px 16px; border-radius: 8px; font-size: 13px; }"
-            "QMenu::item:selected { background: %4; }"
-            "QMenu::separator { height: 1px; background: %2; margin: 5px 8px; }")
-                               .arg(m_pal.surface.name(), m_pal.border.name(QColor::HexArgb),
-                                    m_pal.text.name(), m_pal.tint.name(QColor::HexArgb)));
-        const QString rel = m_meta.relativePath;
-        menu.addAction(QStringLiteral("Nueva subcarpeta…"), this, [this, rel] { emit newSubfolderRequested(rel); });
-        menu.addAction(QStringLiteral("Editar carpeta…"), this, [this] { emit editRequested(m_meta); });
-        menu.addAction(QStringLiteral("Renombrar…"), this, [this, rel] { emit renameRequested(rel); });
-        menu.addSeparator();
-        menu.addAction(QStringLiteral("Eliminar"), this, [this, rel] { emit deleteRequested(rel); });
-        menu.exec(event->globalPos());
+        if (m_isFolder)
+            emit menuRequested(m_meta, event->globalPos());
     }
 
 private:
     QString m_icon;
     QString m_label;
+    int m_count = 0;
     QString m_trailing;
     FolderMeta m_meta;
     QColor m_dot;
@@ -245,6 +238,13 @@ HomeSidebar::HomeSidebar(QWidget* parent)
     connect(m_draftRow, &SidebarNavRow::clicked, this, &HomeSidebar::continueDraftRequested);
     col->addWidget(m_draftRow);
 
+    m_trashRow = new SidebarNavRow(QStringLiteral("trash"), QStringLiteral("Papelera"), this);
+    connect(m_trashRow, &SidebarNavRow::clicked, this, [this] {
+        setSelectedFilter(kTrashFilter);
+        emit filterSelected(kTrashFilter);
+    });
+    col->addWidget(m_trashRow);
+
     col->addSpacing(7);
     m_footLine = new QWidget(this);
     m_footLine->setFixedHeight(1);
@@ -272,12 +272,13 @@ void HomeSidebar::setTreeOpen(bool open) {
 
 void HomeSidebar::refreshActive() {
     m_docsRow->setActive(m_selectedFilter == 0);
+    m_trashRow->setActive(m_selectedFilter == kTrashFilter);
     for (SidebarNavRow* row : m_folderRows)
         row->setActive(m_selectedFilter < 0 && row->meta().relativePath == m_selectedFolder);
 }
 
-void HomeSidebar::setSelectedFilter(int) {
-    m_selectedFilter = 0;
+void HomeSidebar::setSelectedFilter(int filter) {
+    m_selectedFilter = filter == kTrashFilter ? kTrashFilter : 0;
     m_selectedFolder.clear();
     refreshActive();
 }
@@ -297,10 +298,7 @@ void HomeSidebar::setFolders(const QVector<FolderMeta>& folders) {
         row->setPalette(m_pal);
         const QString rel = meta.relativePath;
         connect(row, &SidebarNavRow::clicked, this, [this, rel] { emit folderSelected(rel); });
-        connect(row, &SidebarNavRow::newSubfolderRequested, this, &HomeSidebar::createSubfolderRequested);
-        connect(row, &SidebarNavRow::editRequested, this, &HomeSidebar::editFolderRequested);
-        connect(row, &SidebarNavRow::renameRequested, this, &HomeSidebar::renameFolderRequested);
-        connect(row, &SidebarNavRow::deleteRequested, this, &HomeSidebar::deleteFolderRequested);
+        connect(row, &SidebarNavRow::menuRequested, this, &HomeSidebar::folderMenuRequested);
         m_treeLayout->addWidget(row);
         // Visibles ya: si no, el layout las ignora al medir el alto del árbol.
         row->show();
@@ -314,6 +312,10 @@ void HomeSidebar::setFolders(const QVector<FolderMeta>& folders) {
     refreshActive();
 }
 
+void HomeSidebar::setTrashCount(int count) {
+    m_trashRow->setCount(count);
+}
+
 void HomeSidebar::setDraftVisible(bool visible) {
     m_draftRow->setVisible(visible);
 }
@@ -321,7 +323,7 @@ void HomeSidebar::setDraftVisible(bool visible) {
 void HomeSidebar::applyTheme(const HomePalette& pal, bool dark) {
     m_pal = pal;
     m_dark = dark;
-    for (SidebarNavRow* row : {m_docsRow, m_foldersRow, m_draftRow})
+    for (SidebarNavRow* row : {m_docsRow, m_foldersRow, m_draftRow, m_trashRow})
         row->setPalette(pal);
     for (SidebarNavRow* row : m_folderRows)
         row->setPalette(pal);

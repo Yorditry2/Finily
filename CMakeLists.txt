@@ -18,6 +18,7 @@ add_library(finily_engine STATIC
     src/engine/LibraryStore.h
     src/engine/LibraryStore.cpp
     src/engine/LibraryFolders.cpp
+    src/engine/LibraryTrash.cpp
     src/engine/NotebookDocument.h
     src/engine/NotebookDocument.cpp
     src/engine/InkEngine.h
@@ -101,6 +102,10 @@ add_executable(finily
     src/ui/home/NotebookCards.cpp
     src/ui/home/CreateMenu.h
     src/ui/home/CreateMenu.cpp
+    src/ui/home/HomeMenu.h
+    src/ui/home/HomeMenu.cpp
+    src/ui/home/TrashCards.h
+    src/ui/home/TrashCards.cpp
     src/ui/home/SheetWidgets.h
     src/ui/home/SheetWidgets.cpp
     src/ui/home/GlassSheet.h
