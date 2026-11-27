@@ -6,8 +6,11 @@ set -euo pipefail
 #   - dist/Finily-Linux-x64.deb    (si dpkg-deb está disponible, p. ej. Ubuntu/Debian)
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="${1:-$ROOT_DIR/build-linux-release}"
-DIST_DIR="${2:-$ROOT_DIR/dist}"
+RAW_BUILD_DIR="${1:-$ROOT_DIR/build-linux-release}"
+RAW_DIST_DIR="${2:-$ROOT_DIR/dist}"
+mkdir -p "$RAW_BUILD_DIR" "$RAW_DIST_DIR"
+BUILD_DIR="$(cd -- "$RAW_BUILD_DIR" && pwd)"
+DIST_DIR="$(cd -- "$RAW_DIST_DIR" && pwd)"
 
 cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
@@ -167,12 +170,10 @@ if command -v dpkg-deb >/dev/null 2>&1; then
   if command -v dpkg-shlibdeps >/dev/null 2>&1; then
     mkdir -p "$BUILD_DIR/debian"
     printf 'Source: finily\nMaintainer: Yorditry2 <noreply@github.com>\n\nPackage: finily\nArchitecture: amd64\n' > "$BUILD_DIR/debian/control"
-    DEPS="$(cd "$BUILD_DIR" && dpkg-shlibdeps -O "$DEB_STAGE/usr/bin/finily" 2>/dev/null | sed 's/^shlibs:Depends=//')"
+    DEPS="$(cd "$BUILD_DIR" && dpkg-shlibdeps -O "$DEB_STAGE/usr/bin/finily" | sed 's/^shlibs:Depends=//')" || DEPS=""
     rm -rf "$BUILD_DIR/debian"
   fi
-  if [[ -n "$DEPS" ]]; then
-    DEPS="$DEPS, libqt6svg6 | qt6-svg-dev"
-  else
+  if [[ -z "$DEPS" ]]; then
     DEPS="libqt6core6t64 | libqt6core6, libqt6gui6t64 | libqt6gui6, libqt6widgets6t64 | libqt6widgets6, libqt6network6t64 | libqt6network6, libqt6svg6, libqt6pdf6"
   fi
 
@@ -185,6 +186,7 @@ Priority: optional
 Architecture: amd64
 Installed-Size: ${INSTALLED_KB}
 Depends: ${DEPS}
+Recommends: qt6-wayland
 Maintainer: Yorditry2 <noreply@github.com>
 Homepage: https://github.com/Yorditry2/Finily
 Description: Pizarra digital nativa y anotador de PDF
