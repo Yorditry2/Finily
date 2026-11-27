@@ -556,6 +556,7 @@ void EditorTopBar::resizeEvent(QResizeEvent* event) {
 
 void EditorTopBar::rebuildHits() {
     m_hits.clear();
+    m_row2Dividers.clear();
     const int W = width();
     if (W <= 60)
         return;
@@ -617,14 +618,16 @@ void EditorTopBar::rebuildHits() {
     m_hits.append({QRectF(10, y2, 34, 34), HitKind::Undo, 0, ToolType::Pen, false, QStringLiteral("undo"), {}});
     m_hits.append({QRectF(46, y2, 34, 34), HitKind::Redo, 0, ToolType::Pen, false, QStringLiteral("redo"), {}});
 
-    // Calcular bloque derecho primero para centrar la barra de herramientas sin solapar
+    // Calcular bloque derecho primero para evitar solapamientos
     int r2x = W - 10;
     r2x -= 34; m_hits.append({QRectF(r2x, y2, 34, 34), HitKind::Gear, 0, ToolType::Pen, false, QStringLiteral("gear"), {}});
     r2x -= 36; m_hits.append({QRectF(r2x, y2, 34, 34), HitKind::Export, 0, ToolType::Pen, false, QStringLiteral("export"), {}});
+    m_row2Dividers.append(r2x - 4.5);
     r2x -= 9; // vdiv
     r2x -= 28; m_hits.append({QRectF(r2x, y2 + 3, 28, 28), HitKind::ZoomIn, 0, ToolType::Pen, false, QStringLiteral("plus"), {}});
     r2x -= 48; m_hits.append({QRectF(r2x, y2 + 3, 46, 28), HitKind::ZoomReset, 0, ToolType::Pen, false, {}, QStringLiteral("%1 %").arg(m_zoomPercent)});
     r2x -= 30; m_hits.append({QRectF(r2x, y2 + 3, 28, 28), HitKind::ZoomOut, 0, ToolType::Pen, false, QStringLiteral("minus"), {}});
+    m_row2Dividers.append(r2x - 4.5);
     r2x -= 9; // vdiv
     r2x -= 34; m_hits.append({QRectF(r2x, y2, 34, 34), HitKind::Paper, 0, ToolType::Pen, false, QStringLiteral("paper"), {}});
     if (!m_infinitePage) {
@@ -633,30 +636,31 @@ void EditorTopBar::rebuildHits() {
                        QStringLiteral("%1 / %2").arg(m_pageCurrent).arg(m_pageCount)});
     }
 
-    // Calcular ancho del grupo central
+    // Reservar ancho fijo (herramientas + grosores + colores) para que los iconos
+    // de herramientas no salten horizontalmente al cambiar entre herramientas.
     const auto& tools = canonicalTools();
-    int centerW = 14; // grip
+    int toolsW = 14; // grip
     for (const auto& t : tools) {
         if (t.sepBefore)
-            centerW += 9;
-        centerW += 36;
+            toolsW += 9;
+        toolsW += 36;
     }
-    if (m_showWidths)
-        centerW += 9 + 3 * 31;
-    if (m_showColors)
-        centerW += 9 + int(m_colors.size()) * 24 + 24;
+    const int colorSlots = std::max(6, int(m_colors.size()));
+    const int reservedCenterW = toolsW + (9 + 3 * 31) + (9 + colorSlots * 24 + 24);
 
     const int leftBound = 94;
     const int rightBound = r2x - 10;
-    const int cx = std::clamp((W - centerW) / 2, leftBound, std::max(leftBound, rightBound - centerW));
+    const int cx = std::clamp((W - reservedCenterW) / 2, leftBound, std::max(leftBound, rightBound - reservedCenterW));
 
     qreal x = cx;
     m_hits.append({QRectF(x, y2 + 5, 12, 24), HitKind::Grip, 0, ToolType::Pen, false, {}, {}});
     x += 14;
 
     for (const auto& t : tools) {
-        if (t.sepBefore)
+        if (t.sepBefore) {
+            m_row2Dividers.append(x + 4.5);
             x += 9;
+        }
         m_hits.append({QRectF(x, y2, 34, 34),
                        t.isElements ? HitKind::Elements : HitKind::Tool,
                        0, t.tool, t.hasSub, QString::fromLatin1(t.icon), {}});
@@ -664,6 +668,7 @@ void EditorTopBar::rebuildHits() {
     }
 
     if (m_showWidths) {
+        m_row2Dividers.append(x + 4.5);
         x += 9;
         for (int i = 0; i < 3; ++i) {
             m_hits.append({QRectF(x, y2 + 3, 30, 28), HitKind::WidthSlot, i, m_activeTool, false, {}, {}});
@@ -672,6 +677,7 @@ void EditorTopBar::rebuildHits() {
     }
 
     if (m_showColors) {
+        m_row2Dividers.append(x + 4.5);
         x += 9;
         for (int i = 0; i < m_colors.size(); ++i) {
             m_hits.append({QRectF(x, y2 + 7, 20, 20), HitKind::ColorSwatch, i, m_activeTool, false, {}, {}});
@@ -712,13 +718,9 @@ void EditorTopBar::paintEvent(QPaintEvent* event) {
     // Dibujar separadores verticales de fila 2 (sobre la línea media de botones)
     if (m_dockMode == ToolbarDockMode::Top) {
         p.setPen(QPen(m_pal.border, 1.0));
-        for (int i = 1; i < m_hits.size(); ++i) {
-            const auto& prev = m_hits.at(i - 1);
-            const auto& cur = m_hits.at(i);
-            if (cur.rect.top() > 38.0 && prev.rect.top() > 38.0 && (cur.rect.left() - prev.rect.right()) >= 7.0) {
-                const qreal dx = std::round((prev.rect.right() + cur.rect.left()) * 0.5) + 0.5;
-                p.drawLine(QPointF(dx, 51.0), QPointF(dx, 71.0));
-            }
+        for (const qreal rawX : m_row2Dividers) {
+            const qreal dx = std::round(rawX) + 0.5;
+            p.drawLine(QPointF(dx, 51.0), QPointF(dx, 71.0));
         }
     }
 

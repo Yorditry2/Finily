@@ -203,6 +203,7 @@ private:
     ToolbarDockMode m_dockMode = ToolbarDockMode::Top;
     QVector<EditorTabItem> m_tabs;
     QVector<HitItem> m_hits;
+    QVector<qreal> m_row2Dividers;
     int m_hoverHit = -1;
     bool m_draggingGrip = false;
     QPoint m_dragStartGlobal;
