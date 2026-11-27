@@ -576,7 +576,8 @@ void EditorSettingsModal::buildSectionContent() {
         dockSeg->setCurrentIndex(int(m_dockMode));
         dockSeg->applyEditorTheme(m_dark);
         connect(dockSeg, &EditorSegControl::currentIndexChanged, this, [this](int idx) {
-            emit dockModeChanged(ToolbarDockMode(idx));
+            m_dockMode = ToolbarDockMode(idx);
+            emit dockModeChanged(m_dockMode);
         });
         m_bodyLayout->addWidget(makeSettingRow(QStringLiteral("Posición de la barra"), dockSeg, m_pal, m_bodyHost));
 
@@ -606,7 +607,8 @@ void EditorSettingsModal::buildSectionContent() {
         dirSeg->setCurrentIndex(m_pageNavDir == 1 ? 0 : 1);
         dirSeg->applyEditorTheme(m_dark);
         connect(dirSeg, &EditorSegControl::currentIndexChanged, this, [this](int idx) {
-            emit pageNavDirectionChanged(idx == 0 ? 1 : 0);
+            m_pageNavDir = (idx == 0 ? 1 : 0);
+            emit pageNavDirectionChanged(m_pageNavDir);
         });
         m_bodyLayout->addWidget(makeSettingRow(QStringLiteral("Dirección de las páginas"), dirSeg, m_pal, m_bodyHost));
 

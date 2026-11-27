@@ -1096,7 +1096,10 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
         return;
     }
     if (m_tool == ToolType::Fill) {
-        beginFillAt(world);
+        if (m_fillSegmentMode)
+            highlightSegmentAt(world, m_color, 0);
+        else
+            beginFillAt(world);
         return;
     }
 

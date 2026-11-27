@@ -469,8 +469,20 @@ EditorTopBar::EditorTopBar(QWidget* parent)
 
     m_renameEdit = new EditorLineEdit(this);
     m_renameEdit->hide();
+    m_renameEdit->installEventFilter(this);
     connect(m_renameEdit, &QLineEdit::editingFinished, this, [this] { finishInlineRename(true); });
     connect(m_renameEdit, &QLineEdit::returnPressed, this, [this] { finishInlineRename(true); });
+}
+
+bool EditorTopBar::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_renameEdit && event->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(event);
+        if (ke->key() == Qt::Key_Escape) {
+            finishInlineRename(false);
+            return true;
+        }
+    }
+    return EditorGlassCard::eventFilter(watched, event);
 }
 
 void EditorTopBar::applyEditorTheme(bool dark) {

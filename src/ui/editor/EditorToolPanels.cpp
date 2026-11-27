@@ -308,6 +308,7 @@ void EditorPenPanel::relayout() {
     const int cy = wy + m_widthSection->height() + 10;
     m_colorRow->setGeometry(14, cy, width() - 28, 28);
     setFixedSize(318, cy + 28 + 14);
+    emit panelResized();
     update();
 }
 
@@ -463,6 +464,7 @@ void EditorHighlighterPanel::relayout() {
     const int cy = 94 + m_widthSection->height() + 10;
     m_colorRow->setGeometry(14, cy, width() - 28, 28);
     setFixedSize(296, cy + 28 + 14);
+    emit panelResized();
     update();
 }
 
@@ -563,6 +565,7 @@ void EditorEraserPanel::relayout() {
     const int cy = ty + 27 + 34;
     m_clearBtn->setGeometry(14, cy, width() - 28, 30);
     setFixedSize(308, cy + 30 + 14);
+    emit panelResized();
     update();
 }
 
@@ -649,6 +652,9 @@ QRectF EditorFillPanel::patternCardRect(int idx) const {
 void EditorFillPanel::syncFromCanvas() {
     if (!m_canvas)
         return;
+    m_segmentMode = m_canvas->fillSegmentMode();
+    if (m_modeSeg)
+        m_modeSeg->setCurrentIndex(m_segmentMode ? 1 : 0);
     m_pattern = m_canvas->shadePattern();
     m_activeColor = m_canvas->inkColor();
     update();
@@ -1253,6 +1259,7 @@ void EditorPaperPanel::relayout() {
     y += 18 + 28 + 18 + 48 + 20;
     m_scaleSeg->setGeometry(14, y, width() - 28, 30);
     setFixedSize(296, y + 30 + 14);
+    emit panelResized();
     update();
 }
 

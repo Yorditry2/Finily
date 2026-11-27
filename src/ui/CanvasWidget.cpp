@@ -301,6 +301,13 @@ void CanvasWidget::setShadePattern(ShadePattern pattern) {
     emit stateChanged();
 }
 
+void CanvasWidget::setFillSegmentMode(bool segmentMode) {
+    if (m_fillSegmentMode == segmentMode)
+        return;
+    m_fillSegmentMode = segmentMode;
+    emit stateChanged();
+}
+
 void CanvasWidget::setHoldToShapeEnabled(bool enabled) {
     m_holdToShapeEnabled = enabled;
     if (!enabled)

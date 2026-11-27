@@ -29,6 +29,7 @@ signals:
     void vectorizeRequested();
     void extractAiRequested();
     void fillColorRequested(const QRect& anchorRect);
+    void elementSaved();
     void layoutChanged();
 
 private:
@@ -52,6 +53,9 @@ public:
 
     void showAtWorldPoint(const QPointF& worldPos, const QColor& activeColor);
     void applyEditorTheme(bool dark) override;
+
+signals:
+    void visibilityChanged();
 
 private:
     QPointer<CanvasWidget> m_canvas;

@@ -227,6 +227,8 @@ public:
     void setShapeKind(ShapeKind kind);
     ShadePattern shadePattern() const { return m_shadePattern; }
     void setShadePattern(ShadePattern pattern);
+    bool fillSegmentMode() const { return m_fillSegmentMode; }
+    void setFillSegmentMode(bool segmentMode);
     void setHoldToShapeEnabled(bool enabled);
     void setSmartGuidesEnabled(bool enabled);
     void setMathBeautifyEnabled(bool enabled);
@@ -506,6 +508,7 @@ private:
     int m_solidKind = 0;       // 0..9 sólidos 3D
     QString m_congruenceMarkSpec;
     ShadePattern m_shadePattern = ShadePattern::Solid;
+    bool m_fillSegmentMode = false;
     bool m_holdToShapeEnabled = true;
     int m_holdToShapeDelayMs = 380;
     AutoShapeOptions m_autoShapeOptions;

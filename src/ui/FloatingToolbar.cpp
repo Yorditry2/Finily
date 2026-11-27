@@ -164,6 +164,7 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     });
     connect(m_pageCapsule, &EditorPageCapsule::pagesPanelRequested, this, [this] {
         if (!m_pagesPanel) return;
+        closeTransientPopovers();
         if (m_pagesPanel->isVisible())
             m_pagesPanel->hide();
         else {
@@ -194,16 +195,24 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
         if (m_canvas) m_canvas->setToolFineWidth(m_widthTargetTool, mm);
     });
 
+    auto onPanelResized = [this](QWidget* panel) {
+        if (m_openPopover == panel && panel && panel->isVisible())
+            positionFloatingCard(panel, m_openPopoverAnchor, panel == m_paperPanel);
+        updateOverlayMask();
+    };
+
     m_penPanel = new EditorPenPanel(m_canvas, this);
     connect(m_penPanel, &EditorPenPanel::libraryRequested, this, &FloatingToolbar::openLibraryModal);
     connect(m_penPanel, &EditorPenPanel::customColorRequested, this, [this](ToolType t, const QRect& r) {
         openColorPopover(t, r, false);
     });
+    connect(m_penPanel, &EditorPenPanel::panelResized, this, [this, onPanelResized] { onPanelResized(m_penPanel); });
 
     m_hlPanel = new EditorHighlighterPanel(m_canvas, this);
     connect(m_hlPanel, &EditorHighlighterPanel::customColorRequested, this, [this](ToolType t, const QRect& r) {
         openColorPopover(t, r, false);
     });
+    connect(m_hlPanel, &EditorHighlighterPanel::panelResized, this, [this, onPanelResized] { onPanelResized(m_hlPanel); });
 
     m_eraserPanel = new EditorEraserPanel(m_canvas, this);
     connect(m_eraserPanel, &EditorEraserPanel::clearPageRequested, this, [this] {
@@ -212,20 +221,21 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
         closeTransientPopovers();
         showToast(QStringLiteral("Anotaciones de la página borradas"), true);
     });
+    connect(m_eraserPanel, &EditorEraserPanel::panelResized, this, [this, onPanelResized] { onPanelResized(m_eraserPanel); });
 
     m_fillPanel = new EditorFillPanel(m_canvas, this);
+    connect(m_fillPanel, &EditorFillPanel::fillSubModeChanged, this, [this](bool segmentMode) {
+        if (m_canvas) m_canvas->setFillSegmentMode(segmentMode);
+    });
     m_lassoPanel = new EditorLassoPanel(m_canvas, this);
 
     m_shapesPanel = new EditorShapesPanel(m_canvas, this);
     connect(m_shapesPanel, &EditorShapesPanel::libraryRequested, this, &FloatingToolbar::openLibraryModal);
-    connect(m_shapesPanel, &EditorShapesPanel::panelResized, this, [this] {
-        if (m_openPopover == m_shapesPanel)
-            positionFloatingCard(m_shapesPanel, m_openPopoverAnchor);
-        updateOverlayMask();
-    });
+    connect(m_shapesPanel, &EditorShapesPanel::panelResized, this, [this, onPanelResized] { onPanelResized(m_shapesPanel); });
 
     m_laserPanel = new EditorLaserPanel(m_canvas, this);
     m_paperPanel = new EditorPaperPanel(m_canvas, this);
+    connect(m_paperPanel, &EditorPaperPanel::panelResized, this, [this, onPanelResized] { onPanelResized(m_paperPanel); });
 
     m_elementsPanel = new EditorElementsPanel(m_canvas, this);
     m_elementsPanel->setDropdownOpener(dropdownFn);
@@ -258,12 +268,17 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     connect(m_contextCapsule, &EditorContextCapsule::fillColorRequested, this, [this](const QRect& r) {
         openColorPopover(ToolType::Fill, r, true);
     });
+    connect(m_contextCapsule, &EditorContextCapsule::elementSaved, this, [this] {
+        if (m_elementsPanel && m_elementsPanel->isVisible())
+            m_elementsPanel->syncFromCanvas();
+    });
     connect(m_contextCapsule, &EditorContextCapsule::layoutChanged, this, [this] {
         positionContextCapsule();
         updateOverlayMask();
     });
 
     m_edgeMarkCapsule = new EditorEdgeMarkCapsule(m_canvas, this);
+    connect(m_edgeMarkCapsule, &EditorEdgeMarkCapsule::visibilityChanged, this, [this] { updateOverlayMask(); });
     m_inlineTextBar = new EditorInlineTextBar(m_canvas, this);
 
     m_dropdownMenu = new EditorDropdownMenu(this);
@@ -292,7 +307,11 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
         setPageNavDirection(PageNavDirection(dir));
     });
     connect(m_settingsModal, &EditorSettingsModal::padActionsChanged, this, &FloatingToolbar::padActionsChanged);
-    connect(m_settingsModal, &EditorSettingsModal::closed, this, [this] { updateOverlayMask(); });
+    connect(m_settingsModal, &EditorSettingsModal::closed, this, [this] {
+        if (m_dropdownMenu && m_dropdownMenu->isVisible())
+            m_dropdownMenu->hide();
+        updateOverlayMask();
+    });
 
     m_libraryModal = new EditorLibraryModal(this);
     m_libraryModal->setPresets(m_presets);
@@ -310,7 +329,11 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     connect(m_libraryModal, &EditorLibraryModal::stickerSelected, this, [this](const QString& id) {
         if (m_canvas && m_elementsPanel) m_canvas->insertStickerTemplate(id, m_elementsPanel->stickerStyle());
     });
-    connect(m_libraryModal, &EditorLibraryModal::closed, this, [this] { updateOverlayMask(); });
+    connect(m_libraryModal, &EditorLibraryModal::closed, this, [this] {
+        if (m_dropdownMenu && m_dropdownMenu->isVisible())
+            m_dropdownMenu->hide();
+        updateOverlayMask();
+    });
 
     applyThemeToAll(false);
     refreshFromCanvas();
@@ -839,7 +862,7 @@ void FloatingToolbar::positionAll() {
     }
 
     if (m_openPopover && m_openPopover->isVisible())
-        positionFloatingCard(m_openPopover, m_openPopoverAnchor);
+        positionFloatingCard(m_openPopover, m_openPopoverAnchor, m_openPopover == m_paperPanel);
 
     positionContextCapsule();
 

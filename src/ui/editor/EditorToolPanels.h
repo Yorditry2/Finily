@@ -96,6 +96,7 @@ public:
 signals:
     void libraryRequested(const QString& section);
     void customColorRequested(ToolType tool, const QRect& anchorRect);
+    void panelResized();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -128,6 +129,7 @@ public:
 
 signals:
     void customColorRequested(ToolType tool, const QRect& anchorRect);
+    void panelResized();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -153,6 +155,7 @@ public:
 
 signals:
     void clearPageRequested();
+    void panelResized();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -293,6 +296,9 @@ public:
     explicit EditorPaperPanel(CanvasWidget* canvas, QWidget* parent = nullptr);
     void syncFromCanvas();
     void applyEditorTheme(bool dark) override;
+
+signals:
+    void panelResized();
 
 protected:
     void paintEvent(QPaintEvent* event) override;

@@ -3,6 +3,7 @@
 #include "core/Utils.h"
 #include "ui/CanvasWidget.h"
 #include "ui/editor/EditorChrome.h"
+#include "ui/editor/EditorSidePanels.h"
 
 #include <QFileDialog>
 #include <QFileInfo>
@@ -85,6 +86,8 @@ void FloatingToolbar::insertImageDialog() {
         while (recents.size() > 16)
             recents.removeLast();
         writeAppSetting(QStringLiteral("editor/recentImages"), recents);
+        if (m_elementsPanel && m_elementsPanel->isVisible())
+            m_elementsPanel->syncFromCanvas();
     }
     refreshFromCanvas();
 }

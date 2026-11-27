@@ -124,17 +124,26 @@ void EditorContextCapsule::syncFromCanvas() {
     const bool isShape = m_canvas->hasSelectedShape();
     const bool isAngle = isShape && st.label.has_value();
     const bool isStrokes = m_canvas->hasLassoSelection() && m_canvas->hasSelectedStrokes();
+    const bool editableField = isAxes || isAngle || m_saveElementOpen;
 
-    const QString sig = QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9")
-                            .arg(m_dark)
-                            .arg(isPolyline)
-                            .arg(isAxes)
-                            .arg(isImage)
-                            .arg(isShape)
-                            .arg(int(fam))
-                            .arg(isAngle)
-                            .arg(isStrokes)
-                            .arg(m_saveElementOpen * 2 + m_fineThicknessOpen);
+    QString sig = QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9")
+                      .arg(m_dark)
+                      .arg(isPolyline)
+                      .arg(isAxes)
+                      .arg(isImage)
+                      .arg(isShape)
+                      .arg(int(fam))
+                      .arg(isAngle)
+                      .arg(isStrokes)
+                      .arg(m_saveElementOpen * 2 + m_fineThicknessOpen);
+    if (!editableField && isShape) {
+        sig += QStringLiteral("|%1|%2|%3|%4|%5")
+                   .arg(famVal)
+                   .arg(st.fillColor ? st.fillColor->rgba() : 0u)
+                   .arg(int(st.pattern.value_or(LinePattern::Solid)))
+                   .arg(int(st.ending.value_or(LineEnding::None)))
+                   .arg(qRound(st.width.value_or(0.0) * 10.0));
+    }
 
     if (sig == m_lastSignature && isVisible())
         return;
@@ -383,16 +392,21 @@ void EditorContextCapsule::syncFromCanvas() {
             auto* okBtn = new EditorChipButton(QStringLiteral("Guardar"), this);
             okBtn->setChecked(true);
             okBtn->applyEditorTheme(m_dark);
-            connect(okBtn, &EditorChipButton::clicked, this, [this, nameEdit] {
+            auto commitSave = [this, nameEdit] {
                 if (!m_canvas) return;
                 QString name = nameEdit->text().trimmed();
                 if (name.isEmpty()) name = QStringLiteral("Elemento");
-                m_canvas->saveSelectionAsSticker(name, QStringLiteral("Mis elementos"));
+                const bool saved = m_canvas->saveSelectionAsSticker(name, QStringLiteral("Mis elementos"));
                 m_saveElementOpen = false;
                 m_lastSignature.clear();
                 syncFromCanvas();
-            });
+                if (saved)
+                    emit elementSaved();
+            };
+            connect(okBtn, &EditorChipButton::clicked, this, commitSave);
+            connect(nameEdit, &QLineEdit::returnPressed, this, commitSave);
             m_layout->addWidget(okBtn);
+            nameEdit->setFocus();
         } else {
             auto* saveChip = new EditorChipButton(QStringLiteral("Guardar elemento"), this);
             saveChip->setIcon(QStringLiteral("bookmark"), QStringLiteral("editor"));
@@ -467,6 +481,7 @@ EditorEdgeMarkCapsule::EditorEdgeMarkCapsule(CanvasWidget* canvas, QWidget* pare
             if (m_canvas)
                 m_canvas->stampCongruenceMarkAt(m_worldPos, spec);
             hide();
+            emit visibilityChanged();
         });
         m_markBtns.append(btn);
         row->addWidget(btn);
@@ -482,6 +497,7 @@ EditorEdgeMarkCapsule::EditorEdgeMarkCapsule(CanvasWidget* canvas, QWidget* pare
         if (m_canvas)
             m_canvas->highlightSegmentAt(m_worldPos, m_activeColor, 0);
         hide();
+        emit visibilityChanged();
     });
     row->addWidget(m_highlightBtn);
     adjustSize();
