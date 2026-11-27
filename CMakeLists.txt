@@ -101,6 +101,8 @@ add_executable(finily
     src/ui/home/NotebookCards.cpp
     src/ui/home/CreateMenu.h
     src/ui/home/CreateMenu.cpp
+    src/ui/home/SheetWidgets.h
+    src/ui/home/SheetWidgets.cpp
     src/ui/home/GlassSheet.h
     src/ui/home/GlassSheet.cpp
     src/ui/home/NewFolderSheet.h

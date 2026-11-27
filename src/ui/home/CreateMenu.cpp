@@ -1,5 +1,8 @@
 #include "ui/home/CreateMenu.h"
 
+#include "ui/DesignTokens.h"
+#include "ui/UiIcons.h"
+
 #include <QFontMetrics>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -11,10 +14,11 @@
 namespace finily {
 namespace {
 
-constexpr int kMenuWidth = 300;
-constexpr int kPad = 8;
-constexpr int kRowHeight = 52;
-constexpr int kSepGap = 11;
+// Medidas del mockup 00 (.newmenu): 262 px, padding 5, filas de 46.
+constexpr int kMenuWidth = 262;
+constexpr int kPad = 5;
+constexpr int kRowHeight = 46;
+constexpr int kSepGap = 9;
 
 } // namespace
 
@@ -24,20 +28,20 @@ CreateMenu::CreateMenu(QWidget* parent)
     setFocusPolicy(Qt::StrongFocus);
     setAttribute(Qt::WA_StyledBackground, false);
     m_rows = {
-        {QStringLiteral("bolt"), QStringLiteral("Nota rápida"),
-         QStringLiteral("Lienzo al instante"), false},
-        {QStringLiteral("board"), QStringLiteral("Pizarra"),
-         QStringLiteral("Espacio infinito"), false},
-        {QStringLiteral("notebook"), QStringLiteral("Cuaderno"),
-         QStringLiteral("Hojas A4 o 16:9"), false},
+        {QStringLiteral("pen"), QStringLiteral("Nota rápida"),
+         QStringLiteral("Abre un lienzo al instante"), false},
+        {QStringLiteral("board"), QStringLiteral("Pizarra infinita"),
+         QStringLiteral("Lienzo sin límites"), false},
+        {QStringLiteral("book"), QStringLiteral("Cuaderno"),
+         QStringLiteral("Portada, hojas y plantilla"), false},
         {QStringLiteral("folder"), QStringLiteral("Carpeta"),
-         QStringLiteral("Agrupa por curso o tema"), true},
+         QStringLiteral("Agrupa documentos"), true},
         {QStringLiteral("pdf"), QStringLiteral("Importar PDF"),
-         QStringLiteral("Anota sobre un archivo"), false},
+         QStringLiteral("Para anotar encima"), false},
     };
     m_anim = new QPropertyAnimation(this, "progress", this);
-    m_anim->setDuration(140);
-    m_anim->setEasingCurve(QEasingCurve::OutCubic);
+    m_anim->setDuration(tokens::motion::Base);
+    m_anim->setEasingCurve(tokens::motion::out());
     hide();
 }
 
@@ -56,7 +60,7 @@ void CreateMenu::openAnchoredTo(const QRect& anchorInParent, const QString& curr
     if (!parentWidget())
         return;
     m_rows[3].subtitle = currentFolderName.isEmpty()
-        ? QStringLiteral("Agrupa por curso o tema")
+        ? QStringLiteral("Agrupa documentos")
         : QStringLiteral("Subcarpeta en «%1»").arg(currentFolderName);
     if (isVisible())
         hide();
@@ -147,50 +151,72 @@ void CreateMenu::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    const qreal dy = (1.0 - m_progress) * 6.0;
+    // Entrada: aparece escalando 0.96→1 desde la esquina del botón «Nuevo» (mockup 11).
+    const QPointF origin(m_cardRect.right(), m_cardRect.top());
+    const qreal sc = 0.96 + 0.04 * m_progress;
+    painter.translate(origin);
+    painter.scale(sc, sc);
+    painter.translate(-origin);
     painter.setOpacity(m_progress);
-    const QRectF card = QRectF(m_cardRect).translated(0.0, dy);
-    paintLiquidGlassPanel(painter, card, 16.0, m_blurredBg, m_pal, m_dark);
+
+    const tokens::Palette tk = tokens::paletteFor(m_dark);
+    paintLiquidGlassPanel(painter, QRectF(m_cardRect), 14.0, m_blurredBg, m_pal, m_dark);
 
     for (int i = 0; i < m_rows.size(); ++i) {
         const auto& row = m_rows.at(i);
-        const QRect rr = rowRect(i).translated(0, qRound(dy));
+        const QRect rr = rowRect(i);
         if (row.separatorAbove) {
             const int sy = rr.top() - kSepGap / 2;
-            painter.fillRect(QRect(m_cardRect.left() + 14, sy, kMenuWidth - 28, 1), m_pal.border);
+            painter.fillRect(QRect(m_cardRect.left() + 11, sy, kMenuWidth - 22, 1), tk.border);
         }
-        if (i == m_hoveredRow) {
+        const bool hov = i == m_hoveredRow;
+        if (hov) {
             painter.setPen(Qt::NoPen);
-            painter.setBrush(m_pal.hover);
-            painter.drawRoundedRect(QRectF(rr), 10.0, 10.0);
+            painter.setBrush(tk.hover);
+            painter.drawRoundedRect(QRectF(rr), 9.0, 9.0);
         }
 
-        const QRect iconBox(rr.left() + 8, rr.top() + 9, 34, 34);
+        // Cuadro de ícono: neutro; al pasar el cursor se invierte (acento).
+        const QRect iconBox(rr.left() + 8, rr.top() + 8, 30, 30);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(i == 0 ? m_pal.tint : m_pal.surfaceAlt);
+        painter.setBrush(hov ? tk.accent : tk.field);
         painter.drawRoundedRect(QRectF(iconBox), 9.0, 9.0);
+        paintUiIcon(&painter, QRectF(iconBox).adjusted(7.5, 7.5, -7.5, -7.5), row.glyph,
+                    hov ? tk.accentFg : tk.icon);
 
-        const QColor iconColor = (i == 0) ? m_pal.accent : m_pal.text;
-        homeGlyph(row.glyph, iconColor).paint(&painter, iconBox.adjusted(8, 8, -8, -8));
-
+        const int kbdW = (i == 0) ? 50 : 0;
         const int textX = iconBox.right() + 12;
-        const int textW = std::max(40, rr.right() - textX - 10);
+        const int textW = std::max(40, rr.right() - textX - 10 - kbdW);
 
         QFont tf = painter.font();
-        tf.setPixelSize(13);
+        tf.setPixelSize(12);
         tf.setWeight(QFont::DemiBold);
         painter.setFont(tf);
-        painter.setPen(m_pal.text);
-        painter.drawText(QRect(textX, rr.top() + 7, textW, 18), Qt::AlignLeft | Qt::AlignVCenter,
+        painter.setPen(tk.text);
+        painter.drawText(QRect(textX, rr.top() + 6, textW, 18), Qt::AlignLeft | Qt::AlignVCenter,
                          QFontMetrics(tf).elidedText(row.title, Qt::ElideRight, textW));
 
         QFont sf = painter.font();
         sf.setPixelSize(11);
         sf.setWeight(QFont::Normal);
         painter.setFont(sf);
-        painter.setPen(m_pal.muted);
-        painter.drawText(QRect(textX, rr.top() + 26, textW, 17), Qt::AlignLeft | Qt::AlignVCenter,
+        painter.setPen(tk.muted);
+        painter.drawText(QRect(textX, rr.top() + 24, textW, 16), Qt::AlignLeft | Qt::AlignVCenter,
                          QFontMetrics(sf).elidedText(row.subtitle, Qt::ElideRight, textW));
+
+        if (i == 0) {
+            // Atajo solo en la acción más usada.
+            const QRect kb(rr.right() - 8 - 46, rr.top() + 13, 46, 20);
+            painter.setPen(QPen(tk.border, 1));
+            painter.setBrush(tk.field);
+            painter.drawRoundedRect(QRectF(kb).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
+            QFont kf = painter.font();
+            kf.setPixelSize(10);
+            kf.setWeight(QFont::Medium);
+            painter.setFont(kf);
+            painter.setPen(tk.faint);
+            painter.drawText(kb, Qt::AlignCenter, QStringLiteral("Ctrl N"));
+        }
     }
 }
 

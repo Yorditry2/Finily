@@ -4,15 +4,20 @@
 #include "engine/LibraryStore.h"
 #include "ui/home/GlassSheet.h"
 
-class QButtonGroup;
 class QLineEdit;
-class QStackedWidget;
-class QToolButton;
+class QPushButton;
+class QScrollArea;
 
 namespace finily {
 
-class NotebookHeroPreview;
+class InfoChip;
+class NotebookPreview;
+class TileGrid;
+class FormatRow;
+class PaperDots;
 
+// Galería modal «Nuevo cuaderno» (mockup 05, opción A, 880×600):
+// izquierda vista previa + título + formato + Crear; derecha portadas y hojas.
 class NewNotebookSheet : public GlassSheet {
     Q_OBJECT
 
@@ -30,28 +35,26 @@ protected:
     void onConfirmed() override;
 
 private:
-    void setActiveTab(int index);
     void refreshState();
+    void applyDark(bool dark);
 
     bool m_editCoverOnly = false;
     QString m_editFilePath;
     NewDocumentSpec m_spec;
-    int m_activeTab = 0;
 
-    NotebookHeroPreview* m_preview = nullptr;
+    NotebookPreview* m_preview = nullptr;
     QLineEdit* m_nameEdit = nullptr;
-    QWidget* m_tabBar = nullptr;
-    QToolButton* m_coverTabBtn = nullptr;
-    QToolButton* m_paperTabBtn = nullptr;
-    QStackedWidget* m_stack = nullptr;
-
-    QButtonGroup* m_colorGroup = nullptr;
-    QButtonGroup* m_iconGroup = nullptr;
-    QButtonGroup* m_formatGroup = nullptr;
-    QButtonGroup* m_themeGroup = nullptr;
-    QButtonGroup* m_tplGroup = nullptr;
-    QButtonGroup* m_scaleGroup = nullptr;
-    QVector<QToolButton*> m_scaleBtns;
+    QWidget* m_formatBlock = nullptr;
+    QWidget* m_pageBlock = nullptr;
+    FormatRow* m_formats = nullptr;
+    TileGrid* m_covers = nullptr;
+    TileGrid* m_pages = nullptr;
+    PaperDots* m_papers = nullptr;
+    InfoChip* m_folderChip = nullptr;
+    QPushButton* m_cta = nullptr;
+    QWidget* m_left = nullptr;
+    QWidget* m_right = nullptr;
+    QWidget* m_divider = nullptr;
 };
 
 } // namespace finily

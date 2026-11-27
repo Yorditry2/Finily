@@ -3,14 +3,15 @@
 #include "core/Types.h"
 #include "ui/home/GlassSheet.h"
 
-class QButtonGroup;
-class QLineEdit;
-class QToolButton;
-
 namespace finily {
 
-class BoardHeroPreview;
+class SheetHero;
+class SwatchRow;
+class TemplateRow;
+class MmRuler;
+class InfoChip;
 
+// Tarjeta lateral «Nueva pizarra infinita» (mockup 00, escena 07).
 class NewBoardSheet : public GlassSheet {
     Q_OBJECT
 
@@ -29,12 +30,13 @@ private:
     void refreshState();
 
     NewDocumentSpec m_spec;
-    BoardHeroPreview* m_preview = nullptr;
-    QLineEdit* m_nameEdit = nullptr;
-    QButtonGroup* m_themeGroup = nullptr;
-    QButtonGroup* m_tplGroup = nullptr;
-    QButtonGroup* m_scaleGroup = nullptr;
-    QVector<QToolButton*> m_scaleBtns;
+    SheetHero* m_hero = nullptr;
+    SwatchRow* m_swatches = nullptr;
+    QLabel* m_hex = nullptr;
+    TemplateRow* m_templates = nullptr;
+    MmRuler* m_ruler = nullptr;
+    InfoChip* m_folderChip = nullptr;
+    QWidget* m_cta = nullptr;
 };
 
 } // namespace finily

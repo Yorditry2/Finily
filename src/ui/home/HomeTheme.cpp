@@ -188,7 +188,7 @@ void paintLiquidGlassPanel(QPainter& painter, const QRectF& rect, qreal radius,
     painter.setClipPath(clip);
     if (!blurredBackdrop.isNull())
         painter.drawImage(rect, blurredBackdrop);
-    painter.fillRect(rect, dark ? QColor(28, 31, 42, 186) : QColor(255, 255, 255, 196));
+    painter.fillRect(rect, dark ? QColor(35, 36, 45, 244) : QColor(255, 255, 255, 246));
     QLinearGradient sheen(rect.topLeft(), QPointF(rect.left(), rect.top() + rect.height() * 0.36));
     sheen.setColorAt(0.0, QColor(255, 255, 255, dark ? 24 : 85));
     sheen.setColorAt(1.0, QColor(255, 255, 255, 0));

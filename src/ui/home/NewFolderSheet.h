@@ -3,19 +3,24 @@
 #include "engine/LibraryStore.h"
 #include "ui/home/GlassSheet.h"
 
-class QButtonGroup;
-class QLineEdit;
+class QPushButton;
 
 namespace finily {
 
-class FolderHeroPreview;
+class SheetHero;
+class DotRow;
+class IconGrid;
+class LocationPopover;
+class LocationButton;
 
+// Tarjeta lateral «Nueva carpeta» / «Editar carpeta» (mockup 06).
 class NewFolderSheet : public GlassSheet {
     Q_OBJECT
 
 public:
     explicit NewFolderSheet(QWidget* parent = nullptr);
 
+    void setFolders(const QVector<FolderMeta>& folders);
     void openCreate(const QString& parentRelativePath, const HomePalette& pal, bool dark);
     void openEdit(const FolderMeta& folder, const HomePalette& pal, bool dark);
 
@@ -27,20 +32,26 @@ signals:
 
 protected:
     void onConfirmed() override;
+    void hideEvent(QHideEvent* event) override;
 
 private:
-    void refreshGroups();
+    void refreshState();
+    QString pathLabel(const QString& rel) const;
 
     bool m_editMode = false;
     QString m_parentRelPath;
     QString m_editRelPath;
     int m_colorIndex = 0;
     int m_iconIndex = 0;
+    QVector<FolderMeta> m_folders;
 
-    FolderHeroPreview* m_preview = nullptr;
-    QLineEdit* m_nameEdit = nullptr;
-    QButtonGroup* m_colorGroup = nullptr;
-    QButtonGroup* m_iconGroup = nullptr;
+    SheetHero* m_hero = nullptr;
+    DotRow* m_dots = nullptr;
+    IconGrid* m_icons = nullptr;
+    QWidget* m_locSection = nullptr;
+    LocationButton* m_locBtn = nullptr;
+    LocationPopover* m_locPop = nullptr;
+    QPushButton* m_cta = nullptr;
 };
 
 } // namespace finily

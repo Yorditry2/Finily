@@ -1,5 +1,7 @@
 #include "ui/home/GlassSheet.h"
 
+#include "ui/DesignTokens.h"
+
 #include <QButtonGroup>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -118,6 +120,7 @@ GlassSheet::GlassSheet(QWidget* parent)
             onConfirmed();
     });
     headerRow->addWidget(m_confirmBtn, 0, Qt::AlignVCenter);
+    m_header = header;
     root->addWidget(header);
 
     m_bodyLayout = new QVBoxLayout();
@@ -126,8 +129,8 @@ GlassSheet::GlassSheet(QWidget* parent)
     root->addLayout(m_bodyLayout);
 
     m_anim = new QPropertyAnimation(this, "progress", this);
-    m_anim->setDuration(150);
-    m_anim->setEasingCurve(QEasingCurve::OutCubic);
+    m_anim->setDuration(tokens::motion::Slow);
+    m_anim->setEasingCurve(tokens::motion::out());
     hide();
 }
 
@@ -142,11 +145,32 @@ void GlassSheet::setCardWidth(int width) {
     m_cardWidth = std::max(340, width);
 }
 
+void GlassSheet::setSideCard(bool side) {
+    m_side = side;
+    m_cardWidth = tokens::space::FloatCardWidth;
+    if (m_header)
+        m_header->setVisible(!side);
+}
+
+void GlassSheet::setHeaderVisible(bool visible) {
+    if (m_header)
+        m_header->setVisible(visible);
+}
+
+void GlassSheet::setBodyMargins(int l, int t, int r, int b) {
+    m_bodyLayout->setContentsMargins(l, t, r, b);
+}
+
+int GlassSheet::bodySpacing() const {
+    return m_bodyLayout->spacing();
+}
+
 void GlassSheet::setProgress(qreal p) {
     m_progress = std::clamp(p, 0.0, 1.0);
-    const int dy = qRound((1.0 - m_progress) * 14.0);
+    const int dx = m_side ? qRound((1.0 - m_progress) * 28.0) : 0;
+    const int dy = m_side ? 0 : qRound((1.0 - m_progress) * 14.0);
     if (m_cardWidget && !m_cardRect.isEmpty())
-        m_cardWidget->move(m_cardRect.left(), m_cardRect.top() + dy);
+        m_cardWidget->move(m_cardRect.left() + dx, m_cardRect.top() + dy);
     update();
 }
 
@@ -189,9 +213,10 @@ void GlassSheet::updateCardGeometry(bool grabBackdrop) {
     setGeometry(parentWidget()->rect());
     m_cardWidget->setFixedWidth(m_cardWidth);
     m_cardWidget->adjustSize();
-    const int cardH = std::min(m_cardWidget->sizeHint().height(), std::max(260, height() - 32));
-    const int x = std::max(12, (width() - m_cardWidth) / 2);
-    const int y = std::max(12, (height() - cardH) / 2);
+    const int topGap = m_side ? tokens::space::HeaderHeight + 4 : 16;
+    const int cardH = std::min(m_cardWidget->sizeHint().height(), std::max(260, height() - topGap - 16));
+    const int x = m_side ? width() - 18 - m_cardWidth : std::max(12, (width() - m_cardWidth) / 2);
+    const int y = m_side ? topGap : std::max(12, (height() - cardH) / 2);
     m_cardRect = QRect(x, y, m_cardWidth, cardH);
     m_cardWidget->setGeometry(m_cardRect);
     if (grabBackdrop && parentWidget()->isVisible() && !m_cardRect.isEmpty()) {
@@ -398,14 +423,17 @@ void GlassSheet::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    QColor scrim = m_dark ? QColor(8, 10, 16, int(125 * m_progress))
-                          : QColor(18, 22, 34, int(58 * m_progress));
-    painter.fillRect(rect(), scrim);
+    if (!m_side) {
+        const QColor scrim = m_dark ? QColor(8, 10, 16, int(125 * m_progress))
+                                    : QColor(18, 22, 34, int(58 * m_progress));
+        painter.fillRect(rect(), scrim);
+    }
 
-    const qreal dy = (1.0 - m_progress) * 14.0;
+    const qreal dx = m_side ? (1.0 - m_progress) * 28.0 : 0.0;
+    const qreal dy = m_side ? 0.0 : (1.0 - m_progress) * 14.0;
     painter.setOpacity(m_progress);
-    paintLiquidGlassPanel(painter, QRectF(m_cardRect).translated(0.0, dy), 22.0, m_blurredBg,
-                          m_pal, m_dark);
+    paintLiquidGlassPanel(painter, QRectF(m_cardRect).translated(dx, dy), m_side ? 18.0 : 22.0,
+                          m_blurredBg, m_pal, m_dark);
 }
 
 void GlassSheet::mousePressEvent(QMouseEvent* event) {

@@ -1,117 +1,101 @@
 #include "ui/home/NewBoardSheet.h"
 
 #include "engine/LibraryStore.h"
+#include "ui/DesignTokens.h"
+#include "ui/home/SheetWidgets.h"
 
-#include <QAbstractButton>
-#include <QButtonGroup>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPainter>
-#include <QPainterPath>
-#include <QToolButton>
+#include <QPushButton>
 #include <QVBoxLayout>
 
 namespace finily {
-
-class BoardHeroPreview : public QWidget {
-public:
-    explicit BoardHeroPreview(QWidget* parent = nullptr)
-        : QWidget(parent) {
-        setFixedSize(164, 102);
-    }
-
-    void setSpec(const NewDocumentSpec& spec, bool dark) {
-        m_spec = spec;
-        m_dark = dark;
-        update();
-    }
-
-protected:
-    void paintEvent(QPaintEvent*) override {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        const QRectF r = QRectF(rect()).adjusted(6.0, 4.0, -6.0, -8.0);
-        paintSoftShadow(painter, r, 12.0, 2.0, m_dark);
-
-        const ThemeConfig tc = getThemeConfig(m_spec.theme);
-        QPainterPath clip;
-        clip.addRoundedRect(r, 12.0, 12.0);
-        painter.save();
-        painter.setClipPath(clip);
-        painter.fillRect(r, tc.background);
-        paintMiniTemplate(painter, r, tc, m_spec.tpl, m_spec.templateScale);
-        painter.restore();
-
-        painter.setPen(QPen(tc.isDark ? QColor(255, 255, 255, 38) : QColor(15, 23, 42, 28), 1.0));
-        painter.setBrush(Qt::NoBrush);
-        painter.drawRoundedRect(r, 12.0, 12.0);
-
-        const QRectF badge(r.left() + 8.0, r.top() + 8.0, 22.0, 17.0);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(tc.isDark ? QColor(255, 255, 255, 26) : QColor(15, 23, 42, 16));
-        painter.drawRoundedRect(badge, 5.0, 5.0);
-        QFont bf = painter.font();
-        bf.setPixelSize(11);
-        bf.setWeight(QFont::DemiBold);
-        painter.setFont(bf);
-        painter.setPen(tc.isDark ? QColor(255, 255, 255, 200) : QColor(15, 23, 42, 165));
-        painter.drawText(badge, Qt::AlignCenter, QStringLiteral("∞"));
-    }
-
-private:
-    NewDocumentSpec m_spec;
-    bool m_dark = false;
-};
+namespace {
+// Los cuatro fondos que admite el documento (muestras de 26 px del mockup).
+const ThemeId kThemes[] = {ThemeId::DarkBoard, ThemeId::GreenBoard, ThemeId::PaperLight, ThemeId::PaperCream};
+const char* kThemeNames[] = {"Oscura", "Academia", "Blanco", "Crema"};
+} // namespace
 
 NewBoardSheet::NewBoardSheet(QWidget* parent)
     : GlassSheet(parent) {
-    setCardWidth(432);
-    configureHeader(QStringLiteral("Nueva pizarra"), QStringLiteral("Crear"));
+    setSideCard(true);
+    setBodyMargins(16, 14, 16, 16);
+    bodyLayout()->setSpacing(12);
+    bodyLayout()->setContentsMargins(0, 0, 0, 0);
 
-    m_preview = new BoardHeroPreview(this);
-    bodyLayout()->addWidget(m_preview, 0, Qt::AlignHCenter);
+    // El héroe va pegado a los bordes: se inserta antes del cuerpo con márgenes.
+    m_hero = new SheetHero(QStringLiteral("Pizarra"), QStringLiteral("board"), this);
+    connect(m_hero, &SheetHero::closeClicked, this, [this] { closeSheet(false); });
+    connect(m_hero->titleEdit(), &QLineEdit::returnPressed, this, [this] {
+        if (validateBeforeAccept())
+            onConfirmed();
+    });
+    bodyLayout()->addWidget(m_hero);
 
-    m_nameEdit = makeNameField(QStringLiteral("Ej: Geometría — Tema 3"),
-                               QStringLiteral("Pizarra sin título"));
-    bodyLayout()->addWidget(m_nameEdit);
+    auto* body = new QWidget(this);
+    body->setAttribute(Qt::WA_StyledBackground, false);
+    auto* col = new QVBoxLayout(body);
+    col->setContentsMargins(16, 2, 16, 16);
+    col->setSpacing(12);
+    bodyLayout()->addWidget(body);
 
-    bodyLayout()->addWidget(makeSectionLabel(QStringLiteral("FONDO")));
-    bodyLayout()->addWidget(makeThemeCardRow(
-        true, ThemeId::DarkBoard,
-        [this](ThemeId th) {
-            m_spec.theme = th;
-            m_preview->setSpec(m_spec, isDarkMode());
-        },
-        &m_themeGroup));
+    // Fondo + hex
+    auto* rowBg = new QHBoxLayout();
+    rowBg->setContentsMargins(0, 0, 0, 0);
+    rowBg->addWidget(makeKicker(QStringLiteral("Fondo"), body, false));
+    rowBg->addStretch(1);
+    m_hex = new QLabel(body);
+    QFont mono(QStringLiteral("monospace"));
+    mono.setPixelSize(11);
+    m_hex->setFont(mono);
+    rowBg->addWidget(m_hex);
+    col->addLayout(rowBg);
 
-    bodyLayout()->addWidget(makeSectionLabel(QStringLiteral("PLANTILLA")));
-    const QVector<QPair<QString, int>> templates = {
-        {QStringLiteral("Liso"), int(BackgroundTemplate::Blank)},
-        {QStringLiteral("Cuadrícula"), int(BackgroundTemplate::Grid)},
-        {QStringLiteral("Puntos"), int(BackgroundTemplate::Dots)},
-        {QStringLiteral("Rayado"), int(BackgroundTemplate::Ruled)},
-    };
-    bodyLayout()->addWidget(makePillRow(
-        templates, int(BackgroundTemplate::Grid),
-        [this](int v) {
-            m_spec.tpl = static_cast<BackgroundTemplate>(v);
-            refreshState();
-        },
-        &m_tplGroup));
+    m_swatches = new SwatchRow(body);
+    QVector<QColor> colors;
+    QStringList names;
+    for (int i = 0; i < 4; ++i) {
+        colors.append(getThemeConfig(kThemes[i]).background);
+        names.append(QString::fromUtf8(kThemeNames[i]));
+    }
+    m_swatches->setColors(colors, names);
+    connect(m_swatches, &SwatchRow::picked, this, [this](int i) {
+        m_spec.theme = kThemes[i];
+        refreshState();
+    });
+    col->addWidget(m_swatches);
 
-    bodyLayout()->addWidget(makeSectionLabel(QStringLiteral("TAMAÑO DE TRAMA")));
-    const QVector<QPair<QString, int>> scales = {
-        {QStringLiteral("Chica"), 70},
-        {QStringLiteral("Normal"), 100},
-        {QStringLiteral("Grande"), 145},
-    };
-    bodyLayout()->addWidget(makePillRow(
-        scales, 100,
-        [this](int v) {
-            m_spec.templateScale = double(v) / 100.0;
-            m_preview->setSpec(m_spec, isDarkMode());
-        },
-        &m_scaleGroup, &m_scaleBtns));
+    col->addWidget(makeKicker(QStringLiteral("Plantilla"), body, false));
+    m_templates = new TemplateRow(body);
+    connect(m_templates, &TemplateRow::picked, this, [this](BackgroundTemplate t) {
+        m_spec.tpl = t;
+        refreshState();
+    });
+    col->addWidget(m_templates);
+
+    m_ruler = new MmRuler(body);
+    connect(m_ruler, &MmRuler::valueChanged, this, [this](double mm) {
+        m_spec.templateScale = mm / 5.0; // 5 mm = trama normal
+        refreshState();
+    });
+    col->addWidget(m_ruler);
+
+    auto* chips = new QHBoxLayout();
+    chips->setContentsMargins(0, 0, 0, 0);
+    m_folderChip = new InfoChip(QStringLiteral("folder"), QStringLiteral("Sin carpeta"), false, false, body);
+    m_folderChip->setCursor(Qt::ArrowCursor);
+    chips->addWidget(m_folderChip);
+    chips->addStretch(1);
+    col->addLayout(chips);
+
+    auto* cta = makeCtaButton(QStringLiteral("Crear pizarra"), body, false);
+    m_cta = cta;
+    connect(cta, &QPushButton::clicked, this, [this] {
+        if (validateBeforeAccept())
+            onConfirmed();
+    });
+    col->addWidget(cta);
 }
 
 void NewBoardSheet::openCreate(const QString& folderRelativePath, const HomePalette& pal, bool dark) {
@@ -123,34 +107,43 @@ void NewBoardSheet::openCreate(const QString& folderRelativePath, const HomePale
     m_spec.templateScale = 1.0;
     m_spec.cover = CoverStyle{-1, 0};
     m_spec.folderRelativePath = folderRelativePath;
-    m_nameEdit->setText(QStringLiteral("Pizarra sin título"));
-    m_nameEdit->selectAll();
+
+    for (auto* w : {static_cast<QWidget*>(m_swatches), static_cast<QWidget*>(m_templates),
+                    static_cast<QWidget*>(m_ruler), static_cast<QWidget*>(m_folderChip)}) {
+        Q_UNUSED(w);
+    }
+    m_swatches->setDark(dark);
+    m_templates->setDark(dark);
+    m_ruler->setDark(dark);
+    m_folderChip->setDark(dark);
+    m_hero->setDark(dark);
+    m_hex->setStyleSheet(QStringLiteral("QLabel { color: %1; background: transparent; }")
+                             .arg(tokens::paletteFor(dark).muted.name()));
+    m_ruler->setValue(5.0);
+    m_hero->titleEdit()->setText(QStringLiteral("Pizarra sin título"));
+    m_folderChip->setText(folderRelativePath.isEmpty() ? QStringLiteral("Sin carpeta")
+                                                       : folderRelativePath.section('/', -1));
     openSheet(pal, dark);
     refreshState();
-    m_nameEdit->setFocus();
+    m_hero->titleEdit()->setFocus();
+    m_hero->titleEdit()->selectAll();
 }
 
 void NewBoardSheet::refreshState() {
-    if (m_themeGroup) {
-        if (auto* b = m_themeGroup->button(int(m_spec.theme)))
-            b->setChecked(true);
-    }
-    if (m_tplGroup) {
-        if (auto* b = m_tplGroup->button(int(m_spec.tpl)))
-            b->setChecked(true);
-    }
-    if (m_scaleGroup) {
-        if (auto* b = m_scaleGroup->button(qRound(m_spec.templateScale * 100.0)))
-            b->setChecked(true);
-    }
-    const bool hasPattern = (m_spec.tpl != BackgroundTemplate::Blank);
-    for (QToolButton* sb : m_scaleBtns)
-        sb->setEnabled(hasPattern);
-    m_preview->setSpec(m_spec, isDarkMode());
+    int idx = 0;
+    for (int i = 0; i < 4; ++i)
+        if (kThemes[i] == m_spec.theme)
+            idx = i;
+    m_swatches->setCurrent(idx);
+    m_templates->setCurrent(m_spec.tpl);
+    m_ruler->setEnabled(m_spec.tpl != BackgroundTemplate::Blank);
+    const ThemeConfig tc = getThemeConfig(m_spec.theme);
+    m_hero->setLook(tc, m_spec.tpl, m_spec.templateScale);
+    m_hex->setText(tc.background.name(QColor::HexRgb).toUpper());
 }
 
 void NewBoardSheet::onConfirmed() {
-    const QString clean = LibraryStore::sanitizeBaseName(m_nameEdit->text());
+    const QString clean = LibraryStore::sanitizeBaseName(m_hero->titleEdit()->text());
     m_spec.title = clean.isEmpty() ? QStringLiteral("Pizarra sin título") : clean;
     closeSheet(true);
     emit boardSubmitted(m_spec);

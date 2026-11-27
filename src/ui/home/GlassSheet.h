@@ -38,6 +38,12 @@ signals:
 protected:
     void configureHeader(const QString& title, const QString& confirmText);
     void setCardWidth(int width);
+    // Modo tarjeta lateral (mockup 04/06): 344 px a la derecha bajo la cabecera,
+    // sin cabecera propia ni telón, entra deslizándose desde la derecha.
+    void setSideCard(bool side);
+    void setBodyMargins(int l, int t, int r, int b);
+    void setHeaderVisible(bool visible);
+    int bodySpacing() const;
     QVBoxLayout* bodyLayout() const { return m_bodyLayout; }
     const HomePalette& palette() const { return m_pal; }
     bool isDarkMode() const { return m_dark; }
@@ -76,6 +82,8 @@ private:
     QImage m_blurredBg;
     qreal m_progress = 1.0;
 
+    bool m_side = false;
+    QWidget* m_header = nullptr;
     QWidget* m_cardWidget = nullptr;
     QToolButton* m_cancelBtn = nullptr;
     QLabel* m_titleLabel = nullptr;

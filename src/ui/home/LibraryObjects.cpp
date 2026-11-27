@@ -49,13 +49,13 @@ QString formatLabel(PageFormat fmt) {
     return QStringLiteral("A4");
 }
 
-// Ícono de carpeta según el índice guardado (ver symbolNames()).
+// Ícono de carpeta según el índice guardado: 0 = sin ícono, 1..13 = paquete «folder».
 void folderIcon(int index, QString* name, QString* pack) {
-    static const char* names[] = {"", "book", "hash", "flask", "shape", "pencil", "star", "sun"};
-    static const char* packs[] = {"", "folder", "ui", "folder", "folder", "ui", "ui", "folder"};
-    const int i = std::clamp(index, 0, 7);
+    static const char* names[] = {"", "book", "shape", "sun", "star", "music", "flask",
+                                  "code", "calc", "globe", "heart", "case", "pencil", "bolt"};
+    const int i = std::clamp(index, 0, 13);
     *name = QString::fromLatin1(names[i]);
-    *pack = QString::fromLatin1(packs[i]);
+    *pack = QStringLiteral("folder");
 }
 
 } // namespace

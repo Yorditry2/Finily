@@ -1,93 +1,181 @@
 #include "ui/home/NewFolderSheet.h"
 
-#include "ui/home/LibraryObjects.h"
+#include "ui/DesignTokens.h"
+#include "ui/UiIcons.h"
+#include "ui/home/SheetWidgets.h"
 
-#include <QAbstractButton>
-#include <QButtonGroup>
-#include <QLabel>
 #include <QLineEdit>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QPushButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
 
 namespace finily {
 
-class FolderHeroPreview : public QWidget {
+// Botón «Dentro de»: ícono de carpeta + ruta con migas + chevron (mockup .loc).
+class LocationButton : public QWidget {
 public:
-    explicit FolderHeroPreview(QWidget* parent = nullptr)
+    explicit LocationButton(QWidget* parent)
         : QWidget(parent) {
-        setFixedSize(116, 94);
+        setFixedHeight(34);
+        setCursor(Qt::PointingHandCursor);
     }
-
-    void setStyle(int colorIdx, int iconIdx, bool dark) {
-        m_colorIdx = std::clamp(colorIdx, 0, int(coverColors().size()) - 1);
-        m_iconIdx = std::clamp(iconIdx, 0, LibraryStore::kIconCount - 1);
-        m_dark = dark;
-        update();
-    }
+    void setPath(const QStringList& parts) { m_parts = parts; update(); }
+    void setDark(bool d) { m_dark = d; update(); }
+    std::function<void()> onClick;
 
 protected:
     void paintEvent(QPaintEvent*) override {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        // Misma carpeta que en la rejilla, reducida al tamaño del héroe.
-        const qreal s = (width() - 4.0) / 148.0;
-        painter.translate(width() / 2.0, height() - 4.0);
-        painter.scale(s, s);
-        libobj::paintFolder(painter, QPointF(0, 0), m_colorIdx, m_iconIdx, 0.0, m_dark);
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const tokens::Palette tk = tokens::paletteFor(m_dark);
+        p.setPen(QPen(m_dark ? QColor(255, 255, 255, 18) : QColor(15, 23, 42, 15), 1));
+        p.setBrush(tk.field);
+        p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 10, 10);
+        paintUiIcon(&p, QRectF(10, 10, 14, 14), QStringLiteral("folder"), tk.muted);
+        QFont f = font();
+        f.setPixelSize(12);
+        f.setWeight(QFont::Medium);
+        p.setFont(f);
+        const QFontMetrics fm(f);
+        qreal x = 32;
+        for (int i = 0; i < m_parts.size(); ++i) {
+            const bool last = i == m_parts.size() - 1;
+            p.setPen(last ? tk.text : tk.muted);
+            const int w = fm.horizontalAdvance(m_parts[i]);
+            p.drawText(QRectF(x, 0, w + 2, height()), Qt::AlignVCenter | Qt::AlignLeft, m_parts[i]);
+            x += w + 4;
+            if (!last) {
+                paintUiIcon(&p, QRectF(x, 11.5, 11, 11), QStringLiteral("chevR"), tk.faint);
+                x += 15;
+            }
+        }
+        paintUiIcon(&p, QRectF(width() - 24, 10, 14, 14), QStringLiteral("chevD"), tk.muted);
+    }
+    void mouseReleaseEvent(QMouseEvent*) override {
+        if (onClick)
+            onClick();
     }
 
 private:
-    int m_colorIdx = 0;
-    int m_iconIdx = 0;
+    QStringList m_parts;
     bool m_dark = false;
 };
 
 NewFolderSheet::NewFolderSheet(QWidget* parent)
     : GlassSheet(parent) {
-    setCardWidth(416);
+    setSideCard(true);
+    setBodyMargins(0, 0, 0, 0);
+    bodyLayout()->setSpacing(0);
+    bodyLayout()->setContentsMargins(0, 0, 0, 0);
 
-    m_preview = new FolderHeroPreview(this);
-    bodyLayout()->addWidget(m_preview, 0, Qt::AlignHCenter);
+    m_hero = new SheetHero(QStringLiteral("Carpeta"), QStringLiteral("folder"), this, 196);
+    connect(m_hero, &SheetHero::closeClicked, this, [this] { closeSheet(false); });
+    connect(m_hero->titleEdit(), &QLineEdit::returnPressed, this, [this] { onConfirmed(); });
+    bodyLayout()->addWidget(m_hero);
 
-    m_nameEdit = makeNameField(QStringLiteral("Ej: Álgebra"), QStringLiteral("Nueva carpeta"));
-    bodyLayout()->addWidget(m_nameEdit);
+    auto* body = new QWidget(this);
+    body->setAttribute(Qt::WA_StyledBackground, false);
+    auto* col = new QVBoxLayout(body);
+    col->setContentsMargins(16, 15, 16, 16);
+    col->setSpacing(16);
+    bodyLayout()->addWidget(body);
 
-    bodyLayout()->addWidget(makeSectionLabel(QStringLiteral("COLOR")));
-    bodyLayout()->addWidget(makeColorSwatchRow(
-        m_colorIndex,
-        [this](int idx) {
-            m_colorIndex = idx;
-            m_preview->setStyle(m_colorIndex, m_iconIndex, isDarkMode());
-        },
-        &m_colorGroup));
+    auto section = [&](const QString& title, QWidget* content) {
+        auto* box = new QWidget(body);
+        auto* v = new QVBoxLayout(box);
+        v->setContentsMargins(0, 0, 0, 0);
+        v->setSpacing(9);
+        v->addWidget(makeKicker(title, box, false));
+        v->addWidget(content);
+        col->addWidget(box);
+        return box;
+    };
 
-    bodyLayout()->addWidget(makeSectionLabel(QStringLiteral("ÍCONO")));
-    bodyLayout()->addWidget(makeSymbolIconRow(
-        m_iconIndex,
-        [this](int idx) {
-            m_iconIndex = idx;
-            m_preview->setStyle(m_colorIndex, m_iconIndex, isDarkMode());
-        },
-        &m_iconGroup));
+    m_dots = new DotRow(body);
+    connect(m_dots, &DotRow::picked, this, [this](int i) { m_colorIndex = i; refreshState(); });
+    section(QStringLiteral("Color"), m_dots);
+
+    m_icons = new IconGrid(body);
+    connect(m_icons, &IconGrid::picked, this, [this](int i) { m_iconIndex = i; refreshState(); });
+    section(QStringLiteral("Icono"), m_icons);
+
+    m_locBtn = new LocationButton(body);
+    m_locSection = section(QStringLiteral("Dentro de"), m_locBtn);
+
+    m_cta = makeCtaButton(QStringLiteral("Crear carpeta"), body, false);
+    connect(m_cta, &QPushButton::clicked, this, [this] { onConfirmed(); });
+    col->addWidget(m_cta);
+
+    // El menú de ubicación es hermano de la tarjeta (hijo de HomeScreen), a su izquierda.
+    m_locPop = new LocationPopover(parent);
+    connect(m_locPop, &LocationPopover::picked, this, [this](const QString& rel) {
+        m_parentRelPath = rel;
+        refreshState();
+    });
+    m_locBtn->onClick = [this] {
+        if (m_locPop->isVisible()) {
+            m_locPop->hide();
+            return;
+        }
+        QVector<LocationEntry> entries;
+        entries.append({QString(), QStringLiteral("Carpetas"), 0, 0});
+        for (const FolderMeta& f : m_folders)
+            entries.append({f.relativePath, f.name, f.depth + 1, f.colorIndex});
+        m_locPop->setEntries(entries);
+        m_locPop->setCurrent(m_parentRelPath);
+        const QPoint tl = m_locBtn->mapTo(parentWidget(), QPoint(0, 0));
+        m_locPop->popup(QRect(tl.x() - 16, tl.y(),
+                              tokens::space::FloatCardWidth, m_locBtn->height()));
+    };
+}
+
+void NewFolderSheet::setFolders(const QVector<FolderMeta>& folders) {
+    m_folders = folders;
+}
+
+QString NewFolderSheet::pathLabel(const QString& rel) const {
+    QStringList parts{QStringLiteral("Carpetas")};
+    if (!rel.isEmpty())
+        parts += rel.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    return parts.join(QStringLiteral(" › "));
+}
+
+void NewFolderSheet::refreshState() {
+    m_hero->setFolder(m_colorIndex, m_iconIndex);
+    m_dots->setCurrent(m_colorIndex);
+    m_icons->setCurrent(m_iconIndex);
+    QStringList parts{QStringLiteral("Carpetas")};
+    if (!m_parentRelPath.isEmpty())
+        parts += m_parentRelPath.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    m_locBtn->setPath(parts);
+}
+
+void NewFolderSheet::hideEvent(QHideEvent* event) {
+    m_locPop->hide();
+    GlassSheet::hideEvent(event);
 }
 
 void NewFolderSheet::openCreate(const QString& parentRelativePath, const HomePalette& pal, bool dark) {
     m_editMode = false;
     m_parentRelPath = parentRelativePath;
     m_editRelPath.clear();
-    m_colorIndex = 0;
+    m_colorIndex = 2; // Salvia, como en el mockup
     m_iconIndex = 1;
-    configureHeader(parentRelativePath.isEmpty() ? QStringLiteral("Nueva carpeta")
-                                                 : QStringLiteral("Nueva subcarpeta"),
-                    QStringLiteral("Crear"));
-    m_nameEdit->setText(QStringLiteral("Nueva carpeta"));
-    m_nameEdit->selectAll();
+    m_hero->setDark(dark);
+    m_dots->setDark(dark);
+    m_icons->setDark(dark);
+    m_locBtn->setDark(dark);
+    m_locPop->setDark(dark);
+    m_locSection->setVisible(true);
+    m_cta->setText(QStringLiteral("Crear carpeta"));
+    m_hero->titleEdit()->setText(QStringLiteral("Nueva carpeta"));
     openSheet(pal, dark);
-    refreshGroups();
-    m_preview->setStyle(m_colorIndex, m_iconIndex, dark);
-    m_nameEdit->setFocus();
+    refreshState();
+    m_hero->titleEdit()->setFocus();
+    m_hero->titleEdit()->selectAll();
 }
 
 void NewFolderSheet::openEdit(const FolderMeta& folder, const HomePalette& pal, bool dark) {
@@ -96,28 +184,22 @@ void NewFolderSheet::openEdit(const FolderMeta& folder, const HomePalette& pal, 
     m_parentRelPath.clear();
     m_colorIndex = std::clamp(folder.colorIndex, 0, LibraryStore::kCoverColorCount - 1);
     m_iconIndex = std::clamp(folder.iconIndex, 0, LibraryStore::kIconCount - 1);
-    configureHeader(QStringLiteral("Editar carpeta"), QStringLiteral("Listo"));
-    m_nameEdit->setText(folder.name);
-    m_nameEdit->selectAll();
+    m_hero->setDark(dark);
+    m_dots->setDark(dark);
+    m_icons->setDark(dark);
+    m_locBtn->setDark(dark);
+    m_locPop->setDark(dark);
+    m_locSection->setVisible(false);
+    m_cta->setText(QStringLiteral("Guardar cambios"));
+    m_hero->titleEdit()->setText(folder.name);
     openSheet(pal, dark);
-    refreshGroups();
-    m_preview->setStyle(m_colorIndex, m_iconIndex, dark);
-    m_nameEdit->setFocus();
-}
-
-void NewFolderSheet::refreshGroups() {
-    if (m_colorGroup) {
-        if (auto* b = m_colorGroup->button(m_colorIndex))
-            b->setChecked(true);
-    }
-    if (m_iconGroup) {
-        if (auto* b = m_iconGroup->button(m_iconIndex))
-            b->setChecked(true);
-    }
+    refreshState();
+    m_hero->titleEdit()->setFocus();
+    m_hero->titleEdit()->selectAll();
 }
 
 void NewFolderSheet::onConfirmed() {
-    const QString clean = LibraryStore::sanitizeBaseName(m_nameEdit->text());
+    const QString clean = LibraryStore::sanitizeBaseName(m_hero->titleEdit()->text());
     const QString finalName = clean.isEmpty() ? QStringLiteral("Nueva carpeta") : clean;
     closeSheet(true);
     if (m_editMode)

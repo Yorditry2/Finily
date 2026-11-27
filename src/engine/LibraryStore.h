@@ -44,7 +44,7 @@ struct FolderMeta {
 class LibraryStore {
 public:
     static constexpr int kCoverColorCount = 8;
-    static constexpr int kIconCount = 8;
+    static constexpr int kIconCount = 14;
 
     static QStringList libraryDirectories();
     static QString resolveDirectory(const QString& relativeFolder = {});

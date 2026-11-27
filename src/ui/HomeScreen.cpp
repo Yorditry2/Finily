@@ -24,6 +24,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QShortcut>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -49,6 +50,17 @@ HomeScreen::HomeScreen(QWidget* parent)
     const QString snapFolder = qEnvironmentVariable("FINILY_SNAPSHOT_FOLDER");
     if (!snapFolder.isEmpty())
         QTimer::singleShot(300, this, [this, snapFolder] { openFolder(snapFolder); });
+    // Solo desarrollo: FINILY_SNAPSHOT_SHEET=menu|board|notebook|folder abre esa superficie.
+    const QString snapSheet = qEnvironmentVariable("FINILY_SNAPSHOT_SHEET");
+    if (!snapSheet.isEmpty()) {
+        QTimer::singleShot(500, this, [this, snapSheet] {
+            const HomePalette pal = homePaletteFor(m_dark);
+            if (snapSheet == QLatin1String("menu")) openCreateMenu();
+            else if (snapSheet == QLatin1String("board")) m_boardSheet->openCreate({}, pal, m_dark);
+            else if (snapSheet == QLatin1String("notebook")) m_notebookSheet->openCreate({}, pal, m_dark);
+            else if (snapSheet == QLatin1String("folder")) m_folderSheet->openCreate({}, pal, m_dark);
+        });
+    }
 }
 
 void HomeScreen::buildLayout() {
@@ -148,6 +160,8 @@ void HomeScreen::setSidebarCollapsed(bool collapsed) {
 void HomeScreen::buildOverlays() {
     m_createMenu = new CreateMenu(this);
     connect(m_createMenu, &CreateMenu::quickNoteChosen, this, &HomeScreen::launchQuickNote);
+    auto* quickNoteShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+N")), this);
+    connect(quickNoteShortcut, &QShortcut::activated, this, &HomeScreen::launchQuickNote);
     connect(m_createMenu, &CreateMenu::boardChosen, this, [this] {
         const QString folder = (m_viewMode == ViewMode::Folder) ? m_currentFolder : QString();
         m_boardSheet->openCreate(folder, homePaletteFor(m_dark), m_dark);
@@ -278,6 +292,7 @@ void HomeScreen::refreshLibrary() {
 
     if (m_sidebar) {
         m_sidebar->setFolders(m_allFolders);
+        m_folderSheet->setFolders(m_allFolders);
         if (m_viewMode == ViewMode::Folder)
             m_sidebar->setSelectedFolder(m_currentFolder);
         else
