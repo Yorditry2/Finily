@@ -144,7 +144,8 @@ QJsonObject documentSettings(ShapeKind kind, bool hold, bool guides, bool swap,
                              PageFormat pageFormat,
                              double templateScale,
                              int coverColorIndex,
-                             int coverIconIndex) {
+                             int coverIconIndex,
+                             const QColor& customBackground) {
     QJsonObject obj{{"shapeKind", int(kind)},
                     {"holdToShapeEnabled", hold},
                     {"smartGuidesEnabled", guides},
@@ -159,6 +160,8 @@ QJsonObject documentSettings(ShapeKind kind, bool hold, bool guides, bool swap,
         obj.insert(QStringLiteral("coverColor"), coverColorIndex);
     if (coverIconIndex > 0)
         obj.insert(QStringLiteral("coverIcon"), coverIconIndex);
+    if (customBackground.isValid())
+        obj.insert(QStringLiteral("customBackground"), customBackground.name(QColor::HexRgb));
     return obj;
 }
 
@@ -560,12 +563,13 @@ PageData deserializePage(const QJsonObject& root,
 
 QImage renderPageThumbnail(const PageData& page, ThemeId themeId,
                            BackgroundTemplate fallbackTpl, PageFormat pageFormat,
-                           const QSize& size, double templateScale) {
+                           const QSize& size, double templateScale,
+                           const QColor& customBackground) {
     if (size.width() <= 0 || size.height() <= 0)
         return {};
     QImage image(size * 2, QImage::Format_ARGB32_Premultiplied);
     image.setDevicePixelRatio(2.0);
-    const auto theme = getThemeConfig(themeId);
+    const auto theme = effectiveThemeConfig(themeId, customBackground);
     image.fill(theme.background);
 
     const auto& strokes = page.strokes;
@@ -657,7 +661,8 @@ void saveCoverThumbnail(const QString& notebookPath, const QImage& thumbnail) {
 
 void updateCoverThumbnailForPages(const QString& notebookPath, const QVector<PageData>& pages,
                                   ThemeId themeId, BackgroundTemplate fallbackTpl,
-                                  PageFormat pageFormat, double templateScale) {
+                                  PageFormat pageFormat, double templateScale,
+                                  const QColor& customBackground) {
     if (notebookPath.isEmpty())
         return;
     if (pages.isEmpty() || !pageHasContent(pages.first())) {
@@ -666,7 +671,8 @@ void updateCoverThumbnailForPages(const QString& notebookPath, const QVector<Pag
     }
     const QImage thumb = renderPageThumbnail(pages.first(), themeId, fallbackTpl,
                                              pageFormat, kCoverThumbSize,
-                                             clampTemplateScale(templateScale));
+                                             clampTemplateScale(templateScale),
+                                             customBackground);
     saveCoverThumbnail(notebookPath, thumb);
 }
 
@@ -714,6 +720,8 @@ QImage loadOrGenerateCoverThumbnail(const QString& notebookPath, const QDateTime
     const PageFormat pageFmt =
         pageFormatFromInt(root.value("pageFormat").toInt(int(PageFormat::Infinite)));
     const double tplScale = clampTemplateScale(root.value("templateScale").toDouble(1.0));
+    const QString customBgStr = root.value("customBackground").toString();
+    const QColor customBg = customBgStr.isEmpty() ? QColor() : QColor(customBgStr);
 
     QJsonObject firstPageObj = root;
     if (root.value("version").toInt() == 5) {
@@ -730,7 +738,8 @@ QImage loadOrGenerateCoverThumbnail(const QString& notebookPath, const QDateTime
     }
     const QImage generated = renderPageThumbnail(firstPage, static_cast<ThemeId>(themeInt),
                                                  static_cast<BackgroundTemplate>(tplInt),
-                                                 pageFmt, kCoverThumbSize, tplScale);
+                                                 pageFmt, kCoverThumbSize, tplScale,
+                                                 customBg.isValid() ? customBg : QColor());
     saveCoverThumbnailUnlocked(notebookPath, generated);
     return generated;
 }
@@ -764,6 +773,8 @@ NotebookFileMeta readNotebookMetadata(const QString& path) {
         QStringLiteral("\"templateScale\"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)"));
     static const QRegularExpression coverRe(QStringLiteral("\"coverColor\"\\s*:\\s*(-?\\d+)"));
     static const QRegularExpression coverIconRe(QStringLiteral("\"coverIcon\"\\s*:\\s*(\\d+)"));
+    static const QRegularExpression customBgRe(
+        QStringLiteral("\"customBackground\"\\s*:\\s*\"(#[0-9A-Fa-f]{6,8})\""));
 
     auto lastMatchInt = [](const QString& text, const QRegularExpression& re, int& out) -> bool {
         auto it = re.globalMatch(text);
@@ -835,6 +846,20 @@ NotebookFileMeta readNotebookMetadata(const QString& path) {
         || (!tail.isEmpty() && firstMatchInt(tail, coverIconRe, val))) {
         anyMatched = true;
         meta.coverIconIndex = std::clamp(val, 0, 7);
+    }
+    auto matchColor = [](const QString& text, const QRegularExpression& re, QColor& out) -> bool {
+        const auto match = re.match(text);
+        if (!match.hasMatch())
+            return false;
+        const QColor color(match.captured(1));
+        if (!color.isValid())
+            return false;
+        out = color;
+        return true;
+    };
+    if (matchColor(head, customBgRe, meta.customBackground)
+        || (!tail.isEmpty() && matchColor(tail, customBgRe, meta.customBackground))) {
+        anyMatched = true;
     }
     meta.found = anyMatched;
     return meta;

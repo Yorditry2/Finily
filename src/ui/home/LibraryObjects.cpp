@@ -4,6 +4,7 @@
 #include "ui/UiIcons.h"
 #include "ui/home/HomeTheme.h"
 
+#include <QApplication>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
@@ -13,12 +14,12 @@
 namespace finily::libobj {
 namespace {
 
-constexpr qreal kFolderW = 148.0;
+constexpr qreal kFolderW = 184.0;
 constexpr qreal kFolderScale = kFolderW / 122.0; // viewBox 122×96 del mockup
-constexpr qreal kBoardW = 148.0, kBoardH = 108.0;
-constexpr qreal kBookW = 104.0, kBookH = 136.0;
-constexpr qreal kBookWideW = 148.0, kBookWideH = 104.0;
-constexpr qreal kPdfW = 100.0, kPdfH = 130.0;
+constexpr qreal kBoardW = 184.0, kBoardH = 134.0;
+constexpr qreal kBookW = 128.0, kBookH = 168.0;
+constexpr qreal kBookWideW = 184.0, kBookWideH = 130.0;
+constexpr qreal kPdfW = 124.0, kPdfH = 162.0;
 
 QRectF anchored(const QPointF& bc, qreal w, qreal h) {
     return QRectF(bc.x() - w / 2.0, bc.y() - h, w, h);
@@ -36,13 +37,22 @@ void drawImageCover(QPainter& p, const QRectF& target, const QImage& img) {
 }
 
 bool isWideFormat(PageFormat fmt) {
-    return fmt == PageFormat::A4Landscape || fmt == PageFormat::Slide16x9;
+    return fmt == PageFormat::A4Landscape || fmt == PageFormat::Slide16x9
+        || fmt == PageFormat::A5Landscape || fmt == PageFormat::LetterLandscape
+        || fmt == PageFormat::LegalLandscape;
 }
 
 QString formatLabel(PageFormat fmt) {
     switch (fmt) {
         case PageFormat::A4Landscape: return QStringLiteral("A4 ↔");
         case PageFormat::Slide16x9: return QStringLiteral("16:9");
+        case PageFormat::A5: return QStringLiteral("A5");
+        case PageFormat::A5Landscape: return QStringLiteral("A5 ↔");
+        case PageFormat::Letter: return QStringLiteral("Carta");
+        case PageFormat::LetterLandscape: return QStringLiteral("Carta ↔");
+        case PageFormat::Legal: return QStringLiteral("Legal");
+        case PageFormat::LegalLandscape: return QStringLiteral("Legal ↔");
+        case PageFormat::Square: return QStringLiteral("1:1");
         case PageFormat::A4:
         case PageFormat::Infinite: break;
     }
@@ -65,10 +75,12 @@ void paintObjectShadow(QPainter& p, const QRectF& r, qreal radius, qreal lift, b
     p.setPen(Qt::NoPen);
     const int base = dark ? 34 : 10;
     for (int i = 0; i < 8; ++i) {
-        const qreal s = i * 1.7;
+        const qreal s = i * (1.7 + lift * 0.12);
         p.setBrush(QColor(8, 10, 20, std::max(1, int(base * (1.0 - i / 8.0)))));
-        p.drawRoundedRect(r.adjusted(5.0 - s * 0.5, 6.0 + i * 0.9 + lift, -5.0 + s * 0.5, 3.0 + s * 0.7 + lift),
-                          radius + s * 0.4, radius + s * 0.4);
+        p.drawRoundedRect(
+            r.adjusted(5.0 - s * 0.5 - lift * 0.25, 6.0 + i * 0.9 + lift * 0.7,
+                       -5.0 + s * 0.5 + lift * 0.25, 3.0 + s * 0.7 + lift * 1.15),
+            radius + s * 0.4, radius + s * 0.4);
     }
     p.restore();
 }
@@ -135,53 +147,55 @@ QRectF boardRect(const QPointF& bc) {
     return anchored(bc, kBoardW, kBoardH);
 }
 
-void paintBoard(QPainter& p, const QPointF& bc, const NotebookMeta& meta, bool dark) {
+void paintBoard(QPainter& p, const QPointF& bc, const NotebookMeta& meta, bool dark, qreal lift) {
     const QRectF r = boardRect(bc);
-    const ThemeConfig tc = getThemeConfig(meta.theme);
+    const ThemeConfig tc = effectiveThemeConfig(meta.theme, meta.customBackground);
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
-    paintObjectShadow(p, r, 10, 0, dark);
+    paintObjectShadow(p, r, 12, lift, dark);
 
     QPainterPath clip;
-    clip.addRoundedRect(r, 10, 10);
+    clip.addRoundedRect(r, 12, 12);
     p.setClipPath(clip);
     p.fillRect(r, tc.background);
     if (!meta.preview.isNull())
         drawImageCover(p, r, meta.preview);
     else
-        paintMiniTemplate(p, r, tc, meta.tpl, meta.templateScale * 0.7);
+        paintMiniTemplate(p, r, tc, meta.tpl, meta.templateScale * 0.78);
     p.setClipping(false);
 
     const bool ink = tc.isDark;
     p.setPen(QPen(ink || dark ? QColor(255, 255, 255, 26) : QColor(15, 23, 42, 18), 1.0));
     p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10);
+    p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12);
 
-    QFont f = p.font();
-    f.setPixelSize(13);
+    QFont f = QApplication::font();
+    f.setPixelSize(15);
     f.setWeight(QFont::DemiBold);
     p.setFont(f);
-    p.setPen(ink ? QColor(244, 244, 245, 140) : QColor(24, 24, 27, 140));
-    p.drawText(QRectF(r.right() - 26, r.bottom() - 22, 20, 18), Qt::AlignRight | Qt::AlignBottom,
+    p.setPen(ink ? QColor(244, 244, 245, 145) : QColor(24, 24, 27, 145));
+    p.drawText(QRectF(r.right() - 28, r.bottom() - 24, 22, 20), Qt::AlignRight | Qt::AlignBottom,
                QStringLiteral("∞"));
     p.restore();
 }
 
 // ---------------------------------------------------------------- cuaderno
 QRectF bookRect(const QPointF& bc, PageFormat fmt) {
+    if (fmt == PageFormat::Square)
+        return anchored(bc, 116, 116);
     return isWideFormat(fmt) ? anchored(bc, kBookWideW, kBookWideH) : anchored(bc, kBookW, kBookH);
 }
 
-void paintBook(QPainter& p, const QPointF& bc, const NotebookMeta& meta, bool dark) {
+void paintBook(QPainter& p, const QPointF& bc, const NotebookMeta& meta, bool dark, qreal lift) {
     const QRectF r = bookRect(bc, meta.pageFormat);
     const QColor base = coverColors().at(std::clamp(meta.coverColorIndex, 0, int(coverColors().size()) - 1));
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
-    paintObjectShadow(p, r, 8, 0, dark);
+    paintObjectShadow(p, r, 10, lift, dark);
 
-    // Lomo con radio 4 a la izquierda y 10 a la derecha.
+    // Lomo con radio 5 a la izquierda y 12 a la derecha.
     QPainterPath shape;
-    const qreal rl = 4.0, rr = 10.0;
+    const qreal rl = 5.0, rr = 12.0;
     shape.moveTo(r.left() + rl, r.top());
     shape.lineTo(r.right() - rr, r.top());
     shape.quadTo(r.right(), r.top(), r.right(), r.top() + rr);
@@ -200,7 +214,7 @@ void paintBook(QPainter& p, const QPointF& bc, const NotebookMeta& meta, bool da
     p.drawPath(shape);
 
     p.setClipPath(shape);
-    p.fillRect(QRectF(r.left(), r.top(), 9, r.height()), QColor(0, 0, 0, 31));
+    p.fillRect(QRectF(r.left(), r.top(), 11, r.height()), QColor(0, 0, 0, 31));
     QLinearGradient sheen(r.topLeft(), QPointF(r.left() + r.width() * 0.55, r.top() + r.height() * 0.35));
     sheen.setColorAt(0.0, QColor(255, 255, 255, 56));
     sheen.setColorAt(1.0, QColor(255, 255, 255, 0));
@@ -208,22 +222,22 @@ void paintBook(QPainter& p, const QPointF& bc, const NotebookMeta& meta, bool da
     p.setClipping(false);
 
     // Etiqueta blanca y formato.
-    const QRectF label(r.left() + r.width() * 0.16, r.top() + r.height() * 0.16, r.width() * 0.74, 18);
+    const QRectF label(r.left() + r.width() * 0.16, r.top() + r.height() * 0.16, r.width() * 0.74, 22);
     p.setBrush(QColor(255, 255, 255, 230));
-    p.drawRoundedRect(label, 3, 3);
+    p.drawRoundedRect(label, 4, 4);
 
     if (meta.coverIconIndex > 0) {
-        const QRectF ic(r.center().x() - 11 + 4, r.top() + r.height() * 0.52 - 11, 22, 22);
+        const QRectF ic(r.center().x() - 13 + 5, r.top() + r.height() * 0.52 - 13, 26, 26);
         symbolGlyph(meta.coverIconIndex, QColor(255, 255, 255, 215)).paint(&p, ic.toRect());
     }
 
-    QFont f = p.font();
-    f.setPixelSize(9);
+    QFont f = QApplication::font();
+    f.setPixelSize(11);
     f.setWeight(QFont::Bold);
     f.setLetterSpacing(QFont::PercentageSpacing, 104);
     p.setFont(f);
     p.setPen(QColor(255, 255, 255, 205));
-    p.drawText(QRectF(r.left() + 16, r.bottom() - 18, r.width() - 20, 14), Qt::AlignLeft | Qt::AlignBottom,
+    p.drawText(QRectF(r.left() + 19, r.bottom() - 22, r.width() - 24, 16), Qt::AlignLeft | Qt::AlignBottom,
                formatLabel(meta.pageFormat));
     p.restore();
 }
@@ -233,11 +247,11 @@ QRectF pdfRect(const QPointF& bc) {
     return anchored(bc, kPdfW, kPdfH);
 }
 
-void paintPdf(QPainter& p, const QPointF& bc, const NotebookMeta& meta, bool dark) {
+void paintPdf(QPainter& p, const QPointF& bc, const NotebookMeta& meta, bool dark, qreal lift) {
     const QRectF r = pdfRect(bc);
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
-    paintObjectShadow(p, r, 4, 0, dark);
+    paintObjectShadow(p, r, 4, lift, dark);
 
     QPainterPath clip;
     clip.addRoundedRect(r, 4, 4);
@@ -258,14 +272,14 @@ void paintPdf(QPainter& p, const QPointF& bc, const NotebookMeta& meta, bool dar
     }
     p.setClipping(false);
 
-    QFont f = p.font();
-    f.setPixelSize(9);
+    QFont f = QApplication::font();
+    f.setPixelSize(11);
     f.setWeight(QFont::ExtraBold);
     p.setFont(f);
-    const QRectF tag(r.left() + 9, r.bottom() - 25, 28, 15);
+    const QRectF tag(r.left() + 11, r.bottom() - 30, 34, 18);
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(0xDC, 0x26, 0x26));
-    p.drawRoundedRect(tag, 3, 3);
+    p.drawRoundedRect(tag, 4, 4);
     p.setPen(Qt::white);
     p.drawText(tag, Qt::AlignCenter, QStringLiteral("PDF"));
     p.restore();
@@ -279,13 +293,13 @@ QRectF documentRect(const QPointF& bc, const NotebookMeta& meta) {
     return bookRect(bc, meta.pageFormat);
 }
 
-void paintDocument(QPainter& p, const QPointF& bc, const NotebookMeta& meta, bool dark) {
+void paintDocument(QPainter& p, const QPointF& bc, const NotebookMeta& meta, bool dark, qreal lift) {
     if (meta.hasPdf)
-        paintPdf(p, bc, meta, dark);
+        paintPdf(p, bc, meta, dark, lift);
     else if (meta.pageFormat == PageFormat::Infinite)
-        paintBoard(p, bc, meta, dark);
+        paintBoard(p, bc, meta, dark, lift);
     else
-        paintBook(p, bc, meta, dark);
+        paintBook(p, bc, meta, dark, lift);
 }
 
 } // namespace finily::libobj

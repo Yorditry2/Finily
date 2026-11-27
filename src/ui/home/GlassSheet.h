@@ -10,6 +10,7 @@
 #include <functional>
 
 class QButtonGroup;
+class QGraphicsOpacityEffect;
 class QLabel;
 class QLineEdit;
 class QPropertyAnimation;
@@ -45,12 +46,16 @@ protected:
     void setHeaderVisible(bool visible);
     int bodySpacing() const;
     QVBoxLayout* bodyLayout() const { return m_bodyLayout; }
+    QWidget* cardWidget() const { return m_cardWidget; }
+    QRect cardRect() const { return m_cardRect; }
     const HomePalette& palette() const { return m_pal; }
     bool isDarkMode() const { return m_dark; }
+    bool isClosing() const { return m_closing; }
 
     void openSheet(const HomePalette& pal, bool dark);
     virtual bool validateBeforeAccept() { return true; }
     virtual void onConfirmed() = 0;
+    virtual void onClosing() {}
 
     // Helpers de formulario compartidos
     QLabel* makeSectionLabel(const QString& text);
@@ -77,6 +82,9 @@ private:
 
     HomePalette m_pal = homePaletteFor(false);
     bool m_dark = false;
+    bool m_closing = false;
+    bool m_pendingAccept = false;
+    bool m_grabbingBackdrop = false;
     int m_cardWidth = 430;
     QRect m_cardRect;
     QImage m_blurredBg;
@@ -85,6 +93,7 @@ private:
     bool m_side = false;
     QWidget* m_header = nullptr;
     QWidget* m_cardWidget = nullptr;
+    QGraphicsOpacityEffect* m_cardOpacity = nullptr;
     QToolButton* m_cancelBtn = nullptr;
     QLabel* m_titleLabel = nullptr;
     QToolButton* m_confirmBtn = nullptr;

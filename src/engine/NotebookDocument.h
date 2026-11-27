@@ -2,6 +2,7 @@
 
 #include "core/Types.h"
 
+#include <QColor>
 #include <QImage>
 #include <QJsonObject>
 #include <QSize>
@@ -73,6 +74,8 @@ public:
     ThemeId themeId() const { return m_themeId; }
     void setThemeId(ThemeId themeId);
 
+    const QColor& customBackground() const { return m_customBackground; }
+
     BackgroundTemplate defaultTemplate() const { return m_defaultTemplate; }
     BackgroundTemplate pageTemplate(int index) const;
     BackgroundTemplate currentTemplate() const;
@@ -113,7 +116,8 @@ public:
     void resetNew(const Viewport& initialViewport = {});
     void configureBlank(ThemeId theme, BackgroundTemplate tpl, PageFormat format,
                         double templateScale, CoverStyle cover,
-                        const Viewport& initialViewport = {});
+                        const Viewport& initialViewport = {},
+                        const QColor& customBackground = {});
 
     bool canUndo() const { return !m_undoStack.isEmpty(); }
     bool canRedo() const { return !m_redoStack.isEmpty(); }
@@ -125,7 +129,8 @@ public:
     bool createNotebook(const QString& path, ThemeId theme, BackgroundTemplate tpl,
                         PageFormat format, const Viewport& initialViewport,
                         const DocumentToolSettings& toolSettings,
-                        double templateScale = 1.0, CoverStyle cover = {});
+                        double templateScale = 1.0, CoverStyle cover = {},
+                        const QColor& customBackground = {});
     bool saveToFile(const QString& path, const DocumentToolSettings& toolSettings,
                     bool newFile = false);
     bool loadFromFile(const QString& path, DocumentToolSettings* outToolSettings = nullptr,
@@ -167,6 +172,7 @@ private:
     PageFormat m_pageFormat = PageFormat::Infinite;
     double m_templateScale = 1.0;
     CoverStyle m_cover;
+    QColor m_customBackground;
 };
 
 } // namespace finily

@@ -13,7 +13,7 @@ namespace finily {
 // el tamaño visual en píxeles lógicos; `bottomCenter` ancla la base.
 namespace libobj {
 
-constexpr qreal kVisualHeight = 136.0; // alto del área .vis (112 del mockup × ~1.2)
+constexpr qreal kVisualHeight = 168.0; // alto del área visual de la tarjeta
 
 // Carpeta de dos tonos; `open` (0..1) levanta la tapa al pasar el cursor.
 QRectF folderRect(const QPointF& bottomCenter);
@@ -22,19 +22,23 @@ void paintFolder(QPainter& p, const QPointF& bottomCenter, int colorIndex, int i
 
 // Pizarra infinita: marco redondeado con la vista previa y «∞».
 QRectF boardRect(const QPointF& bottomCenter);
-void paintBoard(QPainter& p, const QPointF& bottomCenter, const NotebookMeta& meta, bool dark);
+void paintBoard(QPainter& p, const QPointF& bottomCenter, const NotebookMeta& meta, bool dark,
+                qreal lift = 0.0);
 
 // Cuaderno con tapa de color, lomo, etiqueta y formato.
 QRectF bookRect(const QPointF& bottomCenter, PageFormat fmt);
-void paintBook(QPainter& p, const QPointF& bottomCenter, const NotebookMeta& meta, bool dark);
+void paintBook(QPainter& p, const QPointF& bottomCenter, const NotebookMeta& meta, bool dark,
+               qreal lift = 0.0);
 
 // Documento PDF: hoja blanca con primera página y etiqueta «PDF».
 QRectF pdfRect(const QPointF& bottomCenter);
-void paintPdf(QPainter& p, const QPointF& bottomCenter, const NotebookMeta& meta, bool dark);
+void paintPdf(QPainter& p, const QPointF& bottomCenter, const NotebookMeta& meta, bool dark,
+              qreal lift = 0.0);
 
 // Rectángulo del objeto que corresponde a un documento.
 QRectF documentRect(const QPointF& bottomCenter, const NotebookMeta& meta);
-void paintDocument(QPainter& p, const QPointF& bottomCenter, const NotebookMeta& meta, bool dark);
+void paintDocument(QPainter& p, const QPointF& bottomCenter, const NotebookMeta& meta, bool dark,
+                   qreal lift = 0.0);
 
 // Sombra difusa equivalente a `0 10px 22px -8px` del mockup.
 void paintObjectShadow(QPainter& p, const QRectF& r, qreal radius, qreal lift, bool dark);

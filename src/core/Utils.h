@@ -96,7 +96,7 @@ inline void drawTextItem(QPainter& painter, const TextItem& item) {
 }
 
 inline bool isValidPageFormat(int value) {
-    return value >= int(PageFormat::Infinite) && value <= int(PageFormat::A4Landscape);
+    return value >= int(PageFormat::Infinite) && value <= int(PageFormat::Square);
 }
 
 inline PageFormat pageFormatFromInt(int value, PageFormat fallback = PageFormat::Infinite) {
@@ -116,6 +116,20 @@ inline QRectF sheetRectForPageFormat(PageFormat format) {
         return QRectF(-561.5, -397.0, 1123.0, 794.0);
     case PageFormat::Slide16x9:
         return QRectF(-640.0, -360.0, 1280.0, 720.0);
+    case PageFormat::A5:
+        return QRectF(-280.0, -397.0, 560.0, 794.0);
+    case PageFormat::A5Landscape:
+        return QRectF(-397.0, -280.0, 794.0, 560.0);
+    case PageFormat::Letter:
+        return QRectF(-408.0, -528.0, 816.0, 1056.0);
+    case PageFormat::LetterLandscape:
+        return QRectF(-528.0, -408.0, 1056.0, 816.0);
+    case PageFormat::Legal:
+        return QRectF(-408.0, -672.0, 816.0, 1344.0);
+    case PageFormat::LegalLandscape:
+        return QRectF(-672.0, -408.0, 1344.0, 816.0);
+    case PageFormat::Square:
+        return QRectF(-450.0, -450.0, 900.0, 900.0);
     case PageFormat::Infinite:
         return {};
     }
@@ -126,7 +140,7 @@ inline Viewport fittedSheetViewport(PageFormat format, const QSize& size) {
     const auto sheet = sheetRectForPageFormat(format);
     if (sheet.isEmpty() || size.width() <= 0 || size.height() <= 0)
         return {};
-    if (format == PageFormat::Slide16x9 || format == PageFormat::A4Landscape) {
+    if (sheet.width() > sheet.height()) {
         // Formatos apaisados: centrados y ocupando el área útil entre el dock y las cápsulas
         const double availW = std::max(320.0, size.width() - 156.0);
         const double availH = std::max(240.0, size.height() - 124.0);

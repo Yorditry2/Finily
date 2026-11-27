@@ -3,6 +3,8 @@
 #include "engine/LibraryStore.h"
 #include "ui/home/HomeTheme.h"
 
+#include <QImage>
+#include <QStringList>
 #include <QVector>
 #include <QWidget>
 
@@ -14,24 +16,31 @@ class QPropertyAnimation;
 
 namespace finily {
 
-// Filtro y orden de la biblioteca (mockup 09, escena 02). Se recuerda por
-// sesión mientras la app está abierta.
+// Filtro y orden de la biblioteca (mockup 09, escena 02). El orden se recuerda
+// entre sesiones; tipo, fecha y etiquetas se reinician al cerrar (DESIGN.md).
 struct LibraryFilter {
     enum Kind { AllKinds = 0, Boards, Notebooks, Pdfs, Folders };
     enum Date { AnyDate = 0, Today, LastWeek, ThisMonth };
-    enum Sort { Recent = 0, Name };
+    enum Sort { Recent = 0, Name = 1, Created = 2 };
 
     int kind = AllKinds;
     int date = AnyDate;
     int sort = Recent;
+    QStringList tagIds;
 
-    int activeCount() const { return int(kind != AllKinds) + int(date != AnyDate) + int(sort != Recent); }
-    bool acceptsFolders() const { return (kind == AllKinds || kind == Folders) && date == AnyDate; }
+    int activeCount() const {
+        return int(kind != AllKinds) + int(date != AnyDate) + int(sort != Recent) + int(tagIds.size());
+    }
+    bool acceptsFolders() const {
+        return (kind == AllKinds || kind == Folders) && date == AnyDate && tagIds.isEmpty();
+    }
     bool acceptsDocument(const NotebookMeta& meta) const;
     static QString kindLabel(int kind);
     static QString kindIcon(int kind);
     static QString dateLabel(int date);
     static QString sortLabel(int sort);
+    static int loadSavedSort();
+    static void saveSort(int sort);
 };
 
 void sortDocuments(QVector<NotebookMeta>& docs, int sort);
@@ -44,6 +53,8 @@ public:
     struct Action {
         QString label;
         std::function<void()> run;
+        QString icon = {};
+        bool danger = false;
     };
 
     explicit EmptyStateView(QWidget* parent = nullptr);
@@ -107,6 +118,7 @@ class FilterChipsBar : public QWidget {
 public:
     explicit FilterChipsBar(QWidget* parent = nullptr);
     void applyTheme(const HomePalette& pal, bool dark);
+    void setTags(const QVector<TagInfo>& tags);
     void setFilter(const LibraryFilter& filter);
     bool hasChips() const { return !m_chips.isEmpty(); }
 
@@ -123,12 +135,14 @@ private:
     struct Chip {
         QString icon;
         QString label;
-        int field = 0; // 0 tipo, 1 fecha, 2 orden
+        int field = 0; // 0 tipo, 1 fecha, 2 orden, 3 etiqueta
+        QString tagId;
         QRectF rect;
     };
     void rebuild();
 
     LibraryFilter m_filter;
+    QVector<TagInfo> m_tags;
     QVector<Chip> m_chips;
     int m_hover = -1;
     HomePalette m_pal = homePaletteFor(false);
@@ -143,6 +157,7 @@ class FilterPanel : public QWidget {
 public:
     explicit FilterPanel(QWidget* parent = nullptr);
     void applyTheme(const HomePalette& pal, bool dark);
+    void setTags(const QVector<TagInfo>& tags);
     // `anchor`: rectángulo del botón de filtro en coordenadas del padre.
     void popup(const QRect& anchor, const LibraryFilter& filter, bool trashView);
     void closePanel();
@@ -161,14 +176,19 @@ protected:
 private:
     struct Hit {
         QRectF rect;
-        int field = 0; // 0 tipo, 1 fecha, 2 orden, 3 restablecer
+        int field = 0; // 0 tipo, 1 fecha, 2 orden, 3 restablecer, 4 etiqueta
         int value = 0;
+        QString tagId;
     };
     void layoutPanel();
 
     LibraryFilter m_filter;
+    QVector<TagInfo> m_tags;
+    bool m_trashView = false;
+    bool m_closing = false;
     QRect m_anchor;
     QRectF m_panel;
+    QImage m_backdrop;
     QVector<Hit> m_hits;
     int m_hover = -1;
     qreal m_progress = 1.0;

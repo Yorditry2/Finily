@@ -13,13 +13,16 @@ public:
     explicit FolderCard(const FolderMeta& meta, QWidget* parent = nullptr);
 
     const FolderMeta& meta() const { return m_meta; }
+    void setMeta(const FolderMeta& meta);
     bool matchesSearch(const QString& needle) const;
 
 signals:
     void openRequested(const QString& relativePath);
 
 protected:
+    QRectF visualBounds(const QPointF& bottomCenter) const override;
     void paintVisual(QPainter& painter, const QPointF& bottomCenter) override;
+    void paintVisualWithLift(QPainter& painter, const QPointF& bottomCenter, qreal lift) override;
     QString nameText() const override { return m_meta.name; }
     QString detailText() const override;
     void activate() override { emit openRequested(m_meta.relativePath); }

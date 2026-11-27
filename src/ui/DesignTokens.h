@@ -4,9 +4,13 @@
 // Fuente única de colores, radios y tiempos de la interfaz: no repetir
 // valores sueltos en los widgets, leerlos de aquí.
 
+#include "core/Utils.h"
+
 #include <QColor>
 #include <QEasingCurve>
 #include <QPointF>
+
+#include <algorithm>
 
 namespace finily::tokens {
 
@@ -57,7 +61,70 @@ inline Palette darkPalette() {
     };
 }
 
-inline Palette paletteFor(bool dark) { return dark ? darkPalette() : lightPalette(); }
+inline constexpr int kAccentPresetCount = 5;
+
+// Preferencias cacheadas en memoria para evitar lecturas de QSettings durante paintEvent.
+inline bool& cachedReducedMotion() {
+    static bool value = readAppSetting(QStringLiteral("ui/reducedMotion"), false).toBool();
+    return value;
+}
+
+inline bool reducedMotion() { return cachedReducedMotion(); }
+
+inline void setReducedMotion(bool on) {
+    cachedReducedMotion() = on;
+    writeAppSetting(QStringLiteral("ui/reducedMotion"), on);
+}
+
+inline int& cachedAccentPreset() {
+    static int value = std::clamp(
+        readAppSetting(QStringLiteral("ui/accentPreset"), 0).toInt(),
+        0, kAccentPresetCount - 1);
+    return value;
+}
+
+inline int accentPreset() { return cachedAccentPreset(); }
+
+inline void setAccentPreset(int index) {
+    const int clamped = std::clamp(index, 0, kAccentPresetCount - 1);
+    cachedAccentPreset() = clamped;
+    writeAppSetting(QStringLiteral("ui/accentPreset"), clamped);
+}
+
+// Muestra visual del preset de acento (mockup 10: Tinta, Grafito, Acero, Salvia, Ciruela).
+inline QColor accentSwatchColor(int index) {
+    static const QColor kLightAccents[kAccentPresetCount] = {
+        QColor(0x18, 0x18, 0x1B), // 0: Tinta
+        QColor(0x52, 0x52, 0x5B), // 1: Grafito
+        QColor(0x3F, 0x5F, 0x8A), // 2: Acero
+        QColor(0x4F, 0x7A, 0x64), // 3: Salvia
+        QColor(0x8A, 0x4F, 0x6A), // 4: Ciruela
+    };
+    return kLightAccents[std::clamp(index, 0, kAccentPresetCount - 1)];
+}
+
+inline QColor accentColorFor(int index, bool dark) {
+    static const QColor kDarkAccents[kAccentPresetCount] = {
+        QColor(0xF4, 0xF4, 0xF5), // 0: Tinta (Marfil)
+        QColor(0xA1, 0xA1, 0xAA), // 1: Grafito
+        QColor(0x7C, 0xA2, 0xD4), // 2: Acero
+        QColor(0x79, 0xB3, 0x95), // 3: Salvia
+        QColor(0xC4, 0x83, 0xA1), // 4: Ciruela
+    };
+    const int clamped = std::clamp(index, 0, kAccentPresetCount - 1);
+    return dark ? kDarkAccents[clamped] : accentSwatchColor(clamped);
+}
+
+inline Palette paletteFor(bool dark) {
+    Palette p = dark ? darkPalette() : lightPalette();
+    const int preset = accentPreset();
+    if (preset > 0) {
+        p.accent = accentColorFor(preset, dark);
+        const double lum = 0.299 * p.accent.red() + 0.587 * p.accent.green() + 0.114 * p.accent.blue();
+        p.accentFg = (lum < 150.0) ? QColor(0xFF, 0xFF, 0xFF) : QColor(0x18, 0x18, 0x1B);
+    }
+    return p;
+}
 
 // Carpetas de 2 tonos (paquete por defecto; el índice se guarda en la carpeta).
 struct FolderColor {
@@ -91,8 +158,8 @@ inline constexpr qreal Nav = 9.0;        // ítems de navegación
 } // namespace radius
 
 namespace space {
-inline constexpr int SidebarWidth = 214;
-inline constexpr int HeaderHeight = 58;
+inline constexpr int SidebarWidth = 248;
+inline constexpr int HeaderHeight = 66;
 inline constexpr int FloatCardWidth = 344;
 } // namespace space
 
@@ -112,6 +179,11 @@ inline QEasingCurve bezier(qreal x1, qreal y1, qreal x2, qreal y2) {
 inline QEasingCurve out() { return bezier(0.22, 1.0, 0.36, 1.0); }    // lo que entra
 inline QEasingCurve in() { return bezier(0.4, 0.0, 1.0, 1.0); }       // lo que sale
 inline QEasingCurve spring() { return bezier(0.34, 1.45, 0.64, 1.0); } // detalles pequeños
+
+inline int duration(int ms) { return reducedMotion() ? Reduced : ms; }
+inline QEasingCurve curve(const QEasingCurve& normal) {
+    return reducedMotion() ? QEasingCurve(QEasingCurve::Linear) : normal;
+}
 } // namespace motion
 
 } // namespace finily::tokens

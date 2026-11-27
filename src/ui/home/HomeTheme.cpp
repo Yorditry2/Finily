@@ -54,34 +54,87 @@ void boxBlurPass(QImage& src, QImage& dst, int radius, bool horizontal) {
     }
 }
 
+void boostSaturationPremul(QImage& image, float factor) {
+    const int w = image.width();
+    const int h = image.height();
+    for (int y = 0; y < h; ++y) {
+        QRgb* row = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            const QRgb px = row[x];
+            const int a = qAlpha(px);
+            if (a == 0)
+                continue;
+            const int r = qRed(px);
+            const int g = qGreen(px);
+            const int b = qBlue(px);
+            const float luma = 0.299f * r + 0.587f * g + 0.114f * b;
+            const int nr = std::clamp(int(std::lround(luma + factor * (r - luma))), 0, a);
+            const int ng = std::clamp(int(std::lround(luma + factor * (g - luma))), 0, a);
+            const int nb = std::clamp(int(std::lround(luma + factor * (b - luma))), 0, a);
+            row[x] = qRgba(nr, ng, nb, a);
+        }
+    }
+}
+
+void paintGlassBody(QPainter& painter, const QRectF& rect, qreal radius, const QImage& backdrop,
+                    const QColor& glassFill, const QColor& solidFill, const QColor& topHighlight,
+                    const QColor& rimBorder, qreal shadowLift, bool darkShadow) {
+    if (rect.isEmpty())
+        return;
+    paintSoftShadow(painter, rect, radius, shadowLift, darkShadow);
+    QPainterPath clip;
+    clip.addRoundedRect(rect, radius, radius);
+
+    painter.save();
+    painter.setClipPath(clip);
+    if (!backdrop.isNull() && !tokens::reducedMotion()) {
+        painter.drawImage(rect, backdrop);
+        painter.fillRect(rect, glassFill);
+    } else {
+        painter.fillRect(rect, solidFill);
+    }
+    const qreal inset = std::min(radius * 0.45, rect.width() * 0.25);
+    painter.setPen(QPen(topHighlight, 1.0));
+    painter.drawLine(QPointF(rect.left() + inset, rect.top() + 1.5),
+                     QPointF(rect.right() - inset, rect.top() + 1.5));
+    painter.restore();
+
+    painter.setPen(QPen(rimBorder, 1.0));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+}
+
 } // namespace
 
 HomePalette homePaletteFor(bool dark) {
     const tokens::Palette t = tokens::paletteFor(dark);
+    const QColor accentHover = (tokens::accentPreset() == 0)
+        ? (dark ? QColor("#FFFFFF") : QColor("#27272A"))
+        : (dark ? t.accent.lighter(115) : t.accent.lighter(128));
     return {
         t.bg,      t.sidebar, t.border, t.surface,  t.field,
-        t.borderPop, t.text,  t.muted,  t.accent,
-        dark ? QColor("#FFFFFF") : QColor("#27272A"), // accentHover
+        t.borderPop, t.text,  t.muted,  t.accent,   accentHover,
         t.soft,    t.hover,   t.glass,  t.danger,   t.accentFg,
         t.icon,    t.faint,
     };
 }
 
-QString homeScreenStylesheet(const HomePalette& pal, bool) {
+QString homeScreenStylesheet(const HomePalette& pal, bool dark) {
+    const QString selBg = dark ? QStringLiteral("rgba(255,255,255,60)")
+                               : QStringLiteral("rgba(24,24,27,36)");
     return QStringLiteral(R"(
 QLabel { color: %1; background: transparent; }
-QLabel#finilyBrandTitle { color: %2; font-size: 14px; font-weight: 700; }
-QLabel#finilySectionTitle { color: %2; font-size: 16px; font-weight: 600; }
-QLabel#finilyCountPill { color: %1; font-size: 12.5px; }
-QLabel#finilyEmpty { color: %1; font-size: 14px; line-height: 1.5; }
-QLabel#finilySidebarGroup { color: %1; font-size: 10.5px; font-weight: 700; letter-spacing: 0.7px; }
+QLabel#finilyBrandTitle { color: %2; font-size: 16px; font-weight: 700; }
+QLabel#finilySectionTitle { color: %2; font-size: 19px; font-weight: 600; }
+QLabel#finilyCountPill { color: %1; font-size: 13.5px; }
+QLabel#finilySidebarGroup { color: %1; font-size: 11px; font-weight: 700; letter-spacing: 0.7px; }
 QLineEdit#finilySearch {
     background: transparent; border: none;
-    color: %2; padding: 0px; font-size: 13.5px;
-    selection-background-color: %3; selection-color: %9;
+    color: %2; padding: 0px; font-size: 14.5px;
+    selection-background-color: %10; selection-color: %2;
 }
-QToolButton { background: transparent; border: none; color: %2; font-size: 13px; }
-QToolButton#finilyCrumbBtn { color: %1; font-size: 16px; font-weight: 500; padding: 2px 4px; border-radius: 6px; }
+QToolButton { background: transparent; border: none; color: %2; font-size: 14px; }
+QToolButton#finilyCrumbBtn { color: %1; font-size: 18px; font-weight: 500; padding: 2px 5px; border-radius: 7px; }
 QToolButton#finilyCrumbBtn:hover { color: %2; background: %8; }
 QToolButton#finilyCardAction { background: %7; border: 1px solid %5; border-radius: 14px; }
 QToolButton#finilyCardAction:hover { border: 1px solid %3; }
@@ -116,7 +169,8 @@ QToolButton#finilyUpdateClose:hover { color: %2; }
         .arg(pal.surface.name(QColor::HexArgb))
         .arg(pal.cardActionBg.name(QColor::HexArgb))
         .arg(pal.hover.name(QColor::HexArgb))
-        .arg(pal.accentFg.name(QColor::HexArgb));
+        .arg(pal.accentFg.name(QColor::HexArgb))
+        .arg(selBg);
 }
 
 const QVector<QColor>& coverColors() {
@@ -162,17 +216,20 @@ QString relativeDateLabel(const QDateTime& when) {
 }
 
 QImage blurBackdropImage(const QImage& source, int radius) {
+    if (tokens::reducedMotion())
+        return QImage();
     if (source.isNull() || radius <= 0)
         return source;
     QImage argb = source.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    const QSize smallSize(std::max(1, argb.width() / 2), std::max(1, argb.height() / 2));
+    const QSize smallSize(std::max(1, argb.width() / 4), std::max(1, argb.height() / 4));
     QImage a = argb.scaled(smallSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     QImage b(smallSize, QImage::Format_ARGB32_Premultiplied);
-    const int r = std::clamp(radius / 2, 2, 12);
+    const int r = std::clamp(radius / 2, 2, 8);
     for (int pass = 0; pass < 2; ++pass) {
         boxBlurPass(a, b, r, true);
         boxBlurPass(b, a, r, false);
     }
+    boostSaturationPremul(a, 1.35f);
     QImage result = a.scaled(argb.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     result.setDevicePixelRatio(source.devicePixelRatio());
     return result;
@@ -180,27 +237,16 @@ QImage blurBackdropImage(const QImage& source, int radius) {
 
 void paintLiquidGlassPanel(QPainter& painter, const QRectF& rect, qreal radius,
                            const QImage& blurredBackdrop, const HomePalette& pal, bool dark) {
-    paintSoftShadow(painter, rect, radius, 5.0, dark);
-    QPainterPath clip;
-    clip.addRoundedRect(rect, radius, radius);
+    Q_UNUSED(pal);
+    const tokens::Palette tk = tokens::paletteFor(dark);
+    paintGlassBody(painter, rect, radius, blurredBackdrop, tk.glass, tk.surface,
+                   tk.glassHi, tk.borderPop, 5.0, dark);
+}
 
-    painter.save();
-    painter.setClipPath(clip);
-    if (!blurredBackdrop.isNull())
-        painter.drawImage(rect, blurredBackdrop);
-    painter.fillRect(rect, dark ? QColor(35, 36, 45, 244) : QColor(255, 255, 255, 246));
-    QLinearGradient sheen(rect.topLeft(), QPointF(rect.left(), rect.top() + rect.height() * 0.36));
-    sheen.setColorAt(0.0, QColor(255, 255, 255, dark ? 24 : 85));
-    sheen.setColorAt(1.0, QColor(255, 255, 255, 0));
-    painter.fillRect(rect, sheen);
-    painter.restore();
-
-    QLinearGradient rimGrad(rect.topLeft(), rect.bottomLeft());
-    rimGrad.setColorAt(0.0, dark ? QColor(255, 255, 255, 64) : QColor(255, 255, 255, 230));
-    rimGrad.setColorAt(1.0, pal.border);
-    painter.setPen(QPen(QBrush(rimGrad), 1.1));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+void paintToastGlass(QPainter& painter, const QRectF& rect, qreal radius, const QImage& backdrop) {
+    paintGlassBody(painter, rect, radius, backdrop, QColor(24, 24, 27, 219),
+                   QColor(0x18, 0x18, 0x1B), QColor(255, 255, 255, 20),
+                   QColor(255, 255, 255, 23), 4.0, true);
 }
 
 void paintEditorialFolder(QPainter& painter, const QRectF& bounds, const QColor& baseColor,

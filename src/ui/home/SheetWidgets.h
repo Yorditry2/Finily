@@ -1,11 +1,19 @@
 #pragma once
 
+#include "engine/LibraryStore.h"
 #include "ui/home/HomeTheme.h"
 
+#include <QColor>
+#include <QImage>
 #include <QLineEdit>
+#include <QPointF>
+#include <QRect>
+#include <QStringList>
 #include <QVector>
 #include <QWidget>
 
+class QGraphicsOpacityEffect;
+class QPropertyAnimation;
 class QPushButton;
 
 namespace finily {
@@ -46,7 +54,7 @@ private:
     int m_folderColor = 0, m_folderIcon = 0;
 };
 
-// Fila de muestras circulares de 26 px repartidas a lo ancho.
+// Fila de muestras circulares de 26 px repartidas a lo ancho (más botón '+' opcional).
 class SwatchRow : public QWidget {
     Q_OBJECT
 public:
@@ -54,9 +62,14 @@ public:
     void setColors(const QVector<QColor>& colors, const QStringList& names);
     void setCurrent(int index);
     void setDark(bool dark);
+    void setShowMoreButton(bool on);
+    void setMoreActive(bool on);
+    void setMoreColor(const QColor& c);
+    QPointF moreCenterInWidget() const;
 
 signals:
     void picked(int index);
+    void moreClicked();
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -68,6 +81,9 @@ private:
     QStringList m_names;
     int m_current = 0;
     bool m_dark = false;
+    bool m_showMore = false;
+    bool m_moreActive = false;
+    QColor m_moreColor;
 };
 
 // Cuatro muestras de plantilla (liso, cuadrícula, puntos, rayado) en neutro fijo.
@@ -126,6 +142,8 @@ class InfoChip : public QWidget {
 public:
     InfoChip(const QString& icon, const QString& text, bool chevron, bool dashed, QWidget* parent = nullptr);
     void setText(const QString& text);
+    void setMaxWidth(int maxWidth);
+    void setDashed(bool dashed);
     void setDark(bool dark);
 
 signals:
@@ -137,6 +155,7 @@ protected:
 
 private:
     QString m_icon, m_text;
+    int m_maxWidth = 180;
     bool m_chevron, m_dashed, m_dark = false;
 };
 
@@ -146,9 +165,13 @@ QWidget* makeKicker(const QString& text, QWidget* parent, bool dark);
 // Botón principal «Crear …» (38 px, acento).
 QPushButton* makeCtaButton(const QString& text, QWidget* parent, bool dark);
 
-} // namespace finily
+// Reaplica el tema claro/oscuro a kickers y botones CTA dentro de un contenedor.
+void refreshSheetWidgetsTheme(QWidget* root, bool dark);
 
-namespace finily {
+// Controles compartidos de modales centrados (Pizarra / Cuaderno / Carpeta).
+QPushButton* makeModalCloseButton(QWidget* parent);
+void styleModalCloseButton(QPushButton* btn, bool dark);
+void styleModalTitleEdit(QLineEdit* edit, bool dark, qreal fontSizePx = 15.0);
 
 // Ocho círculos de 28 px de dos tonos (banda superior = solapa), mockup 06.
 class DotRow : public QWidget {
@@ -208,12 +231,18 @@ struct LocationEntry {
 // Menú flotante del selector «Dentro de»: árbol con sangría y marca de selección.
 class LocationPopover : public QWidget {
     Q_OBJECT
+    Q_PROPERTY(qreal progress READ progress WRITE setProgress)
+
 public:
     explicit LocationPopover(QWidget* parent);
+    qreal progress() const { return m_progress; }
+    void setProgress(qreal p);
     void setEntries(const QVector<LocationEntry>& entries);
     void setCurrent(const QString& relativePath);
     void setDark(bool dark);
-    void popup(const QRect& anchorInParent); // se abre a la izquierda del ancla
+    void popup(const QRect& anchorInParent);
+    void closePopover();
+    bool isClosing() const { return m_closing; }
 
 signals:
     void picked(const QString& relativePath);
@@ -222,14 +251,80 @@ protected:
     void paintEvent(QPaintEvent*) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
+    void wheelEvent(QWheelEvent* e) override;
     void leaveEvent(QEvent*) override;
 
 private:
     int hit(const QPointF& pos) const;
+    void updateCardSize();
+    int contentHeight() const;
+    int maxScroll() const;
+
     QVector<LocationEntry> m_entries;
     QString m_current;
+    QRect m_cardRect;
+    QImage m_backdrop;
+    QPropertyAnimation* m_anim = nullptr;
+    qreal m_progress = 1.0;
+    int m_scrollY = 0;
     int m_hover = -1;
     bool m_dark = false;
+    bool m_closing = false;
+    bool m_grabbingBackdrop = false;
+};
+
+// Popover Liquid Glass para asignar etiquetas o crear una inline desde una hoja.
+class TagPickPopover : public QWidget {
+    Q_OBJECT
+    Q_PROPERTY(qreal progress READ progress WRITE setProgress)
+
+public:
+    explicit TagPickPopover(QWidget* parent);
+    qreal progress() const { return m_progress; }
+    void setProgress(qreal p);
+    void setTags(const QVector<TagInfo>& tags);
+    void setSelectedTags(const QStringList& ids);
+    void setDark(bool dark);
+    void popup(const QRect& anchorInParent);
+    void closePopover();
+    bool isClosing() const { return m_closing; }
+
+signals:
+    void selectionChanged(const QStringList& selectedIds);
+    void newTagRequested(const QString& name);
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void wheelEvent(QWheelEvent* e) override;
+    void leaveEvent(QEvent*) override;
+    void keyPressEvent(QKeyEvent* e) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
+    int hitRow(const QPointF& pos) const;
+    void updateGeometryAndInput();
+    void updateInputStyle();
+    int listHeight() const;
+    int totalListHeight() const;
+    int maxScroll() const;
+
+    QVector<TagInfo> m_tags;
+    QStringList m_selected;
+    QRect m_cardRect;
+    QRect m_lastAnchor;
+    QImage m_backdrop;
+    QLineEdit* m_newEdit = nullptr;
+    QGraphicsOpacityEffect* m_editOpacity = nullptr;
+    QPropertyAnimation* m_anim = nullptr;
+    qreal m_progress = 1.0;
+    int m_scrollY = 0;
+    int m_hover = -1;
+    bool m_dark = false;
+    bool m_closing = false;
+    bool m_grabbingBackdrop = false;
+    bool m_hasAnchor = false;
 };
 
 } // namespace finily

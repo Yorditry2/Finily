@@ -19,6 +19,7 @@ add_library(finily_engine STATIC
     src/engine/LibraryStore.cpp
     src/engine/LibraryFolders.cpp
     src/engine/LibraryTrash.cpp
+    src/engine/LibraryMetadata.cpp
     src/engine/NotebookDocument.h
     src/engine/NotebookDocument.cpp
     src/engine/InkEngine.h
@@ -87,6 +88,8 @@ add_executable(finily
     src/ui/UiIcons.cpp
     src/ui/home/HomeTheme.h
     src/ui/home/HomeTheme.cpp
+    src/ui/home/HomeMotion.h
+    src/ui/home/HomeMotion.cpp
     src/ui/home/HomeIcons.cpp
     src/ui/home/HomeSidebar.h
     src/ui/home/HomeSidebar.cpp
@@ -116,10 +119,14 @@ add_executable(finily
     src/ui/home/GlassSheet.cpp
     src/ui/home/NewFolderSheet.h
     src/ui/home/NewFolderSheet.cpp
+    src/ui/home/BoardColorPopover.h
+    src/ui/home/BoardColorPopover.cpp
     src/ui/home/NewBoardSheet.h
     src/ui/home/NewBoardSheet.cpp
     src/ui/home/NewNotebookSheet.h
     src/ui/home/NewNotebookSheet.cpp
+    src/ui/home/MoveToSheet.h
+    src/ui/home/MoveToSheet.cpp
     src/ui/home/UpdateBanner.h
     src/ui/home/UpdateBanner.cpp
     src/ui/HomeScreen.h

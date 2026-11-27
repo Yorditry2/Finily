@@ -7,6 +7,7 @@
 #include <QPointF>
 #include <QRectF>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <cstdint>
 #include <optional>
@@ -103,7 +104,14 @@ enum class PageFormat {
     Infinite = 0,
     A4 = 1,
     Slide16x9 = 2,
-    A4Landscape = 3
+    A4Landscape = 3,
+    A5 = 4,
+    Letter = 5,
+    A5Landscape = 6,
+    LetterLandscape = 7,
+    Legal = 8,
+    LegalLandscape = 9,
+    Square = 10
 };
 
 enum class ThemeId {
@@ -134,6 +142,8 @@ struct NewDocumentSpec {
     CoverStyle cover;
     QString folderRelativePath; // vacío = raíz (preparado para futura fase de Carpetas)
     bool ephemeralIfEmpty = false;
+    QColor customBackground;
+    QStringList tagIds;
 };
 
 struct ThemeConfig {
@@ -276,6 +286,7 @@ struct NotebookSession {
     PageFormat pageFormat = PageFormat::Infinite;
     double templateScale = 1.0;
     CoverStyle cover;
+    QColor customBackground;
     bool ephemeralIfEmpty = false;
     QString pendingTitle;
     bool dirty = false;
@@ -329,6 +340,18 @@ inline ThemeConfig getThemeConfig(ThemeId id) {
             };
     }
     return getThemeConfig(ThemeId::DarkBoard);
+}
+
+inline ThemeConfig effectiveThemeConfig(ThemeId id, const QColor& customBg) {
+    ThemeConfig cfg = getThemeConfig(id);
+    if (!customBg.isValid())
+        return cfg;
+    cfg.background = customBg;
+    const double lum = 0.299 * customBg.red() + 0.587 * customBg.green() + 0.114 * customBg.blue();
+    cfg.isDark = lum < 140.0;
+    cfg.patternColor = cfg.isDark ? QColor(255, 255, 255, 22) : QColor(15, 23, 42, 28);
+    cfg.defaultInk = cfg.isDark ? QColor("#f8fafc") : QColor("#0f172a");
+    return cfg;
 }
 
 inline QVector<QColor> getPaletteForTheme(bool isDark) {

@@ -74,7 +74,7 @@ void CanvasWidget::rebuildStaticCache() {
     const auto& shapes = m_doc.shapes();
     const auto& images = m_doc.images();
     const auto& texts = m_doc.texts();
-    const ThemeConfig theme = getThemeConfig(m_doc.themeId());
+    const ThemeConfig theme = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground());
     const bool hasPdfPage = hasPdfBackground(images);
     const QRectF sheet = hasPdfPage ? QRectF() : sheetRectForPageFormat(m_doc.pageFormat());
     const bool finiteSheet = hasPdfPage || !sheet.isEmpty();
@@ -205,7 +205,7 @@ void CanvasWidget::paintEvent(QPaintEvent*) {
     const auto& shapes = m_doc.shapes();
     const auto& images = m_doc.images();
     const auto& texts = m_doc.texts();
-    const ThemeConfig theme = getThemeConfig(m_doc.themeId());
+    const ThemeConfig theme = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground());
 
     const bool liveHighlight = (m_hasActiveStroke && m_activeStroke.tool == ToolType::Highlighter)
         || !m_selectedImageId.isEmpty() || !m_selectedImageIds.isEmpty()
@@ -577,7 +577,7 @@ void CanvasWidget::commitRadialSelection(bool quickTap) {
     m_radialHoveredColor = -1;
     m_radialHoveredTool = -1;
     if (colIdx >= 0) {
-        const ThemeConfig th = getThemeConfig(m_doc.themeId());
+        const ThemeConfig th = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground());
         const QVector<QColor> rColors = radialPaletteColors(th.isDark);
         // Primero volvemos al lápiz (sin recolorear una figura seleccionada por accidente)
         // y luego cambiamos el color.

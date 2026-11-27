@@ -8,12 +8,27 @@ FolderCard::FolderCard(const FolderMeta& meta, QWidget* parent)
     : ObjectCard(parent)
     , m_meta(meta) {}
 
+void FolderCard::setMeta(const FolderMeta& meta) {
+    m_meta = meta;
+    update();
+}
+
 bool FolderCard::matchesSearch(const QString& needle) const {
     return needle.isEmpty() || m_meta.name.contains(needle, Qt::CaseInsensitive);
 }
 
+QRectF FolderCard::visualBounds(const QPointF& bc) const {
+    return libobj::folderRect(bc);
+}
+
 void FolderCard::paintVisual(QPainter& painter, const QPointF& bc) {
-    libobj::paintFolder(painter, bc, m_meta.colorIndex, m_meta.iconIndex, hoverProgress(), m_dark);
+    paintVisualWithLift(painter, bc, 0.0);
+}
+
+void FolderCard::paintVisualWithLift(QPainter& painter, const QPointF& bc, qreal lift) {
+    Q_UNUSED(lift);
+    const qreal open = isDropTarget() ? 1.0 : hoverProgress();
+    libobj::paintFolder(painter, bc, m_meta.colorIndex, m_meta.iconIndex, open, m_dark);
 }
 
 QString FolderCard::detailText() const {

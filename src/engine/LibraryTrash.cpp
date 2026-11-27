@@ -6,6 +6,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
@@ -128,6 +129,29 @@ bool LibraryStore::moveToTrash(const QString& absolutePath, QString* outId, QStr
     }
     const QString dst = QDir(idDir).filePath(info.fileName());
     const QStringList files = finilyFilesUnder(src);
+    const bool isDir = info.isDir();
+    const QString folderRel = isDir
+        ? normalizeRelativeFolder(QDir(root).relativeFilePath(src))
+        : QString();
+    const bool wasFav = isDir ? isFolderFavorite(folderRel) : isDocumentFavorite(src);
+    const QStringList docTagIds = isDir ? QStringList{} : documentTags(src);
+    QJsonObject childMeta;
+    if (isDir) {
+        const QDir srcBase(src);
+        for (const QString& f : files) {
+            const bool fFav = isDocumentFavorite(f);
+            const QStringList fTags = documentTags(f);
+            if (fFav || !fTags.isEmpty()) {
+                QJsonObject entryMeta;
+                if (fFav)
+                    entryMeta.insert(QStringLiteral("fav"), true);
+                if (!fTags.isEmpty())
+                    entryMeta.insert(QStringLiteral("tags"), QJsonArray::fromStringList(fTags));
+                childMeta.insert(srcBase.relativeFilePath(f), entryMeta);
+            }
+        }
+    }
+
     if (!renameOrCopy(src, dst)) {
         QDir(idDir).removeRecursively();
         if (outError)
@@ -139,11 +163,26 @@ bool LibraryStore::moveToTrash(const QString& absolutePath, QString* outId, QStr
     o.insert(QStringLiteral("item"), info.fileName());
     o.insert(QStringLiteral("from"), parentRel == QLatin1String(".") ? QString() : parentRel);
     o.insert(QStringLiteral("deletedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    if (isDir) {
+        if (wasFav)
+            o.insert(QStringLiteral("folderWasFavorite"), true);
+        if (!childMeta.isEmpty())
+            o.insert(QStringLiteral("childMeta"), childMeta);
+    } else {
+        if (wasFav)
+            o.insert(QStringLiteral("wasFavorite"), true);
+        if (!docTagIds.isEmpty())
+            o.insert(QStringLiteral("tagIds"), QJsonArray::fromStringList(docTagIds));
+    }
     QSaveFile meta(QDir(idDir).filePath(kTrashInfo));
     if (meta.open(QIODevice::WriteOnly)) {
         meta.write(QJsonDocument(o).toJson(QJsonDocument::Compact));
         meta.commit();
     }
+    if (isDir)
+        removeMetadataForFolder(root, folderRel);
+    else
+        removeMetadataForDocument(src);
     migrateTree(src, dst, files);
     if (outId)
         *outId = id;
@@ -187,6 +226,12 @@ bool LibraryStore::restoreFromTrash(const QString& id, QString* outRestoredPath,
         for (int n = 2; QFileInfo::exists(target); ++n)
             target = QDir(parent).filePath(QStringLiteral("%1 (%2)%3").arg(base).arg(n).arg(suffix));
     }
+    QJsonObject trashMeta;
+    {
+        QFile mf(QDir(QFileInfo(e.itemPath).absolutePath()).filePath(kTrashInfo));
+        if (mf.open(QIODevice::ReadOnly))
+            trashMeta = QJsonDocument::fromJson(mf.readAll()).object();
+    }
     const QStringList files = finilyFilesUnder(e.itemPath);
     if (!renameOrCopy(e.itemPath, target)) {
         if (outError)
@@ -194,6 +239,35 @@ bool LibraryStore::restoreFromTrash(const QString& id, QString* outRestoredPath,
         return false;
     }
     migrateTree(e.itemPath, target, files);
+    if (e.isFolder) {
+        if (trashMeta.value(QStringLiteral("folderWasFavorite")).toBool(false)) {
+            const QString restoredRel =
+                normalizeRelativeFolder(QDir(e.rootDir).relativeFilePath(target));
+            setFolderFavorite(restoredRel, true);
+        }
+        const QJsonObject childMeta = trashMeta.value(QStringLiteral("childMeta")).toObject();
+        if (!childMeta.isEmpty()) {
+            const QDir targetBase(target);
+            for (const QString& f : finilyFilesUnder(target)) {
+                const QJsonObject entryMeta = childMeta.value(targetBase.relativeFilePath(f)).toObject();
+                if (entryMeta.value(QStringLiteral("fav")).toBool(false))
+                    setDocumentFavorite(f, true);
+                for (const QJsonValue& tv : entryMeta.value(QStringLiteral("tags")).toArray()) {
+                    const QString tid = tv.toString();
+                    if (!tid.isEmpty())
+                        setDocumentTag(f, tid, true);
+                }
+            }
+        }
+    } else {
+        if (trashMeta.value(QStringLiteral("wasFavorite")).toBool(false))
+            setDocumentFavorite(target, true);
+        for (const QJsonValue& tv : trashMeta.value(QStringLiteral("tagIds")).toArray()) {
+            const QString tid = tv.toString();
+            if (!tid.isEmpty())
+                setDocumentTag(target, tid, true);
+        }
+    }
     QDir(QFileInfo(e.itemPath).absolutePath()).removeRecursively();
     if (outRestoredPath)
         *outRestoredPath = target;
@@ -223,6 +297,10 @@ int LibraryStore::emptyTrash() {
 }
 
 int LibraryStore::purgeExpiredTrash(int days) {
+    if (days < 0)
+        days = trashRetentionDays();
+    if (days == 0)
+        return 0;
     const QDateTime limit = QDateTime::currentDateTimeUtc().addDays(-days);
     int n = 0;
     for (const TrashEntry& e : listTrash())

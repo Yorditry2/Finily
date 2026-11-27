@@ -12,7 +12,7 @@ class QPropertyAnimation;
 namespace finily {
 
 // Menú desplegable Liquid Glass (Opción B — lista vertical en 2 bloques)
-// anclado a la tarjeta '+ Crear'. Hijo directo de HomeScreen (sin Qt::Popup).
+// anclado a la tarjeta '+ Nuevo'. Hijo directo de HomeScreen (sin Qt::Popup).
 class CreateMenu : public QWidget {
     Q_OBJECT
     Q_PROPERTY(qreal progress READ progress WRITE setProgress)
@@ -53,11 +53,14 @@ private:
     };
 
     void updateCardGeometry(const QRect& anchorInParent, bool grabBackdrop);
+    void paintRow(QPainter& painter, int index, const tokens::Palette& tk) const;
     int rowAt(const QPoint& pos) const;
     QRect rowRect(int index) const;
 
     HomePalette m_pal = homePaletteFor(false);
     bool m_dark = false;
+    bool m_closing = false;
+    bool m_grabbingBackdrop = false;
     QRect m_cardRect;
     QImage m_blurredBg;
     qreal m_progress = 1.0;

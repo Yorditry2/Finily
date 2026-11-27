@@ -78,7 +78,8 @@ private:
     void switchToTab(int index);
     void openNewBlankTab();
     void closeTab(int index);
-    bool openNotebookInTab(const QString& path);
+    bool openNotebookInTab(const QString& path, bool forceNewTab = false);
+    void applyStartupPreference();
 
     QStackedWidget* m_stack = nullptr;
     QWidget* m_container = nullptr; // página 1: contenedor plano del editor
@@ -95,6 +96,7 @@ private:
     QString m_visionTargetTabId;
     int m_visionTargetPageIndex = -1;
     UpdateInfo m_availableUpdate;
+    QString m_pendingInstallerPath;
     QPointer<QProgressDialog> m_updateProgress;
     QVector<QShortcut*> m_presetShortcuts;
     QShortcut* m_pagePrevAltShortcut = nullptr;

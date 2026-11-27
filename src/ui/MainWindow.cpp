@@ -84,6 +84,7 @@ MainWindow::MainWindow() {
     // La sesión anterior ya la restauró el constructor de CanvasWidget.
     m_toolbar->refreshFromCanvas();
     syncActiveTabFromCanvas();
+    applyStartupPreference();
 }
 
 void MainWindow::setupEditorPage() {
@@ -125,47 +126,35 @@ void MainWindow::setupHomeConnections() {
     connect(m_homeScreen, &HomeScreen::createDocumentRequested, this, &MainWindow::launchNewDocument);
 
     connect(m_homeScreen, &HomeScreen::openNotebookRequested, this, [this](const QString& path) {
-        if (!openNotebookInTab(path))
-            QMessageBox::warning(this, tr("Abrir cuaderno"), tr("No se pudo abrir el cuaderno."));
+        if (!openNotebookInTab(path, false) && m_homeScreen)
+            m_homeScreen->showErrorToast(tr("No se pudo abrir el cuaderno."));
+    });
+
+    connect(m_homeScreen, &HomeScreen::openNotebookInNewTabRequested, this, [this](const QString& path) {
+        if (!openNotebookInTab(path, true) && m_homeScreen)
+            m_homeScreen->showErrorToast(tr("No se pudo abrir el cuaderno en una nueva pestaña."));
+    });
+
+    connect(m_homeScreen, &HomeScreen::openNotebooksInTabsRequested, this, [this](const QStringList& paths) {
+        int failed = 0;
+        for (const QString& p : paths) {
+            if (!openNotebookInTab(p, true))
+                ++failed;
+        }
+        if (failed > 0 && m_homeScreen)
+            m_homeScreen->showErrorToast(tr("Algunos cuadernos no se pudieron abrir."));
     });
 
     connect(m_homeScreen, &HomeScreen::importPdfFromHomeRequested, this,
             [this](const QString& folderRelativePath) {
-                if (!m_canvas)
+                if (!m_homeScreen)
                     return;
                 const QString pdfPath = QFileDialog::getOpenFileName(
                     this, QStringLiteral("Importar PDF"), QString(),
                     QStringLiteral("Archivos PDF (*.pdf)"));
                 if (pdfPath.isEmpty())
                     return;
-                if (!openInReusableOrNewTab(
-                        [this, &pdfPath] { return m_canvas->importPdfFile(pdfPath, true); })) {
-                    QMessageBox::warning(this, tr("Importar PDF"), tr("No se pudo importar el PDF."));
-                    return;
-                }
-                const QString base = LibraryStore::sanitizeBaseName(QFileInfo(pdfPath).completeBaseName());
-                const QString safeBase = base.isEmpty() ? tr("PDF importado") : base;
-                QStringList targetDirs;
-                if (!folderRelativePath.isEmpty()) {
-                    const QString resolved = LibraryStore::resolveDirectory(folderRelativePath);
-                    if (!resolved.isEmpty())
-                        targetDirs.append(resolved);
-                }
-                targetDirs.append(LibraryStore::libraryDirectories());
-                for (const QString& directory : targetDirs) {
-                    if (!QDir().mkpath(directory))
-                        continue;
-                    const QString nbPath = LibraryStore::uniqueNotebookPath(directory, safeBase);
-                    if (m_canvas->saveToFile(nbPath, /*newFile=*/true, /*silent=*/true)) {
-                        syncActiveTabFromCanvas();
-                        break;
-                    }
-                }
-                showEditorPage();
-                m_canvas->resetViewport();
-                if (m_toolbar)
-                    m_toolbar->refreshFromCanvas();
-                m_canvas->setFocus();
+                m_homeScreen->startPdfImport(pdfPath, folderRelativePath);
             });
 
     connect(m_homeScreen, &HomeScreen::openExternalFileRequested, this, [this] {
@@ -175,8 +164,45 @@ void MainWindow::setupHomeConnections() {
             this, QStringLiteral("Abrir cuaderno"), QString(), QStringLiteral("Cuaderno Finily (*.finily)"));
         if (path.isEmpty())
             return;
-        if (!openNotebookInTab(path))
-            QMessageBox::warning(this, tr("Abrir cuaderno"), tr("No se pudo abrir el cuaderno."));
+        if (!openNotebookInTab(path, false)) {
+            if (m_stack && m_stack->currentWidget() == m_homeScreen && m_homeScreen)
+                m_homeScreen->showErrorToast(tr("No se pudo abrir el cuaderno."));
+            else
+                QMessageBox::warning(this, tr("Abrir cuaderno"), tr("No se pudo abrir el cuaderno."));
+        }
+    });
+
+    connect(m_homeScreen, &HomeScreen::boardStyleChanged, this, [this](const QString& path) {
+        const QString norm = normalizedFilePath(path);
+        if (norm.isEmpty() || !m_canvas)
+            return;
+        for (int i = 0; i < m_tabs.size(); ++i) {
+            const QString tabPath = (i == m_activeTab) ? m_canvas->currentFilePath()
+                                                       : m_tabs.at(i).filePath;
+            if (tabPath.isEmpty() || normalizedFilePath(tabPath) != norm)
+                continue;
+            if (i == m_activeTab) {
+                if (!m_canvas->hasUnsavedChanges())
+                    m_canvas->loadFromFile(path);
+                if (m_toolbar)
+                    m_toolbar->refreshFromCanvas();
+            } else {
+                const NotebookFileMeta meta = readNotebookMetadata(path);
+                if (meta.found) {
+                    m_tabs[i].themeId = meta.themeId;
+                    m_tabs[i].tpl = meta.tpl;
+                    m_tabs[i].pageFormat = meta.pageFormat;
+                    m_tabs[i].templateScale = meta.templateScale;
+                    m_tabs[i].customBackground = meta.customBackground;
+                }
+            }
+            syncTabBarUi();
+            break;
+        }
+    });
+
+    connect(m_homeScreen, &HomeScreen::palmRejectionChanged, this, [](bool enabled) {
+        writeAppSetting(QStringLiteral("ink/palmRejection"), enabled);
     });
 
     connect(m_homeScreen, &HomeScreen::continueDraftRequested, this, [this] {
@@ -413,13 +439,19 @@ void MainWindow::setupUpdateCallbacks() {
     connect(m_updater, &UpdateManager::updateAvailable, this,
             [this](const UpdateInfo& info, bool manual) {
                 m_availableUpdate = info;
+                m_pendingInstallerPath.clear();
                 const bool canDirect =
                     kCanInstallInApp && !info.installerUrl.isEmpty() && !info.installerSha256.isEmpty();
+                const bool onHome = (m_stack && m_stack->currentWidget() == m_homeScreen);
                 if (m_toolbar)
                     m_toolbar->setUpdateAvailable(info.version);
                 if (m_homeScreen)
                     m_homeScreen->showUpdateBanner(info.version, canDirect);
-                if (manual) {
+                if (manual && onHome && m_homeScreen) {
+                    m_homeScreen->showInfoToast(
+                        tr("Nueva versión Finily v%1 disponible").arg(info.version),
+                        QStringLiteral("info"));
+                } else if (manual && !onHome) {
                     QMessageBox box(this);
                     box.setWindowTitle(tr("Actualización disponible"));
                     box.setIcon(QMessageBox::Information);
@@ -442,8 +474,11 @@ void MainWindow::setupUpdateCallbacks() {
         if (!manual)
             return;
         const QString msg = tr("Finily v%1 está actualizado ✓").arg(QApplication::applicationVersion());
+        const bool onHome = (m_stack && m_stack->currentWidget() == m_homeScreen);
         if (m_stack && m_stack->currentWidget() == m_container && m_toolbar)
             m_toolbar->showToast(msg);
+        else if (onHome && m_homeScreen)
+            m_homeScreen->showInfoToast(msg, QStringLiteral("check"));
         else
             QMessageBox::information(this, tr("Buscar actualizaciones"), msg);
     });
@@ -452,8 +487,11 @@ void MainWindow::setupUpdateCallbacks() {
         if (!manual)
             return;
         const QString msg = tr("No se pudo comprobar actualizaciones: %1").arg(error);
+        const bool onHome = (m_stack && m_stack->currentWidget() == m_homeScreen);
         if (m_stack && m_stack->currentWidget() == m_container && m_toolbar)
             m_toolbar->showToast(tr("No se pudo comprobar actualizaciones"));
+        else if (onHome && m_homeScreen)
+            m_homeScreen->showErrorToast(tr("No se pudo comprobar actualizaciones"));
         else
             QMessageBox::warning(this, tr("Buscar actualizaciones"), msg);
     });
@@ -483,6 +521,21 @@ void MainWindow::setupUpdateCallbacks() {
             if (m_homeScreen)
                 m_homeScreen->hideUpdateBanner();
         });
+        connect(m_homeScreen, &HomeScreen::updateRestartRequested, this, [this] {
+            if (!m_pendingInstallerPath.isEmpty()) {
+                saveAllDirtyTabsBeforeExit();
+                if (QProcess::startDetached(m_pendingInstallerPath, {})) {
+                    QApplication::quit();
+                    return;
+                }
+                if (m_homeScreen) {
+                    m_homeScreen->showUpdateError(
+                        tr("No se pudo iniciar el instalador descargado"));
+                }
+                return;
+            }
+            startUpdateInstall();
+        });
     }
 
     connect(m_updater, &UpdateManager::downloadProgress, this, [this](qint64 received, qint64 total) {
@@ -501,20 +554,33 @@ void MainWindow::setupUpdateCallbacks() {
 
     connect(m_updater, &UpdateManager::downloadCancelled, this, [this] {
         closeProgressDialog(m_updateProgress);
+        m_pendingInstallerPath.clear();
         if (m_homeScreen)
             m_homeScreen->resetUpdateBannerState();
     });
 
     connect(m_updater, &UpdateManager::downloadFailed, this, [this](const QString& error) {
         closeProgressDialog(m_updateProgress);
-        if (m_homeScreen)
-            m_homeScreen->resetUpdateBannerState();
-        QMessageBox::warning(this, tr("Error al descargar actualización"), error);
+        m_pendingInstallerPath.clear();
+        const bool onHome = (m_stack && m_stack->currentWidget() == m_homeScreen);
+        if (onHome && m_homeScreen)
+            m_homeScreen->showUpdateError(error);
+        else {
+            if (m_homeScreen)
+                m_homeScreen->resetUpdateBannerState();
+            QMessageBox::warning(this, tr("Error al descargar actualización"), error);
+        }
     });
 
     connect(m_updater, &UpdateManager::installerReady, this,
             [this](const QString& installerPath, const UpdateInfo& info) {
                 closeProgressDialog(m_updateProgress);
+                const bool onHome = (m_stack && m_stack->currentWidget() == m_homeScreen);
+                if (onHome && m_homeScreen) {
+                    m_pendingInstallerPath = installerPath;
+                    m_homeScreen->showUpdateReadyToInstall(info.version);
+                    return;
+                }
                 if (m_homeScreen)
                     m_homeScreen->resetUpdateBannerState();
                 saveAllDirtyTabsBeforeExit();
@@ -549,11 +615,13 @@ void MainWindow::saveAllDirtyTabsBeforeExit() {
             const auto settings = documentSettings(ShapeKind::Triangle, true, true, false,
                                                    PressureProfile::Light, tab.themeId, tab.tpl,
                                                    vp, tab.pageFormat, tab.templateScale,
-                                                   tab.cover.colorIndex);
+                                                   tab.cover.colorIndex, tab.cover.iconIndex,
+                                                   tab.customBackground);
             if (serializeDocumentToFile(tab.filePath, tab.pages, cur, settings)) {
                 tab.dirty = false;
                 updateCoverThumbnailForPages(tab.filePath, tab.pages, tab.themeId, tab.tpl,
-                                             tab.pageFormat, tab.templateScale);
+                                             tab.pageFormat, tab.templateScale,
+                                             tab.customBackground);
             }
         }
     }
@@ -620,7 +688,8 @@ void MainWindow::launchNewDocument(const NewDocumentSpec& spec) {
     if (spec.ephemeralIfEmpty) {
         auto loader = [this, &spec] {
             m_canvas->startEphemeralDocument(spec.theme, spec.tpl, spec.format,
-                                             spec.templateScale, spec.cover);
+                                             spec.templateScale, spec.cover,
+                                             spec.customBackground);
             return true;
         };
         if (openInReusableOrNewTab(loader)) {
@@ -658,9 +727,12 @@ void MainWindow::launchNewDocument(const NewDocumentSpec& spec) {
         const QString path = LibraryStore::uniqueNotebookPath(directory, safeName);
         auto loader = [this, &path, &spec] {
             return m_canvas->createNotebook(path, spec.theme, spec.tpl, spec.format,
-                                            spec.templateScale, spec.cover);
+                                            spec.templateScale, spec.cover,
+                                            spec.customBackground);
         };
         if (openInReusableOrNewTab(loader)) {
+            for (const QString& tagId : spec.tagIds)
+                LibraryStore::setDocumentTag(path, tagId, true);
             showEditorPage();
             m_canvas->resetViewport();
             if (m_toolbar)
@@ -669,9 +741,12 @@ void MainWindow::launchNewDocument(const NewDocumentSpec& spec) {
             return;
         }
     }
-    QMessageBox::warning(this, tr("Crear documento"),
-                         tr("No se pudo guardar el documento nuevo. Revisa el nombre, "
-                            "el espacio libre y los permisos de la carpeta."));
+    const QString err = tr("No se pudo guardar el documento nuevo. Revisa el nombre, "
+                           "el espacio libre y los permisos de la carpeta.");
+    if (m_stack && m_stack->currentWidget() == m_homeScreen && m_homeScreen)
+        m_homeScreen->showErrorToast(err);
+    else
+        QMessageBox::warning(this, tr("Crear documento"), err);
 }
 
 void MainWindow::updateOpenTabsForPathMapping(
@@ -861,6 +936,31 @@ MainWindow::~MainWindow() {
         m_padFd = -1;
     }
 #endif
+}
+
+void MainWindow::applyStartupPreference() {
+    if (!qEnvironmentVariableIsEmpty("FINILY_SNAPSHOT")
+        || !qEnvironmentVariableIsEmpty("FINILY_SNAPSHOT_SHEET")
+        || !qEnvironmentVariableIsEmpty("FINILY_SNAPSHOT_FOLDER")) {
+        return;
+    }
+    const QStringList args = QApplication::arguments();
+    if (args.size() > 1 && QFileInfo::exists(args.value(1)))
+        return;
+
+    const int behavior = std::clamp(readAppSetting(QStringLiteral("home/startupBehavior"), 0).toInt(), 0, 2);
+    if (behavior == 1) {
+        const QVector<NotebookMeta> docs = LibraryStore::listAllNotebooksRecursive();
+        if (!docs.isEmpty()) {
+            const auto newest = std::max_element(docs.cbegin(), docs.cend(),
+                                                 [](const NotebookMeta& a, const NotebookMeta& b) {
+                                                     return a.modified < b.modified;
+                                                 });
+            openNotebookInTab(newest->path, false);
+        }
+    } else if (behavior == 2) {
+        launchNewDocument(LibraryStore::lastUsedQuickNoteSpec());
+    }
 }
 
 void MainWindow::openInitialFile(const QString& path) {
@@ -1374,6 +1474,7 @@ void MainWindow::syncTabBarUi() {
     m_tabs[m_activeTab].filePath = m_canvas->currentFilePath();
     m_tabs[m_activeTab].dirty = m_canvas->hasUnsavedChanges();
     m_tabs[m_activeTab].themeId = m_canvas->themeId();
+    m_tabs[m_activeTab].customBackground = m_canvas->customBackground();
     m_tabs[m_activeTab].tpl = m_canvas->defaultBackgroundTemplate();
     m_tabs[m_activeTab].pageFormat = m_canvas->pageFormat();
     m_tabs[m_activeTab].templateScale = m_canvas->templateScale();
@@ -1428,6 +1529,7 @@ void MainWindow::openNewBlankTab() {
     fresh.id = freshId();
     fresh.pages = {PageData{}};
     fresh.themeId = m_canvas->themeId();
+    fresh.customBackground = m_canvas->customBackground();
     fresh.tpl = m_canvas->defaultBackgroundTemplate();
     fresh.pageFormat = m_canvas->pageFormat();
     fresh.templateScale = m_canvas->templateScale();
@@ -1469,7 +1571,7 @@ void MainWindow::closeTab(int index) {
     syncTabBarUi();
 }
 
-bool MainWindow::openNotebookInTab(const QString& path) {
+bool MainWindow::openNotebookInTab(const QString& path, bool forceNewTab) {
     if (!m_canvas || path.isEmpty())
         return false;
     const QString targetKey = normalizedFilePath(path);
@@ -1489,8 +1591,27 @@ bool MainWindow::openNotebookInTab(const QString& path) {
         }
     }
 
-    if (!openInReusableOrNewTab([this, &path] { return m_canvas->loadFromFile(path); }))
-        return false;
+    const bool openNew = forceNewTab || readAppSetting(QStringLiteral("home/openInNewTab"), true).toBool();
+    const bool currentTabDirtyUntitled = m_canvas->currentFilePath().isEmpty()
+        && !isActiveTabEmptyEphemeral() && m_canvas->hasAnyContent();
+    if (!openNew && !m_tabs.isEmpty() && !currentTabDirtyUntitled) {
+        if (!m_canvas->currentFilePath().isEmpty() && m_canvas->hasUnsavedChanges())
+            m_canvas->saveToFile(m_canvas->currentFilePath());
+        if (isActiveTabEmptyEphemeral())
+            m_canvas->cancelPendingAutosave();
+        else
+            m_canvas->flushAutosave();
+        if (!m_canvas->loadFromFile(path))
+            return false;
+        m_activeTab = std::clamp(m_activeTab, 0, int(m_tabs.size()) - 1);
+        m_tabs[m_activeTab].ephemeralIfEmpty = false;
+        m_tabs[m_activeTab].pendingTitle.clear();
+        m_lastTabBarSig.clear();
+        syncActiveTabFromCanvas();
+    } else {
+        if (!openInReusableOrNewTab([this, &path] { return m_canvas->loadFromFile(path); }))
+            return false;
+    }
     showEditorPage();
     if (m_toolbar)
         m_toolbar->refreshFromCanvas();

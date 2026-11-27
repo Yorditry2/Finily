@@ -259,7 +259,8 @@ void CanvasWidget::newDocument() {
 }
 
 bool CanvasWidget::createNotebook(const QString& path, ThemeId theme, BackgroundTemplate background,
-                                  PageFormat format, double templateScale, CoverStyle cover) {
+                                  PageFormat format, double templateScale, CoverStyle cover,
+                                  const QColor& customBackground) {
     if (m_mode != InteractionMode::None || path.isEmpty())
         return false;
     const bool hadPendingAutosave = m_autosaveTimer->isActive();
@@ -267,7 +268,7 @@ bool CanvasWidget::createNotebook(const QString& path, ThemeId theme, Background
     waitForAutosave();
     if (!m_doc.createNotebook(path, theme, background, format,
                               fittedSheetViewport(format, size()), toolSettingsForDocument(),
-                              templateScale, cover)) {
+                              templateScale, cover, customBackground)) {
         if (hadPendingAutosave)
             saveAutosave();
         return false;
@@ -276,14 +277,14 @@ bool CanvasWidget::createNotebook(const QString& path, ThemeId theme, Background
     cancelPendingBeautify();
     if (m_polylineActive)
         cancelActivePolyline();
-    m_color = getThemeConfig(m_doc.themeId()).defaultInk;
+    m_color = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground()).defaultInk;
     afterPageLoaded(true);
     return true;
 }
 
 void CanvasWidget::startEphemeralDocument(ThemeId theme, BackgroundTemplate background,
                                           PageFormat format, double templateScale,
-                                          CoverStyle cover) {
+                                          CoverStyle cover, const QColor& customBackground) {
     m_autosaveTimer->stop();
     waitForAutosave();
     finishTextEditor(false);
@@ -291,8 +292,8 @@ void CanvasWidget::startEphemeralDocument(ThemeId theme, BackgroundTemplate back
     if (m_polylineActive)
         cancelActivePolyline();
     m_doc.configureBlank(theme, background, format, templateScale, cover,
-                         fittedSheetViewport(format, size()));
-    m_color = getThemeConfig(m_doc.themeId()).defaultInk;
+                         fittedSheetViewport(format, size()), customBackground);
+    m_color = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground()).defaultInk;
     afterPageLoaded(true);
     m_autosaveTimer->stop();
 }
@@ -410,7 +411,7 @@ void CanvasWidget::loadAutosave() {
     if (m_polylineActive)
         cancelActivePolyline();
     applyDocumentToolSettings(ts);
-    m_color = getThemeConfig(m_doc.themeId()).defaultInk;
+    m_color = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground()).defaultInk;
     afterPageLoaded(true);
     m_autosaveTimer->stop();
 }
@@ -432,7 +433,7 @@ bool CanvasWidget::loadFromFile(const QString& path) {
     if (m_polylineActive)
         cancelActivePolyline();
     applyDocumentToolSettings(ts);
-    m_color = getThemeConfig(m_doc.themeId()).defaultInk;
+    m_color = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground()).defaultInk;
     afterPageLoaded(true);
     return true;
 }
@@ -449,7 +450,7 @@ void CanvasWidget::importSession(const NotebookSession& session) {
     if (m_polylineActive)
         cancelActivePolyline();
     m_doc.importSession(session);
-    m_color = getThemeConfig(m_doc.themeId()).defaultInk;
+    m_color = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground()).defaultInk;
     afterPageLoaded(true);
     update();
 }

@@ -138,31 +138,22 @@ Para evitar retrocesos en nuevas sesiones, queda **expresamente descartado**:
   5. `Carpeta`
   6. `Importar PDF`
 
-### 5.3 Flujo «Nueva pizarra infinita» — Aprobado con ajuste final aplicado
-- **Contenedor:** Tarjeta flotante derecha (`344 px`, bordes `18 px`, Híbrido B + C), **sin oscurecer** el resto de la biblioteca con scrim pesado.
-- **Cabecera Preview Live (`174 px`, `<canvas>` HiDPI):**
-  - Muestra en vivo el fondo, la plantilla y la trama real de la pizarra **sin rayones falsos**.
-  - Arriba: píldora `∞ Pizarra` + botón `×`. Abajo: título editable en línea (`Pizarra sin título` + icono lápiz fino) con contraste automático según luminancia del fondo.
-  - La cuadrícula/puntos/rayado escala centrado desde `(w/2, h/2)` sin saltos laterales e incluye una cota arquitectónica sutil (`X mm`) sobre una celda real.
-- **1. Fondo:**
-  - 6 circulitos de acceso rápido (`#161922`, `#122B24`, `#1E293B`, `#FFFFFF`, `#FBF7EA`, `#F6E2EA`) + 7.º botón de anillo cromático (`+`).
-  - Al pulsar `+`, se abre a la izquierda de la tarjeta un **popover hermano flotante (`256 px`)** para nunca estirar ni apretar la tarjeta: 3 filas cromáticas visuales (pizarras oscuras, papeles neutros y pasteles suaves, sin pestañas ni etiquetas de texto), cuadro SV amplio, barra de tono y campo `#HEX` editable.
-- **2. Plantilla:**
-  - 4 muestras altas (`58 px`) puramente visuales (`Liso`, `Cuadrícula`, `Puntos`, `Rayado`) con SVGs vectoriales nítidos y cero texto.
-  - **Regla fija:** las 4 muestras mantienen un fondo neutro constante (`#F6F6F4` / `#FFFFFF` activo con trazos oscuros `#18181B`), **sin cambiar al color de fondo elegido** para la pizarra.
-- **3. Trama en `mm`:**
-  - Control visual tipo **regla milimetrada táctil** (`3` a `12 mm`, paso `0.5 mm`) con marcas grabadas cada `0.5 mm`, paradas clicables (`3 · 5 · 8 · 10 · 12`) y stepper inline (`− 5 mm +`). Se atenúa cuando la plantilla activa es `Liso`.
-- **4. Organización y acción final:**
-  - Chips con SVG fino `Sin carpeta ⌄` y `# Etiqueta` + botón ancho `Crear pizarra`.
+### 5.3 Flujo «Nueva pizarra infinita» — Actualizado (modal centrado)
+- **Contenedor:** Modal centrado de dos columnas (`720 × 440 px`, bordes `18 px`, misma gramática que Nuevo cuaderno).
+- **Columna izquierda:** Vista previa limpia en vivo (`BoardPreview`) + nombre editable con línea inferior + chips `Sin carpeta ⌄` y `# Etiqueta` + botón ancho `Crear pizarra`.
+- **Columna derecha (`×` arriba):**
+  1. **Fondo:** 6 circulitos de acceso rápido + 7.º botón de anillo cromático (`+`) que abre el popover flotante `BoardColorPopover` a un lado (`248 px`, paleta visual, cuadro SV, tono y `#HEX`).
+  2. **Plantilla:** 4 muestras puramente visuales (`Liso`, `Cuadrícula`, `Puntos`, `Rayado`) en tono neutro fijo.
+  *(La trama en `mm` se movió al modal de **Cuaderno**, porque la pizarra infinita permite zoom libre).*
 
-### 5.4 Próximos Flujos y Vistas Pendientes
-1. **«Nuevo cuaderno» + Futura Sección de Plantillas / Marketplace local (SIGUIENTE PASO):**
-   - El usuario señaló que los cuadernos necesitan **vistas previas grandes** tanto para portadas como para muchas plantillas enriquecidas, ya que Finily incluirá una sección/marketplace comunitario de plantillas descargables para uso local.
-   - Por ello **NO** usará la tarjeta derecha angosta de `344 px`, sino una **galería amplia** (decidir con el usuario entre modal ancho centrado vs vista completa dedicada).
-2. **«Nueva carpeta»:** reutilizar tarjeta flotante derecha compacta (nombre, paleta de color circular e icono central fino).
-3. **`⚙ Ajustes`:** ahora solo **básicos** (ver `10`). La personalización avanzada (aspecto de carpetas, iconos propios, temas extra como `Crema`/`Negro puro`, paquetes) va en un apartado «Personalizar» marcado «pronto».
-4. **Etapa 3 (Animaciones de Inicio):** especificar físicamente cada transición (colapso de sidebar, apertura de popovers, hover de carpetas/cuadernos, entrada de tarjeta derecha y apertura hacia el lienzo).
-5. **Editor:** una vez cerrado Inicio completo, repetir `Estructura → Superficies → Animaciones` para `FloatingToolbar`, popovers y menú radial.
+### 5.4 Flujos «Nuevo cuaderno» y «Nueva carpeta» — Actualizados
+1. **«Nuevo cuaderno» (`880 × 600 px` centrado):**
+   - **Izquierda:** vista previa estable (en vertical lado a lado; en horizontal escalonada para no encogerse), título, desplegable Liquid Glass con medidas reales (`A4`, `A5`, `Carta`, `Legal`, `1:1`, `16:9`) + selector ancho **`Vertical | Horizontal`**, chips de carpeta/etiqueta y `Crear cuaderno`.
+   - **Derecha:** **Portada** (8 puntos de color en cabecera + portada base, subir imagen próximamente, más portadas próximamente), **Hoja** (6 tonos curados de papel + selector libre `+`, 4 plantillas y tienda próximamente) y **Trama** (4 muestras visuales `4 / 5 / 7 / 10 mm` a juego con `Hoja`).
+2. **«Nueva carpeta» (`680 × 410 px` centrado):**
+   - Mismo diseño modal centrado de dos columnas: izquierda vista previa Bézier de carpeta + nombre + selector `Dentro de` + `Crear carpeta`; derecha `Color` (8 tonos) e `Icono` (14 iconos).
+3. **`⚙ Ajustes`:** ahora solo **básicos** (ver `10`). La personalización avanzada (aspecto de carpetas, iconos propios, temas extra, paquetes) va en un apartado «Personalizar» marcado «pronto».
+4. **Editor:** una vez cerrado Inicio completo, repetir `Estructura → Superficies → Animaciones` para `FloatingToolbar`, popovers y menú radial.
 
 ---
 

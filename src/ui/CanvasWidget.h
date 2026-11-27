@@ -121,6 +121,7 @@ public:
     double pressureSensitivity() const { return m_pressureSensitivity; }
     PressureProfile pressureProfile() const { return m_pressureProfile; }
     ThemeId themeId() const { return m_doc.themeId(); }
+    QColor customBackground() const { return m_doc.customBackground(); }
     BackgroundTemplate backgroundTemplate() const { return m_doc.currentTemplate(); }
     BackgroundTemplate defaultBackgroundTemplate() const { return m_doc.defaultTemplate(); }
     double templateScale() const { return m_doc.templateScale(); }
@@ -219,10 +220,12 @@ public:
     void clearBoard();
     void newDocument();
     bool createNotebook(const QString& path, ThemeId theme, BackgroundTemplate background,
-                        PageFormat format, double templateScale = 1.0, CoverStyle cover = {});
+                        PageFormat format, double templateScale = 1.0, CoverStyle cover = {},
+                        const QColor& customBackground = {});
     void startEphemeralDocument(ThemeId theme, BackgroundTemplate background,
                                 PageFormat format, double templateScale = 1.0,
-                                CoverStyle cover = {});
+                                CoverStyle cover = {},
+                                const QColor& customBackground = {});
     bool saveToFile(const QString& filePath, bool newFile = false, bool silent = false);
     bool loadFromFile(const QString& filePath);
     NotebookSession exportSession() const;

@@ -3,17 +3,19 @@
 #include "engine/LibraryStore.h"
 #include "ui/home/GlassSheet.h"
 
+class QLineEdit;
 class QPushButton;
 
 namespace finily {
 
-class SheetHero;
 class DotRow;
+class FolderPreview;
 class IconGrid;
-class LocationPopover;
 class LocationButton;
+class LocationPopover;
 
-// Tarjeta lateral «Nueva carpeta» / «Editar carpeta» (mockup 06).
+// Modal centrado «Nueva carpeta» / «Editar carpeta» (680×410),
+// adaptado al mismo diseño de dos columnas de Nuevo cuaderno.
 class NewFolderSheet : public GlassSheet {
     Q_OBJECT
 
@@ -32,11 +34,12 @@ signals:
 
 protected:
     void onConfirmed() override;
+    void onClosing() override;
     void hideEvent(QHideEvent* event) override;
 
 private:
+    void applyDark(bool dark);
     void refreshState();
-    QString pathLabel(const QString& rel) const;
 
     bool m_editMode = false;
     QString m_parentRelPath;
@@ -45,13 +48,18 @@ private:
     int m_iconIndex = 0;
     QVector<FolderMeta> m_folders;
 
-    SheetHero* m_hero = nullptr;
+    FolderPreview* m_preview = nullptr;
+    QLineEdit* m_nameEdit = nullptr;
     DotRow* m_dots = nullptr;
     IconGrid* m_icons = nullptr;
     QWidget* m_locSection = nullptr;
     LocationButton* m_locBtn = nullptr;
     LocationPopover* m_locPop = nullptr;
     QPushButton* m_cta = nullptr;
+    QPushButton* m_closeBtn = nullptr;
+    QWidget* m_left = nullptr;
+    QWidget* m_right = nullptr;
+    QWidget* m_divider = nullptr;
 };
 
 } // namespace finily

@@ -3,6 +3,7 @@
 #include "ui/DesignTokens.h"
 #include "ui/UiIcons.h"
 
+#include <QApplication>
 #include <QFontMetrics>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -19,6 +20,15 @@ constexpr int kMenuWidth = 262;
 constexpr int kPad = 5;
 constexpr int kRowHeight = 46;
 constexpr int kSepGap = 9;
+constexpr int kRowStaggerMs = 18;
+constexpr int kOpenTotalMs = tokens::motion::Base + 5 * kRowStaggerMs; // 5 filas + 1 separador = 290 ms
+
+QFont menuFont(qreal px, QFont::Weight weight) {
+    QFont f = QApplication::font();
+    f.setPixelSize(qRound(px));
+    f.setWeight(weight);
+    return f;
+}
 
 } // namespace
 
@@ -40,8 +50,14 @@ CreateMenu::CreateMenu(QWidget* parent)
          QStringLiteral("Para anotar encima"), false},
     };
     m_anim = new QPropertyAnimation(this, "progress", this);
-    m_anim->setDuration(tokens::motion::Base);
-    m_anim->setEasingCurve(tokens::motion::out());
+    connect(m_anim, &QPropertyAnimation::finished, this, [this] {
+        if (!m_closing)
+            return;
+        m_closing = false;
+        m_blurredBg = QImage();
+        hide();
+        emit closed();
+    });
     hide();
 }
 
@@ -59,6 +75,10 @@ void CreateMenu::applyTheme(const HomePalette& pal, bool dark) {
 void CreateMenu::openAnchoredTo(const QRect& anchorInParent, const QString& currentFolderName) {
     if (!parentWidget())
         return;
+    m_anim->stop();
+    m_closing = false;
+    setAttribute(Qt::WA_TransparentForMouseEvents, false);
+
     m_rows[3].subtitle = currentFolderName.isEmpty()
         ? QStringLiteral("Agrupa documentos")
         : QStringLiteral("Subcarpeta en «%1»").arg(currentFolderName);
@@ -72,7 +92,11 @@ void CreateMenu::openAnchoredTo(const QRect& anchorInParent, const QString& curr
     show();
     raise();
     setFocus(Qt::PopupFocusReason);
-    m_anim->stop();
+
+    const bool reduced = tokens::reducedMotion();
+    m_anim->setDuration(reduced ? tokens::motion::Reduced : kOpenTotalMs);
+    // La progresión lineal de 0..290 ms permite evaluar la curva out() independiente por fila.
+    m_anim->setEasingCurve(QEasingCurve(QEasingCurve::Linear));
     m_anim->setStartValue(0.0);
     m_anim->setEndValue(1.0);
     m_anim->start();
@@ -87,13 +111,23 @@ void CreateMenu::reposition(const QRect& anchorInParent) {
 }
 
 void CreateMenu::closeMenu() {
-    if (!isVisible())
+    if (!isVisible() || m_closing)
         return;
-    m_anim->stop();
+    const bool reduced = tokens::reducedMotion();
+    const qreal startP = reduced
+        ? m_progress
+        : tokens::motion::out().valueForProgress(std::clamp(m_progress * kOpenTotalMs / tokens::motion::Base, 0.0, 1.0));
+    m_closing = true;
     m_hoveredRow = -1;
-    m_blurredBg = QImage();
-    hide();
-    emit closed();
+    m_pressedInside = false;
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
+
+    m_anim->stop();
+    m_anim->setDuration(tokens::motion::duration(tokens::motion::Fast));
+    m_anim->setEasingCurve(tokens::motion::curve(tokens::motion::in()));
+    m_anim->setStartValue(startP);
+    m_anim->setEndValue(0.0);
+    m_anim->start();
 }
 
 void CreateMenu::updateCardGeometry(const QRect& anchorInParent, bool grabBackdrop) {
@@ -120,7 +154,9 @@ void CreateMenu::updateCardGeometry(const QRect& anchorInParent, bool grabBackdr
     m_cardRect = QRect(x, y, kMenuWidth, totalH);
 
     if (grabBackdrop && parentWidget()->isVisible() && !m_cardRect.isEmpty()) {
+        m_grabbingBackdrop = true;
         const QPixmap snap = parentWidget()->grab(m_cardRect);
+        m_grabbingBackdrop = false;
         m_blurredBg = blurBackdropImage(snap.toImage(), 11);
     }
 }
@@ -147,80 +183,114 @@ int CreateMenu::rowAt(const QPoint& pos) const {
     return -1;
 }
 
+void CreateMenu::paintRow(QPainter& painter, int index, const tokens::Palette& tk) const {
+    const auto& row = m_rows.at(index);
+    const QRect rr = rowRect(index);
+    const bool hov = (index == m_hoveredRow);
+    if (hov) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(tk.hover);
+        painter.drawRoundedRect(QRectF(rr), 9.0, 9.0);
+    }
+
+    // Cuadro de ícono: neutro; al pasar el cursor se invierte (acento).
+    const QRect iconBox(rr.left() + 8, rr.top() + 8, 30, 30);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(hov ? tk.accent : tk.field);
+    painter.drawRoundedRect(QRectF(iconBox), 9.0, 9.0);
+    paintUiIcon(&painter, QRectF(iconBox).adjusted(7.5, 7.5, -7.5, -7.5), row.glyph,
+                hov ? tk.accentFg : tk.icon);
+
+    const int kbdW = (index == 0) ? 50 : 0;
+    const int textX = iconBox.right() + 12;
+    const int textW = std::max(40, rr.right() - textX - 10 - kbdW);
+
+    const QFont tf = menuFont(12.5, QFont::DemiBold);
+    painter.setFont(tf);
+    painter.setPen(tk.text);
+    painter.drawText(QRect(textX, rr.top() + 6, textW, 18), Qt::AlignLeft | Qt::AlignVCenter,
+                     QFontMetrics(tf).elidedText(row.title, Qt::ElideRight, textW));
+
+    const QFont sf = menuFont(11.0, QFont::Normal);
+    painter.setFont(sf);
+    painter.setPen(tk.muted);
+    painter.drawText(QRect(textX, rr.top() + 24, textW, 16), Qt::AlignLeft | Qt::AlignVCenter,
+                     QFontMetrics(sf).elidedText(row.subtitle, Qt::ElideRight, textW));
+
+    if (index == 0) {
+        // Atajo solo en la acción más usada.
+        const QRect kb(rr.right() - 8 - 46, rr.top() + 13, 46, 20);
+        painter.setPen(QPen(tk.border, 1));
+        painter.setBrush(tk.field);
+        painter.drawRoundedRect(QRectF(kb).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
+        painter.setFont(menuFont(10.0, QFont::Medium));
+        painter.setPen(tk.faint);
+        painter.drawText(kb, Qt::AlignCenter, QStringLiteral("Ctrl N"));
+    }
+}
+
 void CreateMenu::paintEvent(QPaintEvent*) {
+    if (m_grabbingBackdrop)
+        return;
+
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    // Entrada: aparece escalando 0.96→1 desde la esquina del botón «Nuevo» (mockup 11).
-    const QPointF origin(m_cardRect.right(), m_cardRect.top());
-    const qreal sc = 0.96 + 0.04 * m_progress;
-    painter.translate(origin);
-    painter.scale(sc, sc);
-    painter.translate(-origin);
-    painter.setOpacity(m_progress);
+    const bool reduced = tokens::reducedMotion();
+    const QEasingCurve outCurve = tokens::motion::out();
+    const qreal ms = m_progress * kOpenTotalMs;
+    const qreal pContainer = (reduced || m_closing)
+        ? m_progress
+        : outCurve.valueForProgress(std::clamp(ms / tokens::motion::Base, 0.0, 1.0));
+
+    if (!reduced) {
+        const QPointF origin(m_cardRect.right(), m_cardRect.top());
+        const qreal sc = m_closing ? (0.98 + 0.02 * pContainer) : (0.96 + 0.04 * pContainer);
+        const qreal dy = m_closing ? 0.0 : (-4.0 * (1.0 - pContainer));
+        painter.translate(origin.x(), origin.y() + dy);
+        painter.scale(sc, sc);
+        painter.translate(-origin);
+    }
+    painter.setOpacity(pContainer);
 
     const tokens::Palette tk = tokens::paletteFor(m_dark);
-    paintLiquidGlassPanel(painter, QRectF(m_cardRect), 14.0, m_blurredBg, m_pal, m_dark);
+    paintLiquidGlassPanel(painter, QRectF(m_cardRect), tokens::radius::Menu, m_blurredBg, m_pal, m_dark);
 
+    const bool stagger = !reduced && !m_closing;
+    auto slotProgress = [&](int slot) -> qreal {
+        const qreal u = std::clamp((ms - slot * kRowStaggerMs) / tokens::motion::Base, 0.0, 1.0);
+        return outCurve.valueForProgress(u);
+    };
+
+    int slot = 0;
     for (int i = 0; i < m_rows.size(); ++i) {
         const auto& row = m_rows.at(i);
         const QRect rr = rowRect(i);
         if (row.separatorAbove) {
+            const qreal pSep = stagger ? slotProgress(slot++) : 1.0;
+            painter.save();
+            if (stagger) {
+                painter.setOpacity(pContainer * pSep);
+                painter.translate(0.0, -3.0 * (1.0 - pSep));
+            }
             const int sy = rr.top() - kSepGap / 2;
             painter.fillRect(QRect(m_cardRect.left() + 11, sy, kMenuWidth - 22, 1), tk.border);
+            painter.restore();
         }
-        const bool hov = i == m_hoveredRow;
-        if (hov) {
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(tk.hover);
-            painter.drawRoundedRect(QRectF(rr), 9.0, 9.0);
+        const qreal pRow = stagger ? slotProgress(slot++) : 1.0;
+        painter.save();
+        if (stagger) {
+            painter.setOpacity(pContainer * pRow);
+            painter.translate(0.0, -3.0 * (1.0 - pRow));
         }
-
-        // Cuadro de ícono: neutro; al pasar el cursor se invierte (acento).
-        const QRect iconBox(rr.left() + 8, rr.top() + 8, 30, 30);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(hov ? tk.accent : tk.field);
-        painter.drawRoundedRect(QRectF(iconBox), 9.0, 9.0);
-        paintUiIcon(&painter, QRectF(iconBox).adjusted(7.5, 7.5, -7.5, -7.5), row.glyph,
-                    hov ? tk.accentFg : tk.icon);
-
-        const int kbdW = (i == 0) ? 50 : 0;
-        const int textX = iconBox.right() + 12;
-        const int textW = std::max(40, rr.right() - textX - 10 - kbdW);
-
-        QFont tf = painter.font();
-        tf.setPixelSize(12);
-        tf.setWeight(QFont::DemiBold);
-        painter.setFont(tf);
-        painter.setPen(tk.text);
-        painter.drawText(QRect(textX, rr.top() + 6, textW, 18), Qt::AlignLeft | Qt::AlignVCenter,
-                         QFontMetrics(tf).elidedText(row.title, Qt::ElideRight, textW));
-
-        QFont sf = painter.font();
-        sf.setPixelSize(11);
-        sf.setWeight(QFont::Normal);
-        painter.setFont(sf);
-        painter.setPen(tk.muted);
-        painter.drawText(QRect(textX, rr.top() + 24, textW, 16), Qt::AlignLeft | Qt::AlignVCenter,
-                         QFontMetrics(sf).elidedText(row.subtitle, Qt::ElideRight, textW));
-
-        if (i == 0) {
-            // Atajo solo en la acción más usada.
-            const QRect kb(rr.right() - 8 - 46, rr.top() + 13, 46, 20);
-            painter.setPen(QPen(tk.border, 1));
-            painter.setBrush(tk.field);
-            painter.drawRoundedRect(QRectF(kb).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
-            QFont kf = painter.font();
-            kf.setPixelSize(10);
-            kf.setWeight(QFont::Medium);
-            painter.setFont(kf);
-            painter.setPen(tk.faint);
-            painter.drawText(kb, Qt::AlignCenter, QStringLiteral("Ctrl N"));
-        }
+        paintRow(painter, i, tk);
+        painter.restore();
     }
 }
 
 void CreateMenu::mouseMoveEvent(QMouseEvent* event) {
+    if (m_closing)
+        return;
     const int next = rowAt(event->pos());
     if (next != m_hoveredRow) {
         m_hoveredRow = next;
@@ -230,6 +300,8 @@ void CreateMenu::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void CreateMenu::mousePressEvent(QMouseEvent* event) {
+    if (m_closing)
+        return;
     if (event->button() == Qt::LeftButton) {
         if (!m_cardRect.contains(event->pos())) {
             closeMenu();
@@ -240,7 +312,7 @@ void CreateMenu::mousePressEvent(QMouseEvent* event) {
 }
 
 void CreateMenu::mouseReleaseEvent(QMouseEvent* event) {
-    if (event->button() != Qt::LeftButton)
+    if (m_closing || event->button() != Qt::LeftButton)
         return;
     const int idx = m_pressedInside ? rowAt(event->pos()) : -1;
     m_pressedInside = false;

@@ -51,6 +51,7 @@ QIcon symbolGlyph(int iconIndex, const QColor& color);
 QImage blurBackdropImage(const QImage& source, int radius = 10);
 void paintLiquidGlassPanel(QPainter& painter, const QRectF& rect, qreal radius,
                            const QImage& blurredBackdrop, const HomePalette& pal, bool dark);
+void paintToastGlass(QPainter& painter, const QRectF& rect, qreal radius, const QImage& backdrop);
 void paintEditorialFolder(QPainter& painter, const QRectF& bounds, const QColor& baseColor,
                           int iconIndex, bool dark);
 void paintMiniTemplate(QPainter& painter, const QRectF& area, const ThemeConfig& theme,

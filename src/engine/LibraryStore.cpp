@@ -2,6 +2,7 @@
 
 #include "core/Utils.h"
 #include "engine/DocumentSerializer.h"
+#include "engine/NotebookDocument.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -88,6 +89,7 @@ NotebookMeta readNotebookMetaCached(const QFileInfo& info, const QString& folder
     meta.path = absPath;
     meta.title = info.completeBaseName();
     meta.folderRelativePath = folderRel;
+    meta.created = info.birthTime().isValid() ? info.birthTime() : mod;
     meta.modified = mod;
 
     QFile file(meta.path);
@@ -118,6 +120,7 @@ NotebookMeta readNotebookMetaCached(const QFileInfo& info, const QString& folder
         meta.tpl = fileMeta.tpl;
         meta.pageFormat = fileMeta.pageFormat;
         meta.templateScale = fileMeta.templateScale;
+        meta.customBackground = fileMeta.customBackground;
         embeddedCover = fileMeta.coverColorIndex;
         meta.coverIconIndex = std::clamp(fileMeta.coverIconIndex, 0, LibraryStore::kIconCount - 1);
     }
@@ -155,12 +158,18 @@ bool pageObjectHasContent(const QJsonObject& page) {
         || !page.value(QStringLiteral("texts")).toArray().isEmpty();
 }
 
+struct RecursiveNotebookEntry {
+    QFileInfo info;
+    QString folderRel;
+    QString rootDir;
+};
+
 void collectFinilyFilesRecursive(const QString& rootDir, const QString& currentDir,
                                  const QString& currentRel,
-                                 QVector<QPair<QFileInfo, QString>>& out) {
+                                 QVector<RecursiveNotebookEntry>& out) {
     const QDir dir(currentDir);
     for (const QFileInfo& fi : dir.entryInfoList({QStringLiteral("*.finily")}, QDir::Files))
-        out.append({fi, currentRel});
+        out.append({fi, currentRel, rootDir});
     const auto subdirs =
         dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase);
     for (const QFileInfo& sub : subdirs) {
@@ -173,6 +182,45 @@ void collectFinilyFilesRecursive(const QString& rootDir, const QString& currentD
     }
 }
 
+template <typename Mutator>
+bool updateNotebookRootJson(const QString& path, Mutator&& mutate) {
+    if (path.isEmpty())
+        return false;
+    QJsonObject root = loadDocumentFromFile(path);
+    if (root.isEmpty())
+        return false;
+
+    const QDateTime origMtime = QFileInfo(path).lastModified();
+    mutate(root);
+    const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Compact);
+
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly))
+        return false;
+    if (file.write(payload) != payload.size()) {
+        file.cancelWriting();
+        return false;
+    }
+    if (!file.commit())
+        return false;
+
+    if (origMtime.isValid()) {
+        QFile f(path);
+        if (f.open(QIODevice::ReadWrite)) {
+            f.setFileTime(origMtime, QFileDevice::FileModificationTime);
+            f.close();
+        }
+    }
+    LibraryStore::invalidateCache(path);
+    return true;
+}
+
+void applyMetadataFromSnapshot(NotebookMeta& meta, const LibraryMetadataSnapshot& snap,
+                               const QString& relDocPath) {
+    meta.isFavorite = snap.favoriteKeys.contains(QStringLiteral("doc:") + relDocPath);
+    meta.tagIds = snap.docTags.value(relDocPath);
+}
+
 } // namespace
 
 QStringList LibraryStore::libraryDirectories() {
@@ -180,6 +228,12 @@ QStringList LibraryStore::libraryDirectories() {
     const QString overrideDir = qEnvironmentVariable("FINILY_LIBRARY_DIR");
     if (!overrideDir.isEmpty())
         return {overrideDir};
+    const QString customDir = customLibraryDirectory();
+    if (!customDir.isEmpty()) {
+        const QFileInfo fi(customDir);
+        if ((fi.exists() && fi.isDir()) || (!fi.exists() && QDir().mkpath(customDir)))
+            return {QDir::cleanPath(fi.absoluteFilePath())};
+    }
     QStringList directories;
     const auto documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     if (!documents.isEmpty())
@@ -190,6 +244,30 @@ QStringList LibraryStore::libraryDirectories() {
         directories.append(QDir(localData).filePath(QStringLiteral("Cuadernos")));
 #endif
     return directories;
+}
+
+QString LibraryStore::customLibraryDirectory() {
+    return readAppSetting(QStringLiteral("library/customDirectory")).toString().trimmed();
+}
+
+void LibraryStore::setCustomLibraryDirectory(const QString& dir) {
+    const QString trimmed = dir.trimmed();
+    if (trimmed.isEmpty())
+        removeAppSetting(QStringLiteral("library/customDirectory"));
+    else
+        writeAppSetting(QStringLiteral("library/customDirectory"), QDir::cleanPath(trimmed));
+    invalidateCache();
+}
+
+int LibraryStore::trashRetentionDays() {
+    bool ok = false;
+    const int days = readAppSetting(QStringLiteral("library/trashRetentionDays"),
+                                    kTrashRetentionDays).toInt(&ok);
+    return ok ? std::max(0, days) : kTrashRetentionDays;
+}
+
+void LibraryStore::setTrashRetentionDays(int days) {
+    writeAppSetting(QStringLiteral("library/trashRetentionDays"), std::max(0, days));
 }
 
 QString LibraryStore::normalizeRelativeFolder(QString relativeFolder) {
@@ -262,18 +340,32 @@ QVector<NotebookMeta> LibraryStore::listNotebooks(const QString& relativeFolder)
 QVector<NotebookMeta> LibraryStore::listNotebooksInDirectories(const QStringList& directories,
                                                                const QString& relativeFolder) {
     const QString norm = normalizeRelativeFolder(relativeFolder);
-    QFileInfoList entries;
+    struct NotebookEntry {
+        QFileInfo info;
+        QString rootDir;
+    };
+    QVector<NotebookEntry> entries;
+    QHash<QString, LibraryMetadataSnapshot> snapshots;
     for (const QString& directory : directories) {
+        if (!snapshots.contains(directory))
+            snapshots.insert(directory, metadataSnapshotForDirectory(directory));
         const QString targetDir = norm.isEmpty() ? directory : QDir(directory).filePath(norm);
-        entries.append(QDir(targetDir).entryInfoList({QStringLiteral("*.finily")}, QDir::Files));
+        for (const QFileInfo& fi : QDir(targetDir).entryInfoList({QStringLiteral("*.finily")}, QDir::Files))
+            entries.append({fi, directory});
     }
-    std::stable_sort(entries.begin(), entries.end(), [](const QFileInfo& a, const QFileInfo& b) {
-        return a.lastModified() > b.lastModified();
+    std::stable_sort(entries.begin(), entries.end(), [](const NotebookEntry& a, const NotebookEntry& b) {
+        return a.info.lastModified() > b.info.lastModified();
     });
     QVector<NotebookMeta> result;
     result.reserve(entries.size());
-    for (const QFileInfo& info : entries)
-        result.append(readNotebookMetaCached(info, norm));
+    for (const NotebookEntry& entry : entries) {
+        NotebookMeta meta = readNotebookMetaCached(entry.info, norm);
+        const QString relDoc = norm.isEmpty()
+            ? entry.info.fileName()
+            : (norm + QLatin1Char('/') + entry.info.fileName());
+        applyMetadataFromSnapshot(meta, snapshots.value(entry.rootDir), relDoc);
+        result.append(std::move(meta));
+    }
     return result;
 }
 
@@ -283,18 +375,28 @@ QVector<NotebookMeta> LibraryStore::listAllNotebooksRecursive() {
 
 QVector<NotebookMeta> LibraryStore::listAllNotebooksRecursiveInDirectories(
     const QStringList& directories) {
-    QVector<QPair<QFileInfo, QString>> entries;
+    QVector<RecursiveNotebookEntry> entries;
+    QHash<QString, LibraryMetadataSnapshot> snapshots;
     for (const QString& directory : directories) {
+        if (!snapshots.contains(directory))
+            snapshots.insert(directory, metadataSnapshotForDirectory(directory));
         if (QDir(directory).exists())
             collectFinilyFilesRecursive(directory, directory, QString(), entries);
     }
-    std::stable_sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
-        return a.first.lastModified() > b.first.lastModified();
+    std::stable_sort(entries.begin(), entries.end(),
+                     [](const RecursiveNotebookEntry& a, const RecursiveNotebookEntry& b) {
+        return a.info.lastModified() > b.info.lastModified();
     });
     QVector<NotebookMeta> result;
     result.reserve(entries.size());
-    for (const auto& entry : entries)
-        result.append(readNotebookMetaCached(entry.first, entry.second));
+    for (const auto& entry : entries) {
+        NotebookMeta meta = readNotebookMetaCached(entry.info, entry.folderRel);
+        const QString relDoc = entry.folderRel.isEmpty()
+            ? entry.info.fileName()
+            : (entry.folderRel + QLatin1Char('/') + entry.info.fileName());
+        applyMetadataFromSnapshot(meta, snapshots.value(entry.rootDir), relDoc);
+        result.append(std::move(meta));
+    }
     return result;
 }
 
@@ -317,42 +419,38 @@ bool LibraryStore::setCoverColor(const QString& path, int colorIndex) {
 }
 
 bool LibraryStore::setCoverStyle(const QString& path, CoverStyle style) {
-    if (path.isEmpty())
-        return false;
     const int colorClamped = std::clamp(style.colorIndex, 0, kCoverColorCount - 1);
     const int iconClamped = std::clamp(style.iconIndex, 0, kIconCount - 1);
-    QJsonObject root = loadDocumentFromFile(path);
-    if (root.isEmpty())
-        return false;
+    const bool ok = updateNotebookRootJson(path, [&](QJsonObject& root) {
+        root.insert(QStringLiteral("coverColor"), colorClamped);
+        if (iconClamped > 0)
+            root.insert(QStringLiteral("coverIcon"), iconClamped);
+        else
+            root.remove(QStringLiteral("coverIcon"));
+    });
+    if (ok)
+        appSettings()->setValue(coverKey(path), colorClamped);
+    return ok;
+}
 
-    const QDateTime origMtime = QFileInfo(path).lastModified();
-    root.insert(QStringLiteral("coverColor"), colorClamped);
-    if (iconClamped > 0)
-        root.insert(QStringLiteral("coverIcon"), iconClamped);
-    else
-        root.remove(QStringLiteral("coverIcon"));
-    const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Compact);
-
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly))
-        return false;
-    if (file.write(payload) != payload.size()) {
-        file.cancelWriting();
-        return false;
-    }
-    if (!file.commit())
-        return false;
-
-    if (origMtime.isValid()) {
-        QFile f(path);
-        if (f.open(QIODevice::ReadWrite)) {
-            f.setFileTime(origMtime, QFileDevice::FileModificationTime);
-            f.close();
-        }
-    }
-    appSettings()->setValue(coverKey(path), colorClamped);
-    invalidateCache(path);
-    return true;
+bool LibraryStore::setBoardStyle(const QString& path, ThemeId theme,
+                                 const QColor& customBackground, BackgroundTemplate tpl,
+                                 double templateScale) {
+    const int themeClamped = std::clamp(int(theme), 0, int(ThemeId::PaperCream));
+    const int tplClamped = std::clamp(int(tpl), 0, int(BackgroundTemplate::School));
+    const double scaleClamped = clampTemplateScale(templateScale);
+    const bool ok = updateNotebookRootJson(path, [&](QJsonObject& root) {
+        root.insert(QStringLiteral("theme"), themeClamped);
+        if (customBackground.isValid())
+            root.insert(QStringLiteral("customBackground"), customBackground.name(QColor::HexRgb));
+        else
+            root.remove(QStringLiteral("customBackground"));
+        root.insert(QStringLiteral("template"), tplClamped);
+        root.insert(QStringLiteral("templateScale"), scaleClamped);
+    });
+    if (ok)
+        removeCoverThumbnail(path);
+    return ok;
 }
 
 void LibraryStore::migrateCoverSettings(const QString& oldPath, const QString& newPath) {
@@ -396,7 +494,42 @@ bool LibraryStore::renameNotebook(const QString& oldPath, const QString& rawNewN
     }
     migrateCoverSettings(oldPath, newPath);
     moveCoverThumbnail(oldPath, newPath);
+    migrateMetadataForDocument(oldPath, newPath);
     invalidateCache(oldPath);
+    invalidateCache(newPath);
+    if (outNewPath)
+        *outNewPath = newPath;
+    return true;
+}
+
+bool LibraryStore::duplicateNotebook(const QString& path, QString* outNewPath, QString* outError) {
+    const QFileInfo info(path);
+    if (path.isEmpty() || !info.exists() || !info.isFile()) {
+        if (outError)
+            *outError = QStringLiteral("El cuaderno no existe.");
+        return false;
+    }
+    const QString newPath = uniqueNotebookPath(
+        info.absolutePath(), info.completeBaseName() + QStringLiteral(" (copia)"));
+    if (!QFile::copy(path, newPath)) {
+        if (outError)
+            *outError = QStringLiteral("No se pudo duplicar el cuaderno.");
+        return false;
+    }
+    const auto settings = appSettings();
+    QVariant cover = settings->value(coverKey(path));
+    if (!cover.isValid())
+        cover = settings->value(legacyCoverKey(path));
+    if (cover.isValid())
+        settings->setValue(coverKey(newPath), cover);
+
+    const QString oldThumb = coverThumbnailPath(path);
+    if (QFileInfo::exists(oldThumb)) {
+        const QString newThumb = coverThumbnailPath(newPath);
+        QDir().mkpath(QFileInfo(newThumb).absolutePath());
+        QFile::remove(newThumb);
+        QFile::copy(oldThumb, newThumb);
+    }
     invalidateCache(newPath);
     if (outNewPath)
         *outNewPath = newPath;
@@ -413,7 +546,29 @@ bool LibraryStore::deleteNotebook(const QString& path, QString* outError) {
     }
     removeCoverSettings(path);
     removeCoverThumbnail(path);
+    removeMetadataForDocument(path);
     invalidateCache(path);
+    return true;
+}
+
+bool LibraryStore::exportNotebookToPdf(const QString& finilyPath, const QString& pdfPath,
+                                       QString* outError) {
+    if (finilyPath.isEmpty() || pdfPath.isEmpty()) {
+        if (outError)
+            *outError = QStringLiteral("Ruta de archivo no válida.");
+        return false;
+    }
+    NotebookDocument doc;
+    if (!doc.loadFromFile(finilyPath)) {
+        if (outError)
+            *outError = QStringLiteral("No se pudo abrir el cuaderno.");
+        return false;
+    }
+    if (!doc.exportToPdf(pdfPath)) {
+        if (outError)
+            *outError = QStringLiteral("No se pudo exportar a PDF.");
+        return false;
+    }
     return true;
 }
 

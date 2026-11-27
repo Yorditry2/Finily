@@ -52,9 +52,10 @@ void NotebookDocument::restoreSnapshot(const DocumentSnapshot& snapshot) {
 }
 
 void NotebookDocument::setThemeId(ThemeId themeId) {
-    if (m_themeId == themeId)
+    if (m_themeId == themeId && !m_customBackground.isValid())
         return;
     m_themeId = themeId;
+    m_customBackground = QColor();
     ++m_revision;
 }
 
@@ -275,12 +276,14 @@ void NotebookDocument::resetNew(const Viewport& initialViewport) {
 
 void NotebookDocument::configureBlank(ThemeId theme, BackgroundTemplate tpl, PageFormat format,
                                       double templateScale, CoverStyle cover,
-                                      const Viewport& initialViewport) {
+                                      const Viewport& initialViewport,
+                                      const QColor& customBackground) {
     m_themeId = theme;
     m_defaultTemplate = tpl;
     m_pageFormat = isValidPageFormat(int(format)) ? format : PageFormat::Infinite;
     m_templateScale = clampTemplateScale(templateScale);
     m_cover = cover;
+    m_customBackground = customBackground.isValid() ? customBackground : QColor();
     resetNew(initialViewport);
 }
 
@@ -355,7 +358,8 @@ NotebookDocument::HistoryRestoreResult NotebookDocument::redo() {
 bool NotebookDocument::createNotebook(const QString& path, ThemeId theme, BackgroundTemplate tpl,
                                       PageFormat format, const Viewport& initialViewport,
                                       const DocumentToolSettings& toolSettings,
-                                      double templateScale, CoverStyle cover) {
+                                      double templateScale, CoverStyle cover,
+                                      const QColor& customBackground) {
     if (path.isEmpty())
         return false;
     PageData page;
@@ -363,7 +367,8 @@ bool NotebookDocument::createNotebook(const QString& path, ThemeId theme, Backgr
     const auto settings = documentSettings(
         toolSettings.shapeKind, toolSettings.holdToShapeEnabled, toolSettings.smartGuidesEnabled,
         toolSettings.swapPenButtons, toolSettings.pressureProfile, theme, tpl, page.viewport,
-        format, clampTemplateScale(templateScale), cover.colorIndex, cover.iconIndex);
+        format, clampTemplateScale(templateScale), cover.colorIndex, cover.iconIndex,
+        customBackground);
     if (!serializeDocumentToFile(path, {page}, 0, settings, true))
         return false;
     return loadFromFile(path, nullptr, false);
@@ -377,13 +382,14 @@ bool NotebookDocument::saveToFile(const QString& path, const DocumentToolSetting
     const auto settings = documentSettings(
         toolSettings.shapeKind, toolSettings.holdToShapeEnabled, toolSettings.smartGuidesEnabled,
         toolSettings.swapPenButtons, toolSettings.pressureProfile, m_themeId, m_defaultTemplate,
-        viewport(), m_pageFormat, m_templateScale, m_cover.colorIndex, m_cover.iconIndex);
+        viewport(), m_pageFormat, m_templateScale, m_cover.colorIndex, m_cover.iconIndex,
+        m_customBackground);
     if (!serializeDocumentToFile(path, m_pages, m_currentPageIndex, settings, newFile))
         return false;
     m_filePath = path;
     m_savedRevision = m_revision;
     updateCoverThumbnailForPages(path, m_pages, m_themeId, m_defaultTemplate, m_pageFormat,
-                                 m_templateScale);
+                                 m_templateScale, m_customBackground);
     return true;
 }
 
@@ -437,6 +443,9 @@ bool NotebookDocument::loadFromFile(const QString& path, DocumentToolSettings* o
     const int storedCover = root.value("coverColor").toInt(-1);
     m_cover.colorIndex = (storedCover >= 0 && storedCover < 8) ? storedCover : -1;
     m_cover.iconIndex = std::clamp(root.value("coverIcon").toInt(0), 0, 7);
+    const QString customBgStr = root.value("customBackground").toString();
+    const QColor customBg = customBgStr.isEmpty() ? QColor() : QColor(customBgStr);
+    m_customBackground = customBg.isValid() ? customBg : QColor();
 
     m_filePath = path;
     bool dirtyAfterLoad = false;
@@ -487,12 +496,14 @@ NotebookDocument::AutosaveJob NotebookDocument::prepareAutosave(
                                     toolSettings.smartGuidesEnabled, toolSettings.swapPenButtons,
                                     toolSettings.pressureProfile, m_themeId, m_defaultTemplate,
                                     job.pages.at(job.currentPage).viewport, m_pageFormat,
-                                    m_templateScale, m_cover.colorIndex, m_cover.iconIndex);
+                                    m_templateScale, m_cover.colorIndex, m_cover.iconIndex,
+                                    m_customBackground);
     if (renderCoverThumb && job.writeNotebook && !job.pages.isEmpty()) {
         const auto& first = job.pages.first();
         if (pageHasVisibleContent(first))
             job.coverThumb = renderPageThumbnail(first, m_themeId, m_defaultTemplate,
-                                                 m_pageFormat, kCoverThumbSize, m_templateScale);
+                                                 m_pageFormat, kCoverThumbSize, m_templateScale,
+                                                 m_customBackground);
     }
     return job;
 }
@@ -528,6 +539,7 @@ NotebookSession NotebookDocument::exportSession() const {
     session.pageFormat = m_pageFormat;
     session.templateScale = m_templateScale;
     session.cover = m_cover;
+    session.customBackground = m_customBackground;
     session.dirty = isDirty();
     return session;
 }
@@ -541,6 +553,7 @@ void NotebookDocument::importSession(const NotebookSession& session) {
     m_pageFormat = session.pageFormat;
     m_templateScale = clampTemplateScale(session.templateScale);
     m_cover = session.cover;
+    m_customBackground = session.customBackground.isValid() ? session.customBackground : QColor();
     m_filePath = session.filePath;
     m_undoStack.clear();
     m_redoStack.clear();
@@ -555,16 +568,16 @@ QImage NotebookDocument::pageThumbnail(int index, const QSize& size, double temp
     if (index < 0 || index >= m_pages.size()) {
         QImage blank(size * 2, QImage::Format_ARGB32_Premultiplied);
         blank.setDevicePixelRatio(2.0);
-        blank.fill(getThemeConfig(m_themeId).background);
+        blank.fill(effectiveThemeConfig(m_themeId, m_customBackground).background);
         return blank;
     }
     return renderPageThumbnail(m_pages.at(index), m_themeId, m_defaultTemplate,
-                               m_pageFormat, size, templateScale);
+                               m_pageFormat, size, templateScale, m_customBackground);
 }
 
 bool NotebookDocument::exportToPdf(const QString& path) const {
-    return exportPagesToPdf(path, m_pages, getThemeConfig(m_themeId), m_defaultTemplate, m_pageFormat,
-                              m_templateScale);
+    return exportPagesToPdf(path, m_pages, effectiveThemeConfig(m_themeId, m_customBackground),
+                              m_defaultTemplate, m_pageFormat, m_templateScale);
 }
 
 } // namespace finily

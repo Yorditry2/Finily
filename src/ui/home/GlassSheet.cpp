@@ -1,8 +1,11 @@
 #include "ui/home/GlassSheet.h"
 
 #include "ui/DesignTokens.h"
+#include "ui/home/SheetWidgets.h"
 
+#include <QApplication>
 #include <QButtonGroup>
+#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -19,6 +22,13 @@
 
 namespace finily {
 namespace {
+
+QFont sheetFont(qreal px, QFont::Weight weight) {
+    QFont f = QApplication::font();
+    f.setPixelSize(qRound(px));
+    f.setWeight(weight);
+    return f;
+}
 
 QIcon makeSwatchIcon(const QColor& swatch, const QColor& accent) {
     auto render = [&](bool selected) {
@@ -84,6 +94,10 @@ GlassSheet::GlassSheet(QWidget* parent)
     m_cardWidget = new QWidget(this);
     m_cardWidget->setAttribute(Qt::WA_StyledBackground, false);
     m_cardWidget->setAutoFillBackground(false);
+    m_cardOpacity = new QGraphicsOpacityEffect(m_cardWidget);
+    m_cardOpacity->setOpacity(1.0);
+    m_cardOpacity->setEnabled(false);
+    m_cardWidget->setGraphicsEffect(m_cardOpacity);
 
     auto* root = new QVBoxLayout(m_cardWidget);
     root->setContentsMargins(0, 0, 0, 0);
@@ -98,6 +112,7 @@ GlassSheet::GlassSheet(QWidget* parent)
     m_cancelBtn = new QToolButton(header);
     m_cancelBtn->setObjectName(QStringLiteral("finilySheetCancel"));
     m_cancelBtn->setText(QStringLiteral("Cancelar"));
+    m_cancelBtn->setFont(sheetFont(12.5, QFont::DemiBold));
     m_cancelBtn->setFixedHeight(32);
     m_cancelBtn->setCursor(Qt::PointingHandCursor);
     m_cancelBtn->setFocusPolicy(Qt::NoFocus);
@@ -106,12 +121,14 @@ GlassSheet::GlassSheet(QWidget* parent)
 
     m_titleLabel = new QLabel(header);
     m_titleLabel->setObjectName(QStringLiteral("finilySheetTitle"));
+    m_titleLabel->setFont(sheetFont(15, QFont::Bold));
     m_titleLabel->setAlignment(Qt::AlignCenter);
     headerRow->addWidget(m_titleLabel, 1, Qt::AlignVCenter);
 
     m_confirmBtn = new QToolButton(header);
     m_confirmBtn->setObjectName(QStringLiteral("finilySheetConfirm"));
     m_confirmBtn->setText(QStringLiteral("Crear"));
+    m_confirmBtn->setFont(sheetFont(12.5, QFont::Bold));
     m_confirmBtn->setFixedHeight(32);
     m_confirmBtn->setCursor(Qt::PointingHandCursor);
     m_confirmBtn->setFocusPolicy(Qt::NoFocus);
@@ -129,8 +146,19 @@ GlassSheet::GlassSheet(QWidget* parent)
     root->addLayout(m_bodyLayout);
 
     m_anim = new QPropertyAnimation(this, "progress", this);
-    m_anim->setDuration(tokens::motion::Slow);
-    m_anim->setEasingCurve(tokens::motion::out());
+    connect(m_anim, &QPropertyAnimation::finished, this, [this] {
+        if (m_cardOpacity)
+            m_cardOpacity->setEnabled(false);
+        if (!m_closing)
+            return;
+        m_closing = false;
+        const bool accepted = m_pendingAccept;
+        m_pendingAccept = false;
+        m_blurredBg = QImage();
+        hide();
+        if (!accepted)
+            emit cancelled();
+    });
     hide();
 }
 
@@ -167,37 +195,64 @@ int GlassSheet::bodySpacing() const {
 
 void GlassSheet::setProgress(qreal p) {
     m_progress = std::clamp(p, 0.0, 1.0);
-    const int dx = m_side ? qRound((1.0 - m_progress) * 28.0) : 0;
-    const int dy = m_side ? 0 : qRound((1.0 - m_progress) * 14.0);
+    const bool reduced = tokens::reducedMotion();
+    const qreal slideX = m_closing ? 16.0 : 24.0;
+    const qreal slideY = m_closing ? 10.0 : 14.0;
+    const int dx = (!reduced && m_side) ? qRound((1.0 - m_progress) * slideX) : 0;
+    const int dy = (!reduced && !m_side) ? qRound((1.0 - m_progress) * slideY) : 0;
     if (m_cardWidget && !m_cardRect.isEmpty())
         m_cardWidget->move(m_cardRect.left() + dx, m_cardRect.top() + dy);
+    if (m_cardOpacity) {
+        if (m_progress < 0.999) {
+            if (!m_cardOpacity->isEnabled())
+                m_cardOpacity->setEnabled(true);
+            m_cardOpacity->setOpacity(m_progress);
+        } else {
+            m_cardOpacity->setOpacity(1.0);
+            m_cardOpacity->setEnabled(false);
+        }
+    }
     update();
 }
 
 void GlassSheet::openSheet(const HomePalette& pal, bool dark) {
+    m_anim->stop();
+    m_closing = false;
+    m_pendingAccept = false;
+    setAttribute(Qt::WA_TransparentForMouseEvents, false);
+
     m_pal = pal;
     m_dark = dark;
     setStyleSheet(sheetStylesheet());
+    refreshSheetWidgetsTheme(m_cardWidget, dark);
     if (isVisible())
         hide();
     updateCardGeometry(true);
-    m_progress = 0.0;
+    setProgress(0.0);
     show();
     raise();
-    m_anim->stop();
+
+    m_anim->setDuration(tokens::motion::duration(m_side ? tokens::motion::Slow : tokens::motion::Base));
+    m_anim->setEasingCurve(tokens::motion::curve(tokens::motion::out()));
     m_anim->setStartValue(0.0);
     m_anim->setEndValue(1.0);
     m_anim->start();
 }
 
 void GlassSheet::closeSheet(bool accepted) {
-    if (!isVisible())
+    if (!isVisible() || m_closing)
         return;
+    onClosing();
+    m_closing = true;
+    m_pendingAccept = accepted;
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
+
     m_anim->stop();
-    hide();
-    m_blurredBg = QImage();
-    if (!accepted)
-        emit cancelled();
+    m_anim->setDuration(tokens::motion::duration(tokens::motion::Fast));
+    m_anim->setEasingCurve(tokens::motion::curve(tokens::motion::in()));
+    m_anim->setStartValue(m_progress);
+    m_anim->setEndValue(0.0);
+    m_anim->start();
 }
 
 void GlassSheet::repositionOnResize() {
@@ -219,30 +274,34 @@ void GlassSheet::updateCardGeometry(bool grabBackdrop) {
     const int y = m_side ? topGap : std::max(12, (height() - cardH) / 2);
     m_cardRect = QRect(x, y, m_cardWidth, cardH);
     m_cardWidget->setGeometry(m_cardRect);
-    if (grabBackdrop && parentWidget()->isVisible() && !m_cardRect.isEmpty()) {
+    if (grabBackdrop && parentWidget()->isVisible() && !m_cardRect.isEmpty() && !tokens::reducedMotion()) {
+        m_grabbingBackdrop = true;
         const QPixmap snap = parentWidget()->grab(m_cardRect);
+        m_grabbingBackdrop = false;
         m_blurredBg = blurBackdropImage(snap.toImage(), 12);
+    } else if (tokens::reducedMotion()) {
+        m_blurredBg = QImage();
     }
 }
 
 QString GlassSheet::sheetStylesheet() const {
     return QStringLiteral(R"(
-QLabel { color: %1; background: transparent; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; }
-QLabel#finilySheetTitle { color: %2; font-size: 15px; font-weight: 700; letter-spacing: 0px; }
+QLabel#finilySheetSection { color: %1; background: transparent; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; }
+QLabel#finilySheetTitle { color: %2; background: transparent; }
 QLineEdit#finilySheetInput {
     background: %4; border: 1.3px solid %5; border-radius: 14px;
     color: %2; padding: 8px 14px; font-size: 14px; font-weight: 500;
-    selection-background-color: %3; selection-color: %8;
+    selection-background-color: %9; selection-color: %2;
 }
 QLineEdit#finilySheetInput:focus { border: 1.5px solid %3; }
 QToolButton#finilySheetCancel {
     background: %4; border: 1px solid %5; border-radius: 16px;
-    color: %2; padding: 0px 14px; font-size: 12.5px; font-weight: 600;
+    color: %2; padding: 0px 14px;
 }
 QToolButton#finilySheetCancel:hover { border: 1px solid %3; }
 QToolButton#finilySheetConfirm {
     background: %3; border: 1px solid %3; border-radius: 16px;
-    color: %8; padding: 0px 16px; font-size: 12.5px; font-weight: 700;
+    color: %8; padding: 0px 16px;
 }
 QToolButton#finilySheetConfirm:hover { background: %7; }
 QToolButton#finilySheetPill {
@@ -266,16 +325,21 @@ QToolButton#finilySheetSwatch { background: transparent; border: none; border-ra
         .arg(m_pal.border.name(QColor::HexArgb))
         .arg(m_pal.tint.name(QColor::HexArgb))
         .arg(m_pal.accentHover.name(QColor::HexArgb))
-        .arg(m_pal.accentFg.name(QColor::HexArgb));
+        .arg(m_pal.accentFg.name(QColor::HexArgb))
+        .arg(m_dark ? QStringLiteral("rgba(255,255,255,60)") : QStringLiteral("rgba(24,24,27,36)"));
 }
 
 QLabel* GlassSheet::makeSectionLabel(const QString& text) {
-    return new QLabel(text, m_cardWidget);
+    auto* l = new QLabel(text, m_cardWidget);
+    l->setObjectName(QStringLiteral("finilySheetSection"));
+    l->setFont(sheetFont(11, QFont::Bold));
+    return l;
 }
 
 QLineEdit* GlassSheet::makeNameField(const QString& placeholder, const QString& initialText) {
     auto* edit = new QLineEdit(m_cardWidget);
     edit->setObjectName(QStringLiteral("finilySheetInput"));
+    edit->setFont(sheetFont(14, QFont::Medium));
     edit->setFixedHeight(38);
     edit->setPlaceholderText(placeholder);
     edit->setText(initialText);
@@ -368,6 +432,7 @@ QWidget* GlassSheet::makeThemeCardRow(bool boardOrder, ThemeId initialTheme,
     for (int i = 0; i < themes.size(); ++i) {
         auto* btn = new QToolButton(holder);
         btn->setObjectName(QStringLiteral("finilySheetTheme"));
+        btn->setFont(sheetFont(11, QFont::DemiBold));
         btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
         btn->setIcon(makeThemeMiniIcon(themes.at(i).second));
         btn->setIconSize(QSize(62, 34));
@@ -400,6 +465,7 @@ QWidget* GlassSheet::makePillRow(const QVector<QPair<QString, int>>& options, in
     for (const auto& opt : options) {
         auto* btn = new QToolButton(holder);
         btn->setObjectName(QStringLiteral("finilySheetPill"));
+        btn->setFont(sheetFont(12, QFont::DemiBold));
         btn->setText(opt.first);
         btn->setFixedHeight(32);
         btn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -420,6 +486,8 @@ QWidget* GlassSheet::makePillRow(const QVector<QPair<QString, int>>& options, in
 }
 
 void GlassSheet::paintEvent(QPaintEvent*) {
+    if (m_grabbingBackdrop)
+        return;
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
@@ -429,19 +497,26 @@ void GlassSheet::paintEvent(QPaintEvent*) {
         painter.fillRect(rect(), scrim);
     }
 
-    const qreal dx = m_side ? (1.0 - m_progress) * 28.0 : 0.0;
-    const qreal dy = m_side ? 0.0 : (1.0 - m_progress) * 14.0;
+    const bool reduced = tokens::reducedMotion();
+    const qreal slideX = m_closing ? 16.0 : 24.0;
+    const qreal slideY = m_closing ? 10.0 : 14.0;
+    const qreal dx = (!reduced && m_side) ? (1.0 - m_progress) * slideX : 0.0;
+    const qreal dy = (!reduced && !m_side) ? (1.0 - m_progress) * slideY : 0.0;
     painter.setOpacity(m_progress);
-    paintLiquidGlassPanel(painter, QRectF(m_cardRect).translated(dx, dy), m_side ? 18.0 : 22.0,
+    paintLiquidGlassPanel(painter, QRectF(m_cardRect).translated(dx, dy), tokens::radius::Card,
                           m_blurredBg, m_pal, m_dark);
 }
 
 void GlassSheet::mousePressEvent(QMouseEvent* event) {
+    if (m_closing)
+        return;
     if (event->button() == Qt::LeftButton && !m_cardRect.contains(event->pos()))
         closeSheet(false);
 }
 
 void GlassSheet::keyPressEvent(QKeyEvent* event) {
+    if (m_closing)
+        return;
     if (event->key() == Qt::Key_Escape) {
         closeSheet(false);
         event->accept();

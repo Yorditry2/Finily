@@ -1,8 +1,11 @@
 #include "ui/home/LibraryViews.h"
 
+#include "core/Utils.h"
 #include "ui/DesignTokens.h"
 #include "ui/UiIcons.h"
 
+#include <QApplication>
+#include <QFile>
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -11,7 +14,6 @@
 #include <QPainter>
 #include <QPropertyAnimation>
 #include <QSvgRenderer>
-#include <QFile>
 
 #include <algorithm>
 
@@ -25,15 +27,24 @@ QFont pxFont(const QFont& base, qreal px, int weight) {
     return f;
 }
 
-// .text-btn del mockup: píldora con borde fino.
+QFont uiPxFont(qreal px, int weight = QFont::Normal) {
+    return pxFont(QApplication::font(), px, weight);
+}
+
+// .text-btn del mockup: píldora con borde fino e ícono/danger opcionales.
 class PillButton : public QWidget {
 public:
-    PillButton(const QString& text, std::function<void()> run, QWidget* parent)
-        : QWidget(parent), m_text(text), m_run(std::move(run)) {
+    PillButton(const QString& text, const QString& icon, bool danger,
+               std::function<void()> run, QWidget* parent)
+        : QWidget(parent)
+        , m_text(text)
+        , m_icon(icon)
+        , m_danger(danger)
+        , m_run(std::move(run)) {
         setCursor(Qt::PointingHandCursor);
         setAttribute(Qt::WA_Hover, true);
-        const QFont f = pxFont(font(), 12, QFont::DemiBold);
-        setFixedSize(QFontMetrics(f).horizontalAdvance(text) + 26, 30);
+        const QFont f = uiPxFont(12, QFont::DemiBold);
+        setFixedSize(QFontMetrics(f).horizontalAdvance(text) + 26 + (m_icon.isEmpty() ? 0 : 19), 30);
     }
     HomePalette pal = homePaletteFor(false);
     bool dark = false;
@@ -43,12 +54,27 @@ protected:
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
         const tokens::Palette tk = tokens::paletteFor(dark);
-        p.setPen(QPen(dark ? QColor(255, 255, 255, 26) : QColor(15, 23, 42, 26), 1));
-        p.setBrush(underMouse() ? tk.hover : tk.surface);
+        QColor borderCol = dark ? QColor(255, 255, 255, 26) : QColor(15, 23, 42, 26);
+        QColor fillCol = underMouse() ? tk.hover : tk.surface;
+        QColor fgCol = tk.icon;
+        if (m_danger) {
+            borderCol = tk.danger;
+            borderCol.setAlpha(underMouse() ? 165 : 85);
+            fillCol = underMouse() ? tk.dangerSoft : tk.surface;
+            fgCol = tk.danger;
+        }
+        p.setPen(QPen(borderCol, 1));
+        p.setBrush(fillCol);
         p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 15, 15);
-        p.setFont(pxFont(font(), 12, QFont::DemiBold));
-        p.setPen(tk.icon);
-        p.drawText(rect(), Qt::AlignCenter, m_text);
+
+        qreal x = 13.0;
+        if (!m_icon.isEmpty()) {
+            paintUiIcon(&p, QRectF(x, 8.5, 13.0, 13.0), m_icon, fgCol);
+            x += 19.0;
+        }
+        p.setFont(uiPxFont(12, QFont::DemiBold));
+        p.setPen(fgCol);
+        p.drawText(QRectF(x, 0, width() - x - 13.0, height()), Qt::AlignCenter, m_text);
     }
     void enterEvent(QEnterEvent*) override { update(); }
     void leaveEvent(QEvent*) override { update(); }
@@ -59,6 +85,8 @@ protected:
 
 private:
     QString m_text;
+    QString m_icon;
+    bool m_danger = false;
     std::function<void()> m_run;
 };
 
@@ -68,6 +96,20 @@ QSize svgNaturalSize(const QString& pack, const QString& name) {
         return {};
     QSvgRenderer r(f.readAll());
     return r.defaultSize();
+}
+
+const TagInfo* findTagById(const QVector<TagInfo>& tags, const QString& id) {
+    for (const TagInfo& t : tags) {
+        if (t.id == id)
+            return &t;
+    }
+    return nullptr;
+}
+
+QString sortSegmentLabel(int s, bool trashView) {
+    if (trashView)
+        return s == LibraryFilter::Name ? QStringLiteral("Nombre") : QStringLiteral("Fecha de borrado");
+    return LibraryFilter::sortLabel(s);
 }
 
 } // namespace
@@ -88,6 +130,10 @@ bool LibraryFilter::acceptsDocument(const NotebookMeta& meta) const {
         return false;
     default:
         break;
+    }
+    for (const QString& tid : tagIds) {
+        if (!meta.tagIds.contains(tid))
+            return false;
     }
     const QDate today = QDate::currentDate();
     const QDate d = meta.modified.toLocalTime().date();
@@ -129,7 +175,20 @@ QString LibraryFilter::dateLabel(int d) {
 }
 
 QString LibraryFilter::sortLabel(int s) {
-    return s == Name ? QStringLiteral("Nombre") : QStringLiteral("Recientes");
+    switch (s) {
+    case Name: return QStringLiteral("Nombre");
+    case Created: return QStringLiteral("Creación");
+    default: return QStringLiteral("Recientes");
+    }
+}
+
+int LibraryFilter::loadSavedSort() {
+    const int s = readAppSetting(QStringLiteral("home/librarySort"), int(Recent)).toInt();
+    return std::clamp(s, int(Recent), int(Created));
+}
+
+void LibraryFilter::saveSort(int sort) {
+    writeAppSetting(QStringLiteral("home/librarySort"), std::clamp(sort, int(Recent), int(Created)));
 }
 
 void sortDocuments(QVector<NotebookMeta>& docs, int sort) {
@@ -137,6 +196,9 @@ void sortDocuments(QVector<NotebookMeta>& docs, int sort) {
         std::stable_sort(docs.begin(), docs.end(), [](const NotebookMeta& a, const NotebookMeta& b) {
             return QString::localeAwareCompare(a.title, b.title) < 0;
         });
+    } else if (sort == LibraryFilter::Created) {
+        std::stable_sort(docs.begin(), docs.end(),
+                         [](const NotebookMeta& a, const NotebookMeta& b) { return a.created > b.created; });
     } else {
         std::stable_sort(docs.begin(), docs.end(),
                          [](const NotebookMeta& a, const NotebookMeta& b) { return a.modified > b.modified; });
@@ -149,12 +211,12 @@ EmptyStateView::EmptyStateView(QWidget* parent)
     setAttribute(Qt::WA_StyledBackground, false);
     m_title = new QLabel(this);
     m_title->setAlignment(Qt::AlignCenter);
-    m_title->setFont(pxFont(font(), 15, QFont::DemiBold));
+    m_title->setFont(uiPxFont(15, QFont::DemiBold));
     m_bodyLabel = new QLabel(this);
     m_bodyLabel->setAlignment(Qt::AlignCenter);
     m_bodyLabel->setWordWrap(true);
     m_bodyLabel->setTextFormat(Qt::RichText);
-    m_bodyLabel->setFont(pxFont(font(), 12.5, QFont::Normal));
+    m_bodyLabel->setFont(uiPxFont(12.5, QFont::Normal));
     m_actionsBox = new QWidget(this);
     m_actionsRow = new QHBoxLayout(m_actionsBox);
     m_actionsRow->setContentsMargins(0, 0, 0, 0);
@@ -201,7 +263,7 @@ void EmptyStateView::setContent(const QString& art, const QString& title, const 
         delete it;
     }
     for (const Action& a : actions) {
-        auto* b = new PillButton(a.label, a.run, m_actionsBox);
+        auto* b = new PillButton(a.label, a.icon, a.danger, a.run, m_actionsBox);
         b->pal = m_pal;
         b->dark = m_dark;
         m_actionsRow->addWidget(b);
@@ -265,13 +327,13 @@ ResultGroupLabel::ResultGroupLabel(const QString& title, int count, QWidget* par
 
 void ResultGroupLabel::paintEvent(QPaintEvent*) {
     QPainter p(this);
-    QFont f = pxFont(font(), 10.5, QFont::Bold);
+    QFont f = uiPxFont(10.5, QFont::Bold);
     f.setLetterSpacing(QFont::PercentageSpacing, 106);
     p.setFont(f);
     p.setPen(m_pal.faint);
     const int tw = QFontMetrics(f).horizontalAdvance(m_title);
     p.drawText(QRect(0, 0, tw + 2, height()), Qt::AlignLeft | Qt::AlignVCenter, m_title);
-    p.setFont(pxFont(font(), 10.5, QFont::DemiBold));
+    p.setFont(uiPxFont(10.5, QFont::DemiBold));
     p.drawText(QRect(tw + 8, 0, 60, height()), Qt::AlignLeft | Qt::AlignVCenter, QString::number(m_count));
 }
 
@@ -288,6 +350,11 @@ void FilterChipsBar::applyTheme(const HomePalette& pal, bool dark) {
     update();
 }
 
+void FilterChipsBar::setTags(const QVector<TagInfo>& tags) {
+    m_tags = tags;
+    rebuild();
+}
+
 void FilterChipsBar::setFilter(const LibraryFilter& filter) {
     m_filter = filter;
     rebuild();
@@ -296,12 +363,21 @@ void FilterChipsBar::setFilter(const LibraryFilter& filter) {
 void FilterChipsBar::rebuild() {
     m_chips.clear();
     if (m_filter.kind != LibraryFilter::AllKinds)
-        m_chips.append({LibraryFilter::kindIcon(m_filter.kind), LibraryFilter::kindLabel(m_filter.kind), 0, {}});
+        m_chips.append({LibraryFilter::kindIcon(m_filter.kind), LibraryFilter::kindLabel(m_filter.kind), 0, {}, {}});
     if (m_filter.date != LibraryFilter::AnyDate)
-        m_chips.append({QStringLiteral("clock"), LibraryFilter::dateLabel(m_filter.date), 1, {}});
-    if (m_filter.sort != LibraryFilter::Recent)
-        m_chips.append({QStringLiteral("sort"), QStringLiteral("Por nombre"), 2, {}});
-    const QFontMetrics fm(pxFont(font(), 11.5, QFont::DemiBold));
+        m_chips.append({QStringLiteral("clock"), LibraryFilter::dateLabel(m_filter.date), 1, {}, {}});
+    for (const QString& tid : m_filter.tagIds) {
+        const TagInfo* tag = findTagById(m_tags, tid);
+        const QString name = tag ? tag->name : tid;
+        m_chips.append({QStringLiteral("hash"), name, 3, tid, {}});
+    }
+    if (m_filter.sort != LibraryFilter::Recent) {
+        const QString sortText = (m_filter.sort == LibraryFilter::Name)
+            ? QStringLiteral("Por nombre")
+            : QStringLiteral("Por creación");
+        m_chips.append({QStringLiteral("sort"), sortText, 2, {}, {}});
+    }
+    const QFontMetrics fm(uiPxFont(11.5, QFont::DemiBold));
     qreal x = 0;
     for (Chip& c : m_chips) {
         const qreal w = 10 + (c.icon.isEmpty() ? 0 : 17) + fm.horizontalAdvance(c.label) + 5 + 12 + 8;
@@ -316,7 +392,7 @@ void FilterChipsBar::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
     const tokens::Palette tk = tokens::paletteFor(m_dark);
-    p.setFont(pxFont(font(), 11.5, QFont::DemiBold));
+    p.setFont(uiPxFont(11.5, QFont::DemiBold));
     for (int i = 0; i < m_chips.size(); ++i) {
         const Chip& c = m_chips.at(i);
         p.setPen(Qt::NoPen);
@@ -358,6 +434,7 @@ void FilterChipsBar::mouseReleaseEvent(QMouseEvent* e) {
         LibraryFilter f = m_filter;
         if (c.field == 0) f.kind = LibraryFilter::AllKinds;
         else if (c.field == 1) f.date = LibraryFilter::AnyDate;
+        else if (c.field == 3) f.tagIds.removeAll(c.tagId);
         else f.sort = LibraryFilter::Recent;
         emit filterChanged(f);
         return;
@@ -368,6 +445,7 @@ void FilterChipsBar::mouseReleaseEvent(QMouseEvent* e) {
 namespace {
 constexpr int kPanelW = 300;
 constexpr int kChipH = 26;
+constexpr int kTagRowH = 26;
 } // namespace
 
 FilterPanel::FilterPanel(QWidget* parent)
@@ -375,8 +453,15 @@ FilterPanel::FilterPanel(QWidget* parent)
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     m_anim = new QPropertyAnimation(this, "progress", this);
-    m_anim->setDuration(tokens::motion::Fast);
-    m_anim->setEasingCurve(tokens::motion::out());
+    m_anim->setDuration(tokens::motion::duration(tokens::motion::Base));
+    m_anim->setEasingCurve(tokens::motion::curve(tokens::motion::out()));
+    connect(m_anim, &QPropertyAnimation::finished, this, [this] {
+        if (m_closing) {
+            m_closing = false;
+            m_backdrop = QImage();
+            hide();
+        }
+    });
     hide();
 }
 
@@ -386,34 +471,66 @@ void FilterPanel::applyTheme(const HomePalette& pal, bool dark) {
     update();
 }
 
+void FilterPanel::setTags(const QVector<TagInfo>& tags) {
+    m_tags = tags;
+    if (isVisible()) {
+        layoutPanel();
+        update();
+    }
+}
+
 void FilterPanel::setProgress(qreal p) {
     m_progress = std::clamp(p, 0.0, 1.0);
     update();
 }
 
-void FilterPanel::popup(const QRect& anchor, const LibraryFilter& filter, bool) {
+void FilterPanel::popup(const QRect& anchor, const LibraryFilter& filter, bool trashView) {
     if (!parentWidget())
         return;
+    m_anim->stop();
+    m_closing = false;
+    if (isVisible())
+        hide();
+
     m_anchor = anchor;
     m_filter = filter;
+    m_trashView = trashView;
     setGeometry(parentWidget()->rect());
     layoutPanel();
+
+    m_backdrop = QImage();
+    if (parentWidget()->isVisible() && !m_panel.isEmpty()) {
+        const QRect grabRect = m_panel.toAlignedRect().intersected(parentWidget()->rect());
+        if (!grabRect.isEmpty())
+            m_backdrop = blurBackdropImage(parentWidget()->grab(grabRect).toImage(), 11);
+    }
+
+    m_progress = 0.0;
     show();
     raise();
     setFocus(Qt::PopupFocusReason);
-    m_anim->stop();
+    m_anim->setDuration(tokens::motion::duration(tokens::motion::Base));
+    m_anim->setEasingCurve(tokens::motion::curve(tokens::motion::out()));
     m_anim->setStartValue(0.0);
     m_anim->setEndValue(1.0);
     m_anim->start();
 }
 
 void FilterPanel::closePanel() {
-    hide();
+    if (!isVisible() || m_closing)
+        return;
+    m_closing = true;
+    m_anim->stop();
+    m_anim->setDuration(tokens::motion::duration(tokens::motion::Fast));
+    m_anim->setEasingCurve(tokens::motion::curve(tokens::motion::in()));
+    m_anim->setStartValue(m_progress);
+    m_anim->setEndValue(0.0);
+    m_anim->start();
 }
 
 void FilterPanel::layoutPanel() {
     m_hits.clear();
-    const QFontMetrics fm(pxFont(font(), 11.5, QFont::DemiBold));
+    const QFontMetrics fm(uiPxFont(11.5, QFont::DemiBold));
     const qreal left = std::max(12, std::min(m_anchor.right() - kPanelW + 34, width() - kPanelW - 12));
     const qreal top = m_anchor.bottom() + 8;
     const qreal innerL = left + 14;
@@ -430,47 +547,70 @@ void FilterPanel::layoutPanel() {
                 x = innerL;
                 y += kChipH + 5;
             }
-            m_hits.append({QRectF(x, y, w, kChipH), field, v});
+            m_hits.append({QRectF(x, y, w, kChipH), field, v, {}});
             x += w + 5;
         }
         y += kChipH + 12;
     };
     chipRow(0, {0, 1, 2, 3, 4}, LibraryFilter::kindLabel, LibraryFilter::kindIcon);
     chipRow(1, {0, 1, 2, 3}, LibraryFilter::dateLabel, [](int) { return QString(); });
+
+    if (!m_tags.isEmpty() && !m_trashView) {
+        y += 16 + 6; // rótulo Etiquetas
+        for (const TagInfo& tag : m_tags) {
+            m_hits.append({QRectF(innerL, y, innerR - innerL, kTagRowH), 4, 0, tag.id});
+            y += kTagRowH;
+        }
+        y += 12;
+    }
+
     // Ordenar por: control segmentado.
     y += 16 + 6;
     qreal x = innerL + 2;
-    for (int v : {0, 1}) {
-        const qreal w = 22 + fm.horizontalAdvance(LibraryFilter::sortLabel(v));
-        m_hits.append({QRectF(x, y + 2, w, kChipH), 2, v});
+    const QVector<int> sortVals = m_trashView ? QVector<int>{0, 1} : QVector<int>{0, 1, 2};
+    for (int v : sortVals) {
+        const qreal w = 22 + fm.horizontalAdvance(sortSegmentLabel(v, m_trashView));
+        m_hits.append({QRectF(x, y + 2, w, kChipH), 2, v, {}});
         x += w + 2;
     }
     y += kChipH + 4 + 12;
+
     // Pie: línea, «Restablecer» y cuenta.
     y += 10;
-    m_hits.append({QRectF(innerL - 4, y - 4, fm.horizontalAdvance(QStringLiteral("Restablecer")) + 8, 22), 3, 0});
+    m_hits.append({QRectF(innerL - 4, y - 4, fm.horizontalAdvance(QStringLiteral("Restablecer")) + 8, 22), 3, 0, {}});
     y += 14 + 14;
-    m_panel = QRectF(left, top, kPanelW, y - top);
+
+    const qreal panelH = y - top;
+    const qreal clampedTop = std::clamp(top, 12.0, std::max(12.0, height() - panelH - 12.0));
+    if (clampedTop != top) {
+        const qreal dy = clampedTop - top;
+        for (Hit& h : m_hits)
+            h.rect.translate(0.0, dy);
+    }
+    m_panel = QRectF(left, clampedTop, kPanelW, panelH);
 }
 
 void FilterPanel::paintEvent(QPaintEvent*) {
+    if (m_panel.isEmpty())
+        return;
+
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
     const tokens::Palette tk = tokens::paletteFor(m_dark);
-    p.setOpacity(m_progress);
-    const QPointF origin(m_panel.right() - 30, m_panel.top());
-    const qreal sc = 0.97 + 0.03 * m_progress;
-    p.translate(origin);
-    p.scale(sc, sc);
-    p.translate(-origin);
 
-    paintSoftShadow(p, m_panel, 14, 4, m_dark);
-    p.setPen(QPen(tk.borderPop, 1));
-    p.setBrush(tk.surface);
-    p.drawRoundedRect(m_panel.adjusted(0.5, 0.5, -0.5, -0.5), 14, 14);
+    p.setOpacity(m_progress);
+    if (!tokens::reducedMotion()) {
+        const QPointF origin(m_panel.right() - 30, m_panel.top());
+        const qreal sc = 0.97 + 0.03 * m_progress;
+        p.translate(origin);
+        p.scale(sc, sc);
+        p.translate(-origin);
+    }
+
+    paintLiquidGlassPanel(p, m_panel, 14.0, m_backdrop, m_pal, m_dark);
 
     const qreal innerL = m_panel.left() + 14;
-    QFont head = pxFont(font(), 10.5, QFont::Bold);
+    QFont head = uiPxFont(10.5, QFont::Bold);
     head.setLetterSpacing(QFont::PercentageSpacing, 106);
     auto drawHead = [&](const QString& t, qreal yTop) {
         p.setFont(head);
@@ -478,52 +618,104 @@ void FilterPanel::paintEvent(QPaintEvent*) {
         p.drawText(QRectF(innerL, yTop, 200, 16), Qt::AlignLeft | Qt::AlignVCenter, t.toUpper());
     };
 
-    const QFont chipFont = pxFont(font(), 11.5, QFont::DemiBold);
-    // Rótulos: justo encima de la primera ficha de cada sección.
-    const QString heads[] = {QStringLiteral("Tipo"), QStringLiteral("Modificado"), QStringLiteral("Ordenar por")};
-    for (int field = 0; field < 3; ++field) {
+    const QFont chipFont = uiPxFont(11.5, QFont::DemiBold);
+    // Rótulos: justo encima del primer elemento de cada sección.
+    struct HeadSpec { int field; QString title; qreal offset; };
+    const HeadSpec heads[] = {
+        {0, QStringLiteral("Tipo"), 22.0},
+        {1, QStringLiteral("Modificado"), 22.0},
+        {4, QStringLiteral("Etiquetas"), 22.0},
+        {2, QStringLiteral("Ordenar por"), 24.0},
+    };
+    for (const HeadSpec& hs : heads) {
         for (const Hit& h : m_hits) {
-            if (h.field == field) {
-                drawHead(heads[field], h.rect.top() - (field == 2 ? 24 : 22));
+            if (h.field == hs.field) {
+                drawHead(hs.title, h.rect.top() - hs.offset);
                 break;
             }
         }
     }
+
     // Fondo del segmentado.
     QRectF segBg;
     for (const Hit& h : m_hits)
         if (h.field == 2) segBg = segBg.isNull() ? h.rect : segBg.united(h.rect);
-    p.setPen(Qt::NoPen);
-    p.setBrush(tk.field);
-    p.drawRoundedRect(segBg.adjusted(-2, -2, 2, 2), 9, 9);
+    if (!segBg.isNull()) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(tk.field);
+        p.drawRoundedRect(segBg.adjusted(-2, -2, 2, 2), 9, 9);
+    }
 
+    const QFont tagFont = uiPxFont(12.5, QFont::Medium);
     p.setFont(chipFont);
     for (int i = 0; i < m_hits.size(); ++i) {
         const Hit& h = m_hits.at(i);
         if (h.field == 3) {
             p.setPen(QPen(tk.border, 1));
             p.drawLine(QPointF(innerL, h.rect.top() - 6), QPointF(m_panel.right() - 14, h.rect.top() - 6));
-            p.setFont(pxFont(font(), 12, QFont::DemiBold));
+            p.setFont(uiPxFont(12, QFont::DemiBold));
             p.setPen(i == m_hover ? tk.text : tk.muted);
             p.drawText(h.rect, Qt::AlignCenter, QStringLiteral("Restablecer"));
             const int n = m_filter.activeCount();
-            p.setFont(pxFont(font(), 11, QFont::Normal));
+            p.setFont(uiPxFont(11, QFont::Normal));
             p.setPen(tk.faint);
-            p.drawText(QRectF(m_panel.right() - 114, h.rect.top(), 100, h.rect.height()), Qt::AlignRight | Qt::AlignVCenter,
+            p.drawText(QRectF(m_panel.right() - 114, h.rect.top(), 100, h.rect.height()),
+                       Qt::AlignRight | Qt::AlignVCenter,
                        n == 0 ? QStringLiteral("Sin filtros") : n == 1 ? QStringLiteral("1 activo")
                                                                      : QStringLiteral("%1 activos").arg(n));
             p.setFont(chipFont);
             continue;
         }
+        if (h.field == 4) {
+            const TagInfo* tag = findTagById(m_tags, h.tagId);
+            if (!tag)
+                continue;
+            const bool on = m_filter.tagIds.contains(h.tagId);
+            if (i == m_hover) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(tk.hover);
+                p.drawRoundedRect(h.rect.adjusted(-4, 0, 4, 0), 6, 6);
+            }
+            const QRectF box(h.rect.left(), h.rect.center().y() - 7.5, 15.0, 15.0);
+            if (on) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(tk.accent);
+                p.drawRoundedRect(box, 4.0, 4.0);
+                paintUiIcon(&p, box.adjusted(2.0, 2.0, -2.0, -2.0), QStringLiteral("check"), tk.accentFg);
+            } else {
+                const QColor boxBorder = m_dark ? QColor(255, 255, 255, 72) : QColor(0xC4, 0xC4, 0xCB);
+                p.setPen(QPen(boxBorder, 1.5));
+                p.setBrush(Qt::NoBrush);
+                p.drawRoundedRect(box.adjusted(0.75, 0.75, -0.75, -0.75), 4.0, 4.0);
+            }
+            const QRectF dot(box.right() + 8.0, h.rect.center().y() - 3.5, 7.0, 7.0);
+            p.setPen(Qt::NoPen);
+            p.setBrush(tokens::folderColor(tag->colorIndex).body2);
+            p.drawEllipse(dot);
+
+            p.setFont(tagFont);
+            p.setPen(on ? tk.text : tk.icon);
+            const qreal tx = dot.right() + 8.0;
+            const qreal tw = std::max(0.0, h.rect.right() - tx);
+            p.drawText(QRectF(tx, h.rect.top(), tw, h.rect.height()), Qt::AlignLeft | Qt::AlignVCenter,
+                       QFontMetrics(tagFont).elidedText(tag->name, Qt::ElideRight, int(tw)));
+            p.setFont(chipFont);
+            continue;
+        }
+
         const int current = h.field == 0 ? m_filter.kind : h.field == 1 ? m_filter.date : m_filter.sort;
-        const bool on = current == h.value;
+        const bool on = (h.field == 2 && m_trashView)
+            ? (h.value == 0 ? m_filter.sort != LibraryFilter::Name : m_filter.sort == LibraryFilter::Name)
+            : (current == h.value);
         const QString label = h.field == 0 ? LibraryFilter::kindLabel(h.value)
                               : h.field == 1 ? LibraryFilter::dateLabel(h.value)
-                                             : LibraryFilter::sortLabel(h.value);
+                                             : sortSegmentLabel(h.value, m_trashView);
         QColor fg;
         if (h.field == 2) {
             if (on) {
                 p.setPen(Qt::NoPen);
+                p.setBrush(QColor(15, 23, 42, m_dark ? 60 : 22));
+                p.drawRoundedRect(h.rect.translated(0, 1), 7, 7);
                 p.setBrush(tk.surface);
                 p.drawRoundedRect(h.rect, 7, 7);
             }
@@ -547,6 +739,8 @@ void FilterPanel::paintEvent(QPaintEvent*) {
 }
 
 void FilterPanel::mouseMoveEvent(QMouseEvent* e) {
+    if (m_closing)
+        return;
     int h = -1;
     for (int i = 0; i < m_hits.size(); ++i)
         if (m_hits.at(i).rect.contains(e->position())) h = i;
@@ -558,6 +752,8 @@ void FilterPanel::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void FilterPanel::mousePressEvent(QMouseEvent* e) {
+    if (m_closing)
+        return;
     if (!m_panel.contains(e->position())) {
         closePanel();
         return;
@@ -565,10 +761,20 @@ void FilterPanel::mousePressEvent(QMouseEvent* e) {
     for (const Hit& h : m_hits) {
         if (!h.rect.contains(e->position()))
             continue;
-        if (h.field == 0) m_filter.kind = h.value;
-        else if (h.field == 1) m_filter.date = h.value;
-        else if (h.field == 2) m_filter.sort = h.value;
-        else m_filter = LibraryFilter{};
+        if (h.field == 0) {
+            m_filter.kind = h.value;
+        } else if (h.field == 1) {
+            m_filter.date = h.value;
+        } else if (h.field == 2) {
+            m_filter.sort = h.value;
+        } else if (h.field == 4) {
+            if (m_filter.tagIds.contains(h.tagId))
+                m_filter.tagIds.removeAll(h.tagId);
+            else
+                m_filter.tagIds.append(h.tagId);
+        } else {
+            m_filter = LibraryFilter{};
+        }
         update();
         emit filterChanged(m_filter);
         return;

@@ -10,6 +10,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QSet>
 
 #include <algorithm>
 
@@ -101,7 +102,20 @@ QStringList collectDescendantFinilyFiles(const QString& absDir) {
     return files;
 }
 
+void migrateDescendantFiles(const QString& oldAbs, const QString& newAbs, const QStringList& oldFiles) {
+    const QDir oldBase(oldAbs);
+    const QDir newBase(newAbs);
+    for (const QString& oldFile : oldFiles) {
+        const QString newFile = newBase.filePath(oldBase.relativeFilePath(oldFile));
+        LibraryStore::migrateCoverSettings(oldFile, newFile);
+        moveCoverThumbnail(oldFile, newFile);
+        LibraryStore::invalidateCache(oldFile);
+        LibraryStore::invalidateCache(newFile);
+    }
+}
+
 void appendFolderTreeRecursive(const QString& absDir, const QString& relPath, int depth,
+                               const QSet<QString>& favoriteKeys,
                                QVector<FolderMeta>& out, QHash<QString, qsizetype>& indexByRel) {
     const QDir dir(absDir);
     const auto entries =
@@ -115,11 +129,16 @@ void appendFolderTreeRecursive(const QString& absDir, const QString& relPath, in
         int subCount = 0;
         countFolderContents(sub.absoluteFilePath(), docCount, subCount);
         const FolderStyleData style = readFolderStyle(sub.absoluteFilePath(), sub.fileName());
+        const bool isFav = favoriteKeys.contains(QStringLiteral("folder:") + childRel);
+        const QDateTime mod = sub.lastModified();
 
         if (indexByRel.contains(childRel)) {
-            out[indexByRel.value(childRel)].documentCount += docCount;
-            out[indexByRel.value(childRel)].directSubfolders =
-                std::max(out[indexByRel.value(childRel)].directSubfolders, subCount);
+            auto& existing = out[indexByRel.value(childRel)];
+            existing.documentCount += docCount;
+            existing.directSubfolders = std::max(existing.directSubfolders, subCount);
+            existing.isFavorite = existing.isFavorite || isFav;
+            if (mod > existing.modified)
+                existing.modified = mod;
         } else {
             FolderMeta meta;
             meta.relativePath = childRel;
@@ -130,10 +149,13 @@ void appendFolderTreeRecursive(const QString& absDir, const QString& relPath, in
             meta.iconIndex = style.iconIndex;
             meta.documentCount = docCount;
             meta.directSubfolders = subCount;
+            meta.isFavorite = isFav;
+            meta.modified = mod;
             indexByRel.insert(childRel, out.size());
             out.append(meta);
         }
-        appendFolderTreeRecursive(sub.absoluteFilePath(), childRel, depth + 1, out, indexByRel);
+        appendFolderTreeRecursive(sub.absoluteFilePath(), childRel, depth + 1, favoriteKeys, out,
+                                  indexByRel);
     }
 }
 
@@ -163,6 +185,7 @@ QVector<FolderMeta> LibraryStore::listFoldersInDirectories(const QStringList& di
         const QDir dir(targetDir);
         if (!dir.exists())
             continue;
+        const QSet<QString> favSet = metadataSnapshotForDirectory(root).favoriteKeys;
         const auto subdirs =
             dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase);
         for (const QFileInfo& sub : subdirs) {
@@ -174,10 +197,15 @@ QVector<FolderMeta> LibraryStore::listFoldersInDirectories(const QStringList& di
             int docCount = 0;
             int subCount = 0;
             countFolderContents(sub.absoluteFilePath(), docCount, subCount);
+            const bool isFav = favSet.contains(QStringLiteral("folder:") + rel);
+            const QDateTime mod = sub.lastModified();
             if (indexByRel.contains(rel)) {
-                out[indexByRel.value(rel)].documentCount += docCount;
-                out[indexByRel.value(rel)].directSubfolders =
-                    std::max(out[indexByRel.value(rel)].directSubfolders, subCount);
+                auto& existing = out[indexByRel.value(rel)];
+                existing.documentCount += docCount;
+                existing.directSubfolders = std::max(existing.directSubfolders, subCount);
+                existing.isFavorite = existing.isFavorite || isFav;
+                if (mod > existing.modified)
+                    existing.modified = mod;
                 continue;
             }
             const FolderStyleData style = readFolderStyle(sub.absoluteFilePath(), sub.fileName());
@@ -190,6 +218,8 @@ QVector<FolderMeta> LibraryStore::listFoldersInDirectories(const QStringList& di
             meta.iconIndex = style.iconIndex;
             meta.documentCount = docCount;
             meta.directSubfolders = subCount;
+            meta.isFavorite = isFav;
+            meta.modified = mod;
             indexByRel.insert(rel, out.size());
             out.append(meta);
         }
@@ -205,8 +235,10 @@ QVector<FolderMeta> LibraryStore::listAllFoldersTreeInDirectories(const QStringL
     QVector<FolderMeta> out;
     QHash<QString, qsizetype> indexByRel;
     for (const QString& root : directories) {
-        if (QDir(root).exists())
-            appendFolderTreeRecursive(root, QString(), 0, out, indexByRel);
+        if (QDir(root).exists()) {
+            const QSet<QString> favSet = metadataSnapshotForDirectory(root).favoriteKeys;
+            appendFolderTreeRecursive(root, QString(), 0, favSet, out, indexByRel);
+        }
     }
     return out;
 }
@@ -331,19 +363,89 @@ bool LibraryStore::renameFolderInDirectory(const QString& rootDir, const QString
             *outError = QStringLiteral("No se pudo renombrar la carpeta.");
         return false;
     }
-    const QDir oldBase(oldAbs);
-    const QDir newBase(newAbs);
-    for (const QString& oldFile : oldFiles) {
-        const QString newFile = newBase.filePath(oldBase.relativeFilePath(oldFile));
-        migrateCoverSettings(oldFile, newFile);
-        moveCoverThumbnail(oldFile, newFile);
-        invalidateCache(oldFile);
-        invalidateCache(newFile);
+    migrateDescendantFiles(oldAbs, newAbs, oldFiles);
+    const QString newRel =
+        parentRel.isEmpty() ? finalName : (parentRel + QLatin1Char('/') + finalName);
+    migrateMetadataForFolder(rootDir, norm, newRel);
+    if (outNewRelativePath)
+        *outNewRelativePath = newRel;
+    if (outOldAbsPath)
+        *outOldAbsPath = oldAbs;
+    if (outNewAbsPath)
+        *outNewAbsPath = newAbs;
+    return true;
+}
+
+bool LibraryStore::moveFolder(const QString& relativePath, const QString& targetParentRelativePath,
+                              QString* outNewRelativePath, QString* outOldAbsPath,
+                              QString* outNewAbsPath, QString* outError) {
+    const QString norm = normalizeRelativeFolder(relativePath);
+    if (norm.isEmpty())
+        return false;
+    for (const QString& root : libraryDirectories()) {
+        const QString abs = QDir(root).filePath(norm);
+        if (QFileInfo(abs).isDir()) {
+            return moveFolderInDirectory(root, norm, targetParentRelativePath, outNewRelativePath,
+                                         outOldAbsPath, outNewAbsPath, outError);
+        }
     }
-    if (outNewRelativePath) {
-        *outNewRelativePath =
-            parentRel.isEmpty() ? finalName : (parentRel + QLatin1Char('/') + finalName);
+    if (outError)
+        *outError = QStringLiteral("No se encontró la carpeta.");
+    return false;
+}
+
+bool LibraryStore::moveFolderInDirectory(const QString& rootDir, const QString& relativePath,
+                                         const QString& targetParentRelativePath,
+                                         QString* outNewRelativePath, QString* outOldAbsPath,
+                                         QString* outNewAbsPath, QString* outError) {
+    const QString norm = normalizeRelativeFolder(relativePath);
+    const QString targetParent = normalizeRelativeFolder(targetParentRelativePath);
+    if (rootDir.isEmpty() || norm.isEmpty())
+        return false;
+    if (targetParent == norm || targetParent.startsWith(norm + QLatin1Char('/'))) {
+        if (outError)
+            *outError = QStringLiteral("No se puede mover una carpeta dentro de sí misma.");
+        return false;
     }
+    const QString oldAbs = QDir(rootDir).filePath(norm);
+    if (!QFileInfo(oldAbs).isDir())
+        return false;
+
+    const qsizetype slash = norm.lastIndexOf(QLatin1Char('/'));
+    const QString currentParent = (slash >= 0) ? norm.left(slash) : QString();
+    const QString folderName = (slash >= 0) ? norm.mid(slash + 1) : norm;
+    if (targetParent == currentParent) {
+        if (outNewRelativePath)
+            *outNewRelativePath = norm;
+        if (outOldAbsPath)
+            *outOldAbsPath = oldAbs;
+        if (outNewAbsPath)
+            *outNewAbsPath = oldAbs;
+        return true;
+    }
+
+    const QString targetParentAbs =
+        targetParent.isEmpty() ? rootDir : QDir(rootDir).filePath(targetParent);
+    if (!QDir().mkpath(targetParentAbs)) {
+        if (outError)
+            *outError = QStringLiteral("No se pudo crear la carpeta de destino.");
+        return false;
+    }
+
+    QString finalName;
+    const QString newAbs = uniqueFolderDirPath(targetParentAbs, folderName, &finalName);
+    const QStringList oldFiles = collectDescendantFinilyFiles(oldAbs);
+    if (!QDir().rename(oldAbs, newAbs)) {
+        if (outError)
+            *outError = QStringLiteral("No se pudo mover la carpeta.");
+        return false;
+    }
+    migrateDescendantFiles(oldAbs, newAbs, oldFiles);
+    const QString newRel =
+        targetParent.isEmpty() ? finalName : (targetParent + QLatin1Char('/') + finalName);
+    migrateMetadataForFolder(rootDir, norm, newRel);
+    if (outNewRelativePath)
+        *outNewRelativePath = newRel;
     if (outOldAbsPath)
         *outOldAbsPath = oldAbs;
     if (outNewAbsPath)
@@ -383,6 +485,7 @@ bool LibraryStore::deleteFolderInDirectory(const QString& rootDir, const QString
         removeCoverThumbnail(f);
         invalidateCache(f);
     }
+    removeMetadataForFolder(rootDir, norm);
     if (outAbsPath)
         *outAbsPath = abs;
     return true;
@@ -421,6 +524,7 @@ bool LibraryStore::moveNotebookToDirectory(const QString& notebookPath, const QS
     }
     migrateCoverSettings(notebookPath, newPath);
     moveCoverThumbnail(notebookPath, newPath);
+    migrateMetadataForDocument(notebookPath, newPath);
     invalidateCache(notebookPath);
     invalidateCache(newPath);
     if (outNewPath)
