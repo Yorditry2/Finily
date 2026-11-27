@@ -20,6 +20,7 @@ public:
 
 signals:
     void colorPicked(const QColor& color);
+    void colorCommitted(const QColor& color);
     void closeRequested();
 
 protected:

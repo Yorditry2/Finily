@@ -14,6 +14,7 @@ EditorColorPopover::EditorColorPopover(QWidget* parent)
     setRole(Role::PopoverSolid);
     setCornerRadius(16.0);
     setFixedSize(264, 274);
+    setMouseTracking(true);
     hide();
 
     m_presets = {
@@ -25,11 +26,15 @@ EditorColorPopover::EditorColorPopover(QWidget* parent)
     m_hexEdit->setGeometry(176, 12, 74, 26);
     m_hexEdit->setMaxLength(7);
     m_hexEdit->setAlignment(Qt::AlignCenter);
-    connect(m_hexEdit, &QLineEdit::returnPressed, this, [this] {
+    auto applyHex = [this] {
         const QColor c(m_hexEdit->text().trimmed());
-        if (c.isValid())
+        if (c.isValid() && c.name(QColor::HexRgb) != m_color.name(QColor::HexRgb)) {
             commitColor(c);
-    });
+            emit colorCommitted(m_color);
+        }
+    };
+    connect(m_hexEdit, &QLineEdit::returnPressed, this, applyHex);
+    connect(m_hexEdit, &QLineEdit::editingFinished, this, applyHex);
 
     setColor(m_color);
 }
@@ -168,6 +173,7 @@ void EditorColorPopover::mousePressEvent(QMouseEvent* event) {
     for (int i = 0; i < m_presets.size(); ++i) {
         if (swatchRect(i).adjusted(-3, -3, 3, 3).contains(pos)) {
             commitColor(m_presets.at(i));
+            emit colorCommitted(m_color);
             event->accept();
             return;
         }
@@ -176,14 +182,27 @@ void EditorColorPopover::mousePressEvent(QMouseEvent* event) {
 }
 
 void EditorColorPopover::mouseMoveEvent(QMouseEvent* event) {
-    if (m_drag == DragMode::SvSquare)
+    if (m_drag == DragMode::SvSquare) {
         updateFromSv(event->position());
-    else if (m_drag == DragMode::HueBar)
+        return;
+    }
+    if (m_drag == DragMode::HueBar) {
         updateFromHue(event->position());
+        return;
+    }
+    const QPointF pos = event->position();
+    bool over = svRect().adjusted(-4, -4, 4, 4).contains(pos) ||
+                hueRect().adjusted(-4, -4, 4, 4).contains(pos);
+    for (int i = 0; !over && i < m_presets.size(); ++i)
+        over = swatchRect(i).adjusted(-3, -3, 3, 3).contains(pos);
+    setCursor(over ? Qt::PointingHandCursor : Qt::ArrowCursor);
 }
 
 void EditorColorPopover::mouseReleaseEvent(QMouseEvent*) {
-    m_drag = DragMode::None;
+    if (m_drag != DragMode::None) {
+        m_drag = DragMode::None;
+        emit colorCommitted(m_color);
+    }
 }
 
 void EditorColorPopover::updateFromSv(const QPointF& pos) {

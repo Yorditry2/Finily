@@ -97,6 +97,7 @@ public:
 
     // Devuelve 1 = Guardar, 2 = Descartar, 0 = Cancelar.
     int execModal(QWidget* overlayParent, const QString& title, const QString& body);
+    void cancel();
     void applyEditorTheme(bool dark) override;
 
 signals:

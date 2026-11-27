@@ -1493,6 +1493,8 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent* event) {
 
 void CanvasWidget::wheelEvent(QWheelEvent* event) {
     event->accept();
+    if (m_textEditor)
+        finishTextEditor(true);
     if (m_zoomAnimation->state() == QAbstractAnimation::Running) {
         m_zoomAnimation->stop();
         invalidateStaticCache();

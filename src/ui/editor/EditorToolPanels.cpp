@@ -223,8 +223,9 @@ QRectF EditorColorRow::swatchRect(int idx) const {
 void EditorColorRow::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
+    const bool adaptInk = (m_tool != ToolType::Highlighter && m_tool != ToolType::Laser);
     for (int i = 0; i < m_colors.size(); ++i) {
-        const QColor c = resolveAdaptableInkColor(m_colors.at(i), m_darkSheet);
+        const QColor c = adaptInk ? resolveAdaptableInkColor(m_colors.at(i), m_darkSheet) : m_colors.at(i);
         paintEditorSwatch(p, swatchRect(i), c, i == m_activeIdx, m_pal);
     }
     paintEditorRainbowSwatch(p, swatchRect(m_colors.size()),
@@ -933,8 +934,10 @@ bool EditorShapesPanel::isButtonActive(const ShapeBtnSpec& s) const {
                m_canvas->linePattern() != LinePattern::Dimension && !isPhysicsSpringSpec(m_canvas->congruenceMarkSpec());
     if (s.family == ShapeFamily::Circle)
         return cur == ShapeKind::Circle || cur == ShapeKind::Arc || cur == ShapeKind::Sector;
+    if (s.family == ShapeFamily::Quad)
+        return cur == ShapeKind::Rectangle || (cur == ShapeKind::Polyline && m_canvas->tool() == ToolType::Shape && m_canvas->quadVariant() > 0);
     if (s.family == ShapeFamily::Polygon)
-        return cur == ShapeKind::Polyline && m_canvas->tool() == ToolType::Shape;
+        return cur == ShapeKind::Polyline && m_canvas->tool() == ToolType::Shape && m_canvas->quadVariant() == 0;
     if (s.kind == ShapeKind::Polyline && s.family == ShapeFamily::None)
         return m_canvas->tool() == ToolType::Polyline;
     return cur == s.kind;
@@ -966,23 +969,32 @@ void EditorShapesPanel::rebuildLayout() {
         if (m_expandedAfterCat == cat && m_expandedFamily != ShapeFamily::None) {
             struct VarOpt { QString label; int val; };
             QVector<VarOpt> opts;
+            int activeVar = -1;
             if (m_expandedFamily == ShapeFamily::Triangle) {
-                opts = {{QStringLiteral("Libre"), 0}, {QStringLiteral("Isósceles"), 1},
-                        {QStringLiteral("Rectángulo"), 2}, {QStringLiteral("Equilátero"), 3}};
+                opts = {{QStringLiteral("Libre"), 0}, {QStringLiteral("Rectángulo"), 1},
+                        {QStringLiteral("Isósceles"), 2}, {QStringLiteral("Equilátero"), 3}};
+                if (m_canvas) activeVar = m_canvas->triangleVariant();
             } else if (m_expandedFamily == ShapeFamily::Quad) {
                 opts = {{QStringLiteral("Rectángulo"), 0}, {QStringLiteral("Paralelogramo"), 1},
                         {QStringLiteral("Trapecio isósceles"), 2}, {QStringLiteral("Trapecio rectángulo"), 3},
                         {QStringLiteral("Trapezoide"), 4}};
+                if (m_canvas) activeVar = (m_canvas->shapeKind() == ShapeKind::Rectangle) ? 0 : m_canvas->quadVariant();
             } else if (m_expandedFamily == ShapeFamily::Circle) {
                 opts = {{QStringLiteral("Círculo"), 0}, {QStringLiteral("Arco"), 1}, {QStringLiteral("Sector"), 2}};
+                if (m_canvas) {
+                    activeVar = (m_canvas->shapeKind() == ShapeKind::Arc) ? 1
+                              : (m_canvas->shapeKind() == ShapeKind::Sector ? 2 : 0);
+                }
             } else if (m_expandedFamily == ShapeFamily::Polygon) {
                 opts = {{QStringLiteral("5 lados"), 5}, {QStringLiteral("6 lados"), 6},
                         {QStringLiteral("7 lados"), 7}, {QStringLiteral("8 lados"), 8}};
+                if (m_canvas && m_canvas->quadVariant() == 0) activeVar = m_canvas->polygonSides();
             }
             qreal cx = 18.0;
             qreal cy = y + 2.0;
             for (const auto& opt : opts) {
                 auto* chip = new EditorChipButton(opt.label, this);
+                chip->setChecked(opt.val == activeVar);
                 chip->applyEditorTheme(m_dark);
                 const QSize sh = chip->sizeHint();
                 if (cx + sh.width() > width() - 18) {
@@ -995,6 +1007,7 @@ void EditorShapesPanel::rebuildLayout() {
                     if (!m_canvas)
                         return;
                     m_canvas->setTool(ToolType::Shape);
+                    m_canvas->setCongruenceMarkSpec(QString());
                     if (m_expandedFamily == ShapeFamily::Triangle) {
                         m_canvas->setShapeKind(ShapeKind::Triangle);
                         m_canvas->setTriangleVariant(opt.val);
@@ -1010,9 +1023,11 @@ void EditorShapesPanel::rebuildLayout() {
                         m_canvas->setShapeKind(opt.val == 0 ? ShapeKind::Circle
                                              : (opt.val == 1 ? ShapeKind::Arc : ShapeKind::Sector));
                     } else if (m_expandedFamily == ShapeFamily::Polygon) {
+                        m_canvas->setQuadVariant(0);
                         m_canvas->setShapeKind(ShapeKind::Polyline);
                         m_canvas->setPolygonSides(opt.val);
                     }
+                    rebuildLayout();
                     syncFromCanvas();
                 });
                 m_variantChips.append(chip);
@@ -1119,15 +1134,20 @@ void EditorShapesPanel::mouseReleaseEvent(QMouseEvent* e) {
         if (m_canvas) {
             if (s.kind == ShapeKind::Polyline && s.family == ShapeFamily::None) {
                 m_canvas->setTool(ToolType::Polyline);
+                m_canvas->setCongruenceMarkSpec(QString());
             } else {
                 m_canvas->setTool(ToolType::Shape);
                 m_canvas->setShapeKind(s.kind);
+                if (s.family == ShapeFamily::Quad || s.family == ShapeFamily::Polygon)
+                    m_canvas->setQuadVariant(0);
                 if (s.kind == ShapeKind::Solid3D)
                     m_canvas->setSolidKind(s.solidKind);
                 if (s.kind == ShapeKind::Line) {
                     m_canvas->setLineEnding(s.isArrow ? LineEnding::Arrow : LineEnding::None);
                     m_canvas->setLinePattern(s.isDimension ? LinePattern::Dimension : LinePattern::Solid);
                     m_canvas->setCongruenceMarkSpec(s.isSpring ? QStringLiteral("physics:spring") : QString());
+                } else {
+                    m_canvas->setCongruenceMarkSpec(QString());
                 }
             }
         }
@@ -1269,12 +1289,13 @@ void EditorPaperPanel::syncFromCanvas() {
     m_infinite = (m_canvas->pageFormat() == PageFormat::Infinite);
     m_docModeSeg->setCurrentIndex(m_infinite ? 0 : 1);
 
-    int fIdx = 0;
+    int fIdx = -1;
     switch (m_canvas->pageFormat()) {
+    case PageFormat::A4: fIdx = 0; break;
     case PageFormat::A4Landscape: fIdx = 1; break;
     case PageFormat::Letter: fIdx = 2; break;
     case PageFormat::Slide16x9: fIdx = 3; break;
-    default: fIdx = 0; break;
+    default: fIdx = -1; break;
     }
     m_formatSeg->setCurrentIndex(fIdx);
 
@@ -1387,11 +1408,14 @@ void EditorPaperPanel::mouseMoveEvent(QMouseEvent* e) {
     int ht = -1;
     for (int i = 0; i < 4; ++i)
         if (templateRect(i).contains(e->position())) { ht = i; break; }
+    bool overColor = false;
+    for (int i = 0; !overColor && i < m_sheetColors.size(); ++i)
+        overColor = colorRect(i).adjusted(-3, -3, 3, 3).contains(e->position());
     if (ht != m_hoverTpl) {
         m_hoverTpl = ht;
-        setCursor(ht >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
         update();
     }
+    setCursor((ht >= 0 || overColor) ? Qt::PointingHandCursor : Qt::ArrowCursor);
 }
 
 void EditorPaperPanel::leaveEvent(QEvent*) {

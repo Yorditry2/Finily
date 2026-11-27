@@ -15,8 +15,10 @@
 #include <QNetworkRequest>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPointer>
 #include <QResizeEvent>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QTabletEvent>
 #include <QVBoxLayout>
 
@@ -352,6 +354,8 @@ void EditorSettingsModal::openSection(const QString& sectionKey) {
     centerCard();
     updateNavStyles();
     buildSectionContent();
+    if (m_scroll && m_scroll->verticalScrollBar())
+        m_scroll->verticalScrollBar()->setValue(0);
     show();
     raise();
     setFocus();
@@ -480,8 +484,8 @@ void EditorSettingsModal::buildSectionContent() {
         grid->setSpacing(4);
 
         AutoShapeOptions ao = m_canvas ? m_canvas->autoShapeOptions() : AutoShapeOptions{};
-        auto addAutoOpt = [this, grid](int idx, const QString& lbl, bool val, std::function<void(AutoShapeOptions&, bool)> setter) {
-            auto* c = new EditorCheckBox(lbl, {}, m_bodyHost);
+        auto addAutoOpt = [this, grid, gridW](int idx, const QString& lbl, bool val, std::function<void(AutoShapeOptions&, bool)> setter) {
+            auto* c = new EditorCheckBox(lbl, {}, gridW);
             c->setChecked(val);
             c->applyEditorTheme(m_dark);
             connect(c, &EditorCheckBox::toggled, this, [this, setter](bool on) {
@@ -780,14 +784,17 @@ void EditorSettingsModal::buildSectionContent() {
             QNetworkRequest probe(QUrl(QStringLiteral("https://generativelanguage.googleapis.com/v1beta/models/") + VisionExtractor::model()));
             probe.setRawHeader("x-goog-api-key", apiKey.toUtf8());
             QNetworkReply* reply = m_nam->get(probe);
-            connect(reply, &QNetworkReply::finished, this, [reply, statusLbl] {
+            QPointer<QLabel> safeStatus(statusLbl);
+            connect(reply, &QNetworkReply::finished, this, [reply, safeStatus] {
                 const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
                 const auto err = reply->error();
                 reply->deleteLater();
+                if (!safeStatus)
+                    return;
                 if (err == QNetworkReply::NoError && code >= 200 && code < 300)
-                    statusLbl->setText(QStringLiteral("Conexión correcta"));
+                    safeStatus->setText(QStringLiteral("Conexión correcta"));
                 else
-                    statusLbl->setText(QStringLiteral("Error de conexión (%1)").arg(code > 0 ? QString::number(code) : QStringLiteral("red")));
+                    safeStatus->setText(QStringLiteral("Error de conexión (%1)").arg(code > 0 ? QString::number(code) : QStringLiteral("red")));
             });
         });
         m_bodyLayout->addWidget(makeSettingRow(QStringLiteral("Comprobar clave y modelo"), testBtn, m_pal, m_bodyHost));
@@ -940,6 +947,8 @@ void EditorLibraryModal::openSection(const QString& section) {
     centerCard();
     updateNavStyles();
     buildSectionContent();
+    if (m_scroll && m_scroll->verticalScrollBar())
+        m_scroll->verticalScrollBar()->setValue(0);
     show();
     raise();
     setFocus();

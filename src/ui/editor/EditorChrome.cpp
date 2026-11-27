@@ -9,6 +9,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPointer>
 #include <QResizeEvent>
 #include <QTimer>
 
@@ -371,14 +372,27 @@ int EditorConfirmCard::execModal(QWidget* overlayParent, const QString& title, c
     emit visibilityChanged();
     update();
 
+    QPointer<EditorConfirmCard> self(this);
     QEventLoop loop;
     auto conn = connect(this, &EditorConfirmCard::visibilityChanged, &loop, [&] {
         if (!isVisible())
             loop.quit();
     });
+    auto dConn = connect(this, &QObject::destroyed, &loop, &QEventLoop::quit);
     loop.exec();
+    if (!self)
+        return 0;
     disconnect(conn);
+    disconnect(dConn);
     return m_result;
+}
+
+void EditorConfirmCard::cancel() {
+    if (!isVisible())
+        return;
+    m_result = 0;
+    hide();
+    emit visibilityChanged();
 }
 
 void EditorConfirmCard::paintEvent(QPaintEvent* event) {
@@ -494,6 +508,7 @@ void EditorTopBar::applyEditorTheme(bool dark) {
 void EditorTopBar::setDockMode(ToolbarDockMode mode) {
     if (m_dockMode == mode)
         return;
+    finishInlineRename(false);
     m_dockMode = mode;
     setFixedHeight(mode == ToolbarDockMode::Top ? 84 : 38);
     rebuildHits();
@@ -501,6 +516,7 @@ void EditorTopBar::setDockMode(ToolbarDockMode mode) {
 }
 
 void EditorTopBar::setTabs(const QVector<EditorTabItem>& tabs) {
+    finishInlineRename(false);
     m_tabs = tabs;
     rebuildHits();
     update();
@@ -551,6 +567,8 @@ void EditorTopBar::syncFromCanvas(CanvasWidget* canvas) {
 
 void EditorTopBar::resizeEvent(QResizeEvent* event) {
     EditorGlassCard::resizeEvent(event);
+    if (m_renameEdit && m_renameEdit->isVisible())
+        finishInlineRename(false);
     rebuildHits();
 }
 
@@ -566,10 +584,10 @@ void EditorTopBar::rebuildHits() {
 
     int rightUsed = 40; // fullscreen button on right
     if (m_dockMode != ToolbarDockMode::Top) {
-        rightUsed += 28 + 28 + 9; // undo + redo + div
+        rightUsed += 28 + 28 + 12; // undo + redo + div
         if (!m_infinitePage)
-            rightUsed += 56; // pages pill
-        rightUsed += 28 + 86 + 28 + 28 + 12; // paper + zoom(-,%,+) + export + gear + div
+            rightUsed += 58; // pages pill
+        rightUsed += 28 + 6 + 26 + 46 + 26 + 6 + 30 + 28 + 12; // paper + zoom(-,%,+) + export + gear + gap
     }
 
     const int tabStartX = 44;
@@ -582,7 +600,8 @@ void EditorTopBar::rebuildHits() {
     for (int i = 0; i < m_tabs.size(); ++i) {
         const QRectF tr(tx, 6, tabW, 32);
         m_hits.append({tr, HitKind::Tab, i, ToolType::Pen, false, {}, m_tabs.at(i).title});
-        m_hits.append({QRectF(tr.right() - 22, tr.center().y() - 8, 16, 16), HitKind::TabClose, i, ToolType::Pen, false, {}, {}});
+        if (m_tabs.size() > 1)
+            m_hits.append({QRectF(tr.right() - 22, tr.center().y() - 8, 16, 16), HitKind::TabClose, i, ToolType::Pen, false, {}, {}});
         tx += tabW + 3;
     }
     m_hits.append({QRectF(tx + 3, 5, 28, 28), HitKind::NewTab, 0, ToolType::Pen, false, QStringLiteral("plus"), {}});
@@ -757,7 +776,7 @@ void EditorTopBar::paintEvent(QPaintEvent* event) {
                         docIcon, active ? m_pal.icon : m_pal.muted);
 
             qreal rightReserve = 12.0;
-            if (active || tabHovered)
+            if (m_tabs.size() > 1 && (active || tabHovered))
                 rightReserve += 18.0;
             if (tab.dirty)
                 rightReserve += 10.0;
@@ -771,7 +790,7 @@ void EditorTopBar::paintEvent(QPaintEvent* event) {
             if (tab.dirty) {
                 p.setPen(Qt::NoPen);
                 p.setBrush(m_pal.unsavedAmber);
-                const qreal dotX = b.right() - ((active || tabHovered) ? 31.0 : 14.0);
+                const qreal dotX = b.right() - ((m_tabs.size() > 1 && (active || tabHovered)) ? 31.0 : 14.0);
                 p.drawEllipse(QPointF(dotX, b.center().y()), 3.0, 3.0);
             }
             continue;
@@ -798,17 +817,20 @@ void EditorTopBar::paintEvent(QPaintEvent* event) {
 
         if (h.kind == HitKind::WidthSlot) {
             const qreal mm = m_widths[std::clamp(h.index, 0, 2)];
+            const bool adaptInk = (m_activeTool != ToolType::Highlighter && m_activeTool != ToolType::Laser);
             const QColor col = m_colors.isEmpty()
                 ? m_pal.text
-                : resolveAdaptableInkColor(m_colors.at(std::clamp(m_activeColorIdx, 0, int(m_colors.size()) - 1)), m_darkSheet);
+                : (adaptInk ? resolveAdaptableInkColor(m_colors.at(std::clamp(m_activeColorIdx, 0, int(m_colors.size()) - 1)), m_darkSheet)
+                            : m_colors.at(std::clamp(m_activeColorIdx, 0, int(m_colors.size()) - 1)));
             paintEditorWidthSlot(p, h.rect, pillHeightForTool(m_activeTool, mm),
                                  h.index == m_activeWidthSlot, hovered, col, m_pal);
             continue;
         }
 
         if (h.kind == HitKind::ColorSwatch) {
+            const bool adaptInk = (m_activeTool != ToolType::Highlighter && m_activeTool != ToolType::Laser);
             const QColor c = (h.index < m_colors.size())
-                ? resolveAdaptableInkColor(m_colors.at(h.index), m_darkSheet)
+                ? (adaptInk ? resolveAdaptableInkColor(m_colors.at(h.index), m_darkSheet) : m_colors.at(h.index))
                 : m_pal.text;
             paintEditorSwatch(p, h.rect, c, h.index == m_activeColorIdx, m_pal);
             continue;
@@ -1220,16 +1242,19 @@ void EditorDetachedDock::paintEvent(QPaintEvent* event) {
         }
         if (h.kind == HitKind::WidthSlot) {
             const qreal mm = m_widths[std::clamp(h.index, 0, 2)];
+            const bool adaptInk = (m_activeTool != ToolType::Highlighter && m_activeTool != ToolType::Laser);
             const QColor col = m_colors.isEmpty()
                 ? m_pal.text
-                : resolveAdaptableInkColor(m_colors.at(std::clamp(m_activeColorIdx, 0, int(m_colors.size()) - 1)), m_darkSheet);
+                : (adaptInk ? resolveAdaptableInkColor(m_colors.at(std::clamp(m_activeColorIdx, 0, int(m_colors.size()) - 1)), m_darkSheet)
+                            : m_colors.at(std::clamp(m_activeColorIdx, 0, int(m_colors.size()) - 1)));
             paintEditorWidthSlot(p, h.rect, pillHeightForTool(m_activeTool, mm),
                                  h.index == m_activeWidthSlot, hovered, col, m_pal);
             continue;
         }
         if (h.kind == HitKind::ColorSwatch) {
+            const bool adaptInk = (m_activeTool != ToolType::Highlighter && m_activeTool != ToolType::Laser);
             const QColor c = (h.index < m_colors.size())
-                ? resolveAdaptableInkColor(m_colors.at(h.index), m_darkSheet)
+                ? (adaptInk ? resolveAdaptableInkColor(m_colors.at(h.index), m_darkSheet) : m_colors.at(h.index))
                 : m_pal.text;
             paintEditorSwatch(p, h.rect, c, h.index == m_activeColorIdx, m_pal);
             continue;

@@ -79,6 +79,9 @@ public:
     void startInlineRenameActiveTab();
     void openSettingsModal(const QString& section = QStringLiteral("escritura"));
     void openLibraryModal(const QString& section = QStringLiteral("escritura"));
+    bool hasModalOpen() const;
+    void closeOpenModal();
+    bool handleEscape();
     void openRadialColorPicker(const QPointF& nearScreenPos = {});
 
     void importPdfDialog();
@@ -123,6 +126,7 @@ public slots:
     void setDocumentTitle(const QString& title, bool unsaved);
 
 protected:
+    void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void tabletEvent(QTabletEvent* event) override;

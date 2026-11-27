@@ -12,11 +12,13 @@
 #include "ui/home/HomeTheme.h"
 #include "ui/home/NewBoardSheet.h"
 #include "ui/home/NewNotebookSheet.h"
+#include "ui/home/SettingsView.h"
 
 #include <QFileInfo>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QResizeEvent>
 #include <QTabletEvent>
 
@@ -191,10 +193,13 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     m_colorPopover = new EditorColorPopover(this);
     connect(m_colorPopover, &EditorColorPopover::colorPicked, this, [this](const QColor& c) {
         if (!m_canvas) return;
+        if (!m_shapeFillMode)
+            m_canvas->setCustomSwatchColor(m_colorTargetTool, c);
+    });
+    connect(m_colorPopover, &EditorColorPopover::colorCommitted, this, [this](const QColor& c) {
+        if (!m_canvas) return;
         if (m_shapeFillMode)
             m_canvas->setSelectedShapeFillColor(c);
-        else
-            m_canvas->setCustomSwatchColor(m_colorTargetTool, c);
     });
 
     m_fineWidthPopover = new EditorFineWidthPopover(this);
@@ -360,6 +365,11 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     });
     connect(m_notebookSheet, &GlassSheet::closed, this, [this] { updateOverlayMask(); });
 
+    for (QWidget* w : {static_cast<QWidget*>(m_topBar), static_cast<QWidget*>(m_detachedDock),
+                       static_cast<QWidget*>(m_elementsPanel), static_cast<QWidget*>(m_pagesPanel)}) {
+        if (w)
+            w->installEventFilter(this);
+    }
     for (QLineEdit* le : findChildren<QLineEdit*>())
         le->installEventFilter(this);
 
@@ -566,6 +576,61 @@ void FloatingToolbar::openLibraryModal(const QString& section) {
     updateOverlayMask();
 }
 
+bool FloatingToolbar::hasModalOpen() const {
+    return (m_settingsModal && m_settingsModal->isVisible())
+        || (m_libraryModal && m_libraryModal->isVisible())
+        || (m_confirmCard && m_confirmCard->isVisible())
+        || (m_boardSheet && m_boardSheet->isVisible())
+        || (m_notebookSheet && m_notebookSheet->isVisible());
+}
+
+void FloatingToolbar::closeOpenModal() {
+    if (m_dropdownMenu && m_dropdownMenu->isVisible()) {
+        m_dropdownMenu->hide();
+        updateOverlayMask();
+        return;
+    }
+    if (m_confirmCard && m_confirmCard->isVisible()) {
+        m_confirmCard->cancel();
+        updateOverlayMask();
+        return;
+    }
+    if (m_boardSheet && m_boardSheet->isVisible()) {
+        m_boardSheet->closeSheet(false);
+        return;
+    }
+    if (m_notebookSheet && m_notebookSheet->isVisible()) {
+        m_notebookSheet->closeSheet(false);
+        return;
+    }
+    if (m_settingsModal && m_settingsModal->isVisible()) {
+        m_settingsModal->hide();
+        updateOverlayMask();
+        return;
+    }
+    if (m_libraryModal && m_libraryModal->isVisible()) {
+        m_libraryModal->hide();
+        updateOverlayMask();
+    }
+}
+
+bool FloatingToolbar::handleEscape() {
+    if (m_dropdownMenu && m_dropdownMenu->isVisible()) {
+        m_dropdownMenu->hide();
+        updateOverlayMask();
+        return true;
+    }
+    if (hasModalOpen()) {
+        closeOpenModal();
+        return true;
+    }
+    if (m_openPopover || (m_edgeMarkCapsule && m_edgeMarkCapsule->isVisible())) {
+        closeTransientPopovers();
+        return true;
+    }
+    return false;
+}
+
 void FloatingToolbar::openRadialColorPicker(const QPointF& nearScreenPos) {
     if (!m_canvas)
         return;
@@ -628,10 +693,11 @@ void FloatingToolbar::refreshFromCanvas() {
     if (!m_canvas)
         return;
 
-    const bool dark = readAppSetting(QStringLiteral("home/darkMode"), false).toBool() ||
-                      (readAppSetting(QStringLiteral("home/themeMode"), 0).toInt() == 2) ||
-                      (readAppSetting(QStringLiteral("home/themeMode"), 0).toInt() == 0 &&
-                       m_canvas->isCurrentSheetDark());
+    const int themeMode = SettingsView::themeMode();
+    const bool dark = (themeMode == SettingsView::Dark)
+                   || (themeMode == SettingsView::System
+                       && (readAppSetting(QStringLiteral("home/darkMode"), false).toBool()
+                           || m_canvas->isCurrentSheetDark()));
     if (dark != m_darkUi)
         applyThemeToAll(dark);
 
@@ -951,6 +1017,14 @@ void FloatingToolbar::updateOverlayMask() {
     }
 }
 
+void FloatingToolbar::paintEvent(QPaintEvent* event) {
+    QWidget::paintEvent(event);
+    if (m_confirmCard && m_confirmCard->isVisible()) {
+        QPainter p(this);
+        p.fillRect(rect(), editorPaletteFor(m_darkUi).veil);
+    }
+}
+
 void FloatingToolbar::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     positionAll();
@@ -962,6 +1036,11 @@ void FloatingToolbar::mouseReleaseEvent(QMouseEvent* event) {
         updateOverlayMask();
         return;
     }
+    if (m_confirmCard && m_confirmCard->isVisible() && !m_confirmCard->geometry().contains(event->pos())) {
+        m_confirmCard->cancel();
+        updateOverlayMask();
+        return;
+    }
     QWidget::mouseReleaseEvent(event);
 }
 
@@ -970,6 +1049,18 @@ void FloatingToolbar::tabletEvent(QTabletEvent* event) {
 }
 
 bool FloatingToolbar::eventFilter(QObject* watched, QEvent* event) {
+    if (m_dropdownMenu && m_dropdownMenu->isVisible() && event->type() == QEvent::MouseButtonPress) {
+        if (watched == m_topBar || watched == m_detachedDock || watched == m_elementsPanel || watched == m_pagesPanel) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            auto* w = static_cast<QWidget*>(watched);
+            const QPoint pt = w->mapTo(this, me->pos());
+            if (!m_dropdownMenu->geometry().contains(pt)) {
+                m_dropdownMenu->hide();
+                updateOverlayMask();
+                return true;
+            }
+        }
+    }
     if (event->type() == QEvent::ShortcutOverride && qobject_cast<QLineEdit*>(watched)) {
         auto* ke = static_cast<QKeyEvent*>(event);
         if (ke->modifiers() == Qt::NoModifier || ke->modifiers() == Qt::ShiftModifier) {

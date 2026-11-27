@@ -268,7 +268,8 @@ void EditorContextCapsule::syncFromCanvas() {
         addDupAndDel();
         addMoreButton();
     } else if (isShape) {
-        const bool closed = st.filled.has_value() || st.fillColor.has_value() || fam != ShapeFamily::None;
+        const bool closed = st.filled.has_value() || st.fillColor.has_value()
+                         || (fam != ShapeFamily::None && !(fam == ShapeFamily::Circle && famVal == 1));
         const LinePattern curPat = st.pattern.value_or(LinePattern::Solid);
 
         auto addPatBtn = [this, curPat](const QString& icon, LinePattern pat, const QString& tip) {
@@ -311,10 +312,10 @@ void EditorContextCapsule::syncFromCanvas() {
                     seg->setCurrentIndex(std::clamp(famVal, 0, 3));
                 } else if (fam == ShapeFamily::Quad) {
                     seg->setOptions({QStringLiteral("Rect."), QStringLiteral("Cuad."), QStringLiteral("Rombo"), QStringLiteral("Paral.")});
-                    seg->setCurrentIndex(std::clamp(famVal, 0, 3));
+                    seg->setCurrentIndex(famVal >= 0 && famVal <= 3 ? famVal : -1);
                 } else if (fam == ShapeFamily::Circle) {
-                    seg->setOptions({QStringLiteral("Círc."), QStringLiteral("Arco"), QStringLiteral("Sector")});
-                    seg->setCurrentIndex(std::clamp(famVal, 0, 2));
+                    seg->setOptions({QStringLiteral("Círc."), QStringLiteral("Arco"), QStringLiteral("Sector"), QStringLiteral("Elipse")});
+                    seg->setCurrentIndex(std::clamp(famVal, 0, 3));
                 } else {
                     seg->setOptions({QStringLiteral("5"), QStringLiteral("6"), QStringLiteral("7"), QStringLiteral("8")});
                     seg->setCurrentIndex(std::clamp(famVal - 5, 0, 3));

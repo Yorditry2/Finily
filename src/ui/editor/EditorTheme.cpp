@@ -509,7 +509,7 @@ void EditorSegControl::setOptions(const QStringList& labels) {
 void EditorSegControl::setCurrentIndex(int index) {
     if (m_labels.isEmpty())
         return;
-    const int clamped = std::clamp(index, 0, int(m_labels.size()) - 1);
+    const int clamped = (index < 0) ? -1 : std::clamp(index, 0, int(m_labels.size()) - 1);
     if (m_current == clamped)
         return;
     m_current = clamped;

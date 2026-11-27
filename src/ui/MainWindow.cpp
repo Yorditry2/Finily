@@ -1242,7 +1242,11 @@ void MainWindow::installShortcuts() {
     auto addShortcut = [this](const QKeySequence& sequence, const std::function<void()>& action) {
         auto* shortcut = new QShortcut(sequence, m_container);
         shortcut->setContext(Qt::WidgetWithChildrenShortcut);
-        connect(shortcut, &QShortcut::activated, this, action);
+        connect(shortcut, &QShortcut::activated, this, [this, action] {
+            if (m_toolbar && m_toolbar->hasModalOpen())
+                return;
+            action();
+        });
     };
 
     addShortcut(QKeySequence("Ctrl+Z"), [this] {
@@ -1262,7 +1266,9 @@ void MainWindow::installShortcuts() {
         m_toolbar->refreshFromCanvas();
     });
     addShortcut(QKeySequence("Tab"), [this] { m_toolbar->toggleCleanUi(); });
-    addShortcut(QKeySequence("F11"), [this] {
+    auto* fullscreenSc = new QShortcut(QKeySequence("F11"), m_container);
+    fullscreenSc->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(fullscreenSc, &QShortcut::activated, this, [this] {
         if (isFullScreen())
             showNormal();
         else
@@ -1273,7 +1279,11 @@ void MainWindow::installShortcuts() {
     for (int i = 0; i < 5; ++i) {
         auto* sc = new QShortcut(QKeySequence(m_toolbar->presetShortcut(i)), m_container);
         sc->setContext(Qt::WidgetWithChildrenShortcut);
-        connect(sc, &QShortcut::activated, this, [this, i] { m_toolbar->selectPreset(i); });
+        connect(sc, &QShortcut::activated, this, [this, i] {
+            if (m_toolbar && m_toolbar->hasModalOpen())
+                return;
+            m_toolbar->selectPreset(i);
+        });
         m_presetShortcuts.append(sc);
     }
     connect(m_toolbar, &FloatingToolbar::presetsChanged, this, [this] {
@@ -1312,7 +1322,13 @@ void MainWindow::installShortcuts() {
     };
     addShortcut(QKeySequence("Return"), finishPolyline);
     addShortcut(QKeySequence("Enter"), finishPolyline);
-    addShortcut(QKeySequence("Escape"), [this] { m_canvas->cancelInteraction(); });
+    auto* escSc = new QShortcut(QKeySequence("Escape"), m_container);
+    escSc->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(escSc, &QShortcut::activated, this, [this] {
+        if (m_toolbar && m_toolbar->handleEscape())
+            return;
+        m_canvas->cancelInteraction();
+    });
     // Lazo, portapapeles, línea auxiliar y PDF
     addShortcut(QKeySequence("A"), [this] { m_toolbar->selectTool(ToolType::Lasso); });
     addShortcut(QKeySequence("M"), [this] {
@@ -1385,12 +1401,16 @@ void MainWindow::installShortcuts() {
     m_pagePrevAltShortcut = new QShortcut(m_container);
     m_pagePrevAltShortcut->setContext(Qt::WidgetWithChildrenShortcut);
     connect(m_pagePrevAltShortcut, &QShortcut::activated, this, [this] {
+        if (m_toolbar && m_toolbar->hasModalOpen())
+            return;
         m_canvas->prevPage();
         m_toolbar->refreshFromCanvas();
     });
     m_pageNextAltShortcut = new QShortcut(m_container);
     m_pageNextAltShortcut->setContext(Qt::WidgetWithChildrenShortcut);
     connect(m_pageNextAltShortcut, &QShortcut::activated, this, [this] {
+        if (m_toolbar && m_toolbar->hasModalOpen())
+            return;
         m_canvas->nextPage();
         m_toolbar->refreshFromCanvas();
     });
