@@ -28,6 +28,15 @@ public:
     void setSidebarCollapsed(bool collapsed);
     QString searchText() const;
     QRect newButtonGeometry() const; // en coordenadas de la cabecera
+    QRect filterButtonGeometry() const;
+    void setFilterActive(bool active);
+    void setFilterVisible(bool visible);
+    // Ficha de ámbito dentro del buscador («Apuntes ×»); vacío = toda la biblioteca.
+    void setSearchScope(const QString& name);
+    void openSearch();
+    void closeSearch();
+    // Ajustes: oculta buscar, filtro y «+ Nuevo».
+    void setLibraryControlsVisible(bool visible);
     void applyTheme(const HomePalette& pal, bool dark);
 
 signals:
@@ -35,6 +44,9 @@ signals:
     void breadcrumbClicked(const QString& relativePath);
     void newRequested();
     void reopenSidebarRequested();
+    void filterRequested();
+    void searchScopeCleared();
+    void searchSubmitted();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -51,6 +63,7 @@ private:
     HeaderSearchField* m_searchField = nullptr;
     QLineEdit* m_search = nullptr;
     HeaderIconButton* m_searchBtn = nullptr;
+    HeaderIconButton* m_filterBtn = nullptr;
     HeaderNewButton* m_newBtn = nullptr;
 };
 

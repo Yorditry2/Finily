@@ -459,6 +459,14 @@ void MainWindow::setupUpdateCallbacks() {
     });
 
     if (m_homeScreen) {
+        connect(m_homeScreen, &HomeScreen::checkUpdatesRequested, this, [this] {
+            if (m_updater)
+                m_updater->checkForUpdates(true);
+        });
+        connect(m_homeScreen, &HomeScreen::pressureSensitivityChanged, this, [this](double v) {
+            if (m_canvas)
+                m_canvas->setPressureSensitivity(v);
+        });
         connect(m_homeScreen, &HomeScreen::updateInstallRequested, this,
                 &MainWindow::startUpdateInstall);
         connect(m_homeScreen, &HomeScreen::updateCancelRequested, this, [this] {

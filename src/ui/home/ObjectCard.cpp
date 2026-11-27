@@ -73,16 +73,31 @@ void ObjectCard::paintEvent(QPaintEvent*) {
     nf.setWeight(QFont::Medium);
     painter.setFont(nf);
     painter.setPen(m_pal.text);
-    if (!m_renameEdit)
-        painter.drawText(QRectF(10, kNameTop, w, 17), Qt::AlignHCenter | Qt::AlignVCenter,
-                         QFontMetrics(nf).elidedText(nameText(), Qt::ElideRight, int(w)));
+    if (!m_renameEdit) {
+        const QFontMetrics fm(nf);
+        const QString shown = fm.elidedText(nameText(), Qt::ElideRight, int(w));
+        if (!m_highlight.isEmpty()) {
+            const int at = shown.indexOf(m_highlight, 0, Qt::CaseInsensitive);
+            if (at >= 0) {
+                const qreal tw = fm.horizontalAdvance(shown);
+                const qreal x0 = 10 + (w - tw) / 2.0 + fm.horizontalAdvance(shown.left(at));
+                const qreal mw = fm.horizontalAdvance(shown.mid(at, m_highlight.size()));
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(m_dark ? QColor(250, 204, 21, 80) : QColor(250, 204, 21, 115));
+                painter.drawRoundedRect(QRectF(x0 - 1, kNameTop + 0.5, mw + 2, 16), 3, 3);
+                painter.setPen(m_pal.text);
+            }
+        }
+        painter.drawText(QRectF(10, kNameTop, w, 17), Qt::AlignHCenter | Qt::AlignVCenter, shown);
+    }
 
     QFont df = font();
     df.setPixelSize(11);
     painter.setFont(df);
     painter.setPen(m_pal.muted);
     painter.drawText(QRectF(10, kNameTop + 18, w, 15), Qt::AlignHCenter | Qt::AlignVCenter,
-                     QFontMetrics(df).elidedText(detailText(), Qt::ElideRight, int(w)));
+                     QFontMetrics(df).elidedText(m_hasDetailOverride ? m_detailOverride : detailText(),
+                                                 Qt::ElideMiddle, int(w)));
 
     if (m_hover > 0.5) {
         const QRectF mb = moreButtonRect();
@@ -183,6 +198,21 @@ void ObjectCard::finishRename(bool commit) {
     update();
     if (commit && !text.isEmpty() && text != renameText())
         emit renameCommitted(text);
+}
+
+} // namespace finily
+
+namespace finily {
+
+void ObjectCard::setHighlight(const QString& needle) {
+    m_highlight = needle.trimmed();
+    update();
+}
+
+void ObjectCard::setDetailOverride(const QString& detail) {
+    m_detailOverride = detail;
+    m_hasDetailOverride = true;
+    update();
 }
 
 } // namespace finily

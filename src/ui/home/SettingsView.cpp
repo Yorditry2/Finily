@@ -1,0 +1,668 @@
+#include "ui/home/SettingsView.h"
+
+#include "core/Utils.h"
+#include "engine/LibraryStore.h"
+#include "ui/DesignTokens.h"
+#include "ui/UiIcons.h"
+
+#include <QCoreApplication>
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QDir>
+#include <QDirIterator>
+#include <QFileInfo>
+#include <QHBoxLayout>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QLocale>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QUrl>
+#include <QVBoxLayout>
+
+#include <algorithm>
+#include <functional>
+
+namespace finily {
+
+namespace {
+
+QFont pxFont(const QFont& base, qreal px, int weight) {
+    QFont f = base;
+    f.setPixelSize(int(px + 0.5));
+    f.setWeight(QFont::Weight(weight));
+    return f;
+}
+
+// Todo control de esta vista se pinta con los tokens del tema actual.
+class Themed : public QWidget {
+public:
+    using QWidget::QWidget;
+    void setTheme(bool dark) {
+        m_dark = dark;
+        update();
+    }
+
+protected:
+    tokens::Palette tk() const { return tokens::paletteFor(m_dark); }
+    bool m_dark = false;
+};
+
+// .sgroup: panel redondeado con filas separadas por líneas finas.
+class SettingsGroup : public Themed {
+public:
+    explicit SettingsGroup(QWidget* parent)
+        : Themed(parent) {
+        layout = new QVBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+    }
+    QVBoxLayout* layout = nullptr;
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const QColor line = m_dark ? QColor(255, 255, 255, 18) : QColor(15, 23, 42, 18);
+        p.setPen(QPen(line, 1));
+        p.setBrush(tk().surface);
+        p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 14, 14);
+        for (int i = 1; i < layout->count(); ++i) {
+            if (QWidget* w = layout->itemAt(i)->widget())
+                p.drawLine(QPointF(0, w->y() + 0.5), QPointF(width(), w->y() + 0.5));
+        }
+    }
+};
+
+// .text-btn
+class TextButton : public Themed {
+public:
+    TextButton(const QString& text, const QString& icon, std::function<void()> run, QWidget* parent)
+        : Themed(parent), m_text(text), m_icon(icon), m_run(std::move(run)) {
+        setCursor(Qt::PointingHandCursor);
+        setAttribute(Qt::WA_Hover, true);
+        const QFont f = pxFont(font(), 12, QFont::DemiBold);
+        setFixedSize(QFontMetrics(f).horizontalAdvance(text) + 26 + (icon.isEmpty() ? 0 : 18), 30);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(QPen(m_dark ? QColor(255, 255, 255, 26) : QColor(15, 23, 42, 26), 1));
+        p.setBrush(underMouse() ? tk().hover : tk().surface);
+        p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 15, 15);
+        qreal x = 13;
+        if (!m_icon.isEmpty()) {
+            paintUiIcon(&p, QRectF(x, 8.5, 13, 13), m_icon, tk().icon);
+            x += 18;
+        }
+        p.setFont(pxFont(font(), 12, QFont::DemiBold));
+        p.setPen(tk().icon);
+        p.drawText(QRectF(x, 0, width() - x, height()), Qt::AlignLeft | Qt::AlignVCenter, m_text);
+    }
+    void enterEvent(QEnterEvent*) override { update(); }
+    void leaveEvent(QEvent*) override { update(); }
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        if (e->button() == Qt::LeftButton && rect().contains(e->pos()) && m_run)
+            m_run();
+    }
+
+private:
+    QString m_text;
+    QString m_icon;
+    std::function<void()> m_run;
+};
+
+// Fila del índice lateral (.snav .nav).
+class NavItem : public Themed {
+public:
+    NavItem(const QString& icon, const QString& text, const QString& badge, QWidget* parent)
+        : Themed(parent), m_icon(icon), m_text(text), m_badge(badge) {
+        setFixedHeight(32);
+        setAttribute(Qt::WA_Hover, true);
+        if (badge.isEmpty())
+            setCursor(Qt::PointingHandCursor);
+    }
+    std::function<void()> run;
+    bool on = false;
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const bool soon = !m_badge.isEmpty();
+        if (on || (underMouse() && !soon)) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(on ? tk().soft : tk().hover);
+            p.drawRoundedRect(QRectF(rect()), tokens::radius::Nav, tokens::radius::Nav);
+        }
+        const QColor fg = soon ? tk().faint : on ? tk().text : tk().icon;
+        paintUiIcon(&p, QRectF(10, 9, 14, 14), m_icon, fg);
+        p.setFont(pxFont(font(), 12.5, on ? QFont::DemiBold : QFont::Medium));
+        p.setPen(fg);
+        p.drawText(QRect(32, 0, width() - 32, height()), Qt::AlignLeft | Qt::AlignVCenter, m_text);
+        if (soon) {
+            p.setFont(pxFont(font(), 10, QFont::DemiBold));
+            p.setPen(tk().faint);
+            p.drawText(QRect(0, 0, width() - 10, height()), Qt::AlignRight | Qt::AlignVCenter, m_badge);
+        }
+    }
+    void enterEvent(QEnterEvent*) override { update(); }
+    void leaveEvent(QEvent*) override { update(); }
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        if (e->button() == Qt::LeftButton && run)
+            run();
+    }
+
+private:
+    QString m_icon;
+    QString m_text;
+    QString m_badge;
+};
+
+// Tarjeta «Personalización avanzada · próximamente» (.soon).
+class SoonCard : public Themed {
+public:
+    explicit SoonCard(QWidget* parent)
+        : Themed(parent) {
+        setMinimumHeight(84);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QPen pen(m_dark ? QColor(255, 255, 255, 50) : QColor(24, 24, 27, 56), 1, Qt::DashLine);
+        p.setPen(pen);
+        p.setBrush(tk().sidebar);
+        p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 14, 14);
+        paintUiIcon(&p, QRectF(16, 15, 18, 18), QStringLiteral("sparkle"), tk().icon);
+        p.setFont(pxFont(font(), 12.5, QFont::DemiBold));
+        p.setPen(tk().text);
+        p.drawText(QRect(46, 14, width() - 62, 18), Qt::AlignLeft | Qt::AlignVCenter,
+                   QStringLiteral("Personalización avanzada · próximamente"));
+        p.setFont(pxFont(font(), 11.5, QFont::Normal));
+        p.setPen(tk().muted);
+        p.drawText(QRect(46, 36, width() - 62, height() - 44), Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop,
+                   QStringLiteral("Aquí podrás cambiar el aspecto de las carpetas, usar tus propios iconos, crear "
+                                  "temas completos e instalar paquetes. Por eso el diseño base es neutro: todo lo de "
+                                  "color se podrá reemplazar."));
+    }
+};
+
+// Cuadrado con el logo provisional (Acerca de).
+class AboutLogo : public Themed {
+public:
+    explicit AboutLogo(QWidget* parent)
+        : Themed(parent) {
+        setFixedSize(48, 48);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(Qt::NoPen);
+        p.setBrush(tk().accent);
+        p.drawRoundedRect(QRectF(rect()), 13, 13);
+        paintUiIcon(&p, QRectF(12, 12, 24, 24), QStringLiteral("pen"), tk().accentFg);
+    }
+};
+
+QString humanSize(qint64 bytes) {
+    return QLocale(QLocale::Spanish).formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat);
+}
+
+qint64 dirSize(const QString& path) {
+    qint64 total = 0;
+    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        total += it.fileInfo().size();
+    }
+    return total;
+}
+
+} // namespace
+
+// .switch
+class ToggleSwitch : public Themed {
+public:
+    explicit ToggleSwitch(QWidget* parent)
+        : Themed(parent) {
+        setFixedSize(32, 19);
+        setCursor(Qt::PointingHandCursor);
+    }
+    bool checked = false;
+    std::function<void(bool)> toggled;
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(Qt::NoPen);
+        p.setBrush(checked ? tk().accent : (m_dark ? QColor(0x3F, 0x40, 0x4A) : QColor(0xD4, 0xD4, 0xD8)));
+        p.drawRoundedRect(QRectF(rect()), 9.5, 9.5);
+        p.setBrush(checked && m_dark ? tk().bg : QColor(Qt::white));
+        p.drawEllipse(QRectF(checked ? 15 : 2, 2, 15, 15));
+    }
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        if (e->button() != Qt::LeftButton)
+            return;
+        checked = !checked;
+        update();
+        if (toggled)
+            toggled(checked);
+    }
+};
+
+// .seg
+class SegmentedControl : public Themed {
+public:
+    SegmentedControl(const QStringList& labels, QWidget* parent)
+        : Themed(parent), m_labels(labels) {
+        setCursor(Qt::PointingHandCursor);
+        const QFontMetrics fm(pxFont(font(), 11.5, QFont::DemiBold));
+        qreal x = 2;
+        for (const QString& l : labels) {
+            const qreal w = fm.horizontalAdvance(l) + 22;
+            m_rects.append(QRectF(x, 2, w, 26));
+            x += w + 2;
+        }
+        setFixedSize(int(x), 30);
+    }
+    int current = 0;
+    std::function<void(int)> changed;
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(Qt::NoPen);
+        p.setBrush(tk().field);
+        p.drawRoundedRect(QRectF(rect()), 9, 9);
+        p.setFont(pxFont(font(), 11.5, QFont::DemiBold));
+        for (int i = 0; i < m_rects.size(); ++i) {
+            if (i == current) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(15, 23, 42, m_dark ? 60 : 22));
+                p.drawRoundedRect(m_rects[i].translated(0, 1), 7, 7);
+                p.setBrush(tk().surface);
+                p.drawRoundedRect(m_rects[i], 7, 7);
+            }
+            p.setPen(i == current ? tk().text : tk().muted);
+            p.drawText(m_rects[i], Qt::AlignCenter, m_labels[i]);
+        }
+    }
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        for (int i = 0; i < m_rects.size(); ++i) {
+            if (m_rects[i].contains(e->position()) && i != current) {
+                current = i;
+                update();
+                if (changed)
+                    changed(i);
+            }
+        }
+    }
+
+private:
+    QStringList m_labels;
+    QVector<QRectF> m_rects;
+};
+
+// .theme-pick: tres miniaturas Claro / Oscuro / Sistema.
+class ThemePicker : public Themed {
+public:
+    explicit ThemePicker(QWidget* parent)
+        : Themed(parent) {
+        setFixedSize(3 * 92 + 2 * 10 + 8, 60 + 6 + 16 + 6);
+        setCursor(Qt::PointingHandCursor);
+    }
+    int current = 0;
+    std::function<void(int)> changed;
+
+protected:
+    QRectF cardRect(int i) const { return QRectF(4 + i * 102, 4, 92, 60); }
+    void paintMini(QPainter& p, const QRectF& r, const QColor& sb, const QColor& main, const QColor& item) {
+        p.save();
+        QPainterPath clip;
+        clip.addRoundedRect(r, 10, 10);
+        p.setClipPath(clip);
+        p.fillRect(r, main);
+        p.fillRect(QRectF(r.left(), r.top(), 26, r.height()), sb);
+        p.setPen(Qt::NoPen);
+        p.setBrush(item);
+        for (int k = 0; k < 6; ++k)
+            p.drawRoundedRect(QRectF(r.left() + 33 + (k % 3) * 21, r.top() + 8 + (k / 3) * 17, 16, 12), 3, 3);
+        p.restore();
+    }
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const QString labels[] = {QStringLiteral("Claro"), QStringLiteral("Oscuro"), QStringLiteral("Sistema")};
+        for (int i = 0; i < 3; ++i) {
+            const QRectF r = cardRect(i);
+            if (i == 0) {
+                paintMini(p, r, QColor(0xF6, 0xF6, 0xF4), Qt::white, QColor(0xE4, 0xE4, 0xE7));
+            } else if (i == 1) {
+                paintMini(p, r, QColor(0x15, 0x16, 0x1C), QColor(0x1A, 0x1B, 0x22), QColor(0x2E, 0x30, 0x3A));
+            } else {
+                p.save();
+                QPainterPath clip;
+                clip.addRoundedRect(r, 10, 10);
+                p.setClipPath(clip);
+                p.fillRect(r, Qt::white);
+                QPolygonF tri;
+                tri << r.topRight() << r.bottomRight() << r.bottomLeft();
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(0x1A, 0x1B, 0x22));
+                p.drawPolygon(tri);
+                p.restore();
+            }
+            p.setBrush(Qt::NoBrush);
+            if (i == current) {
+                p.setPen(QPen(tk().accent, 1.5));
+                p.drawRoundedRect(r.adjusted(-2.75, -2.75, 2.75, 2.75), 12.5, 12.5);
+            } else {
+                p.setPen(QPen(m_dark ? QColor(255, 255, 255, 30) : QColor(15, 23, 42, 26), 1));
+                p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10);
+            }
+            p.setFont(pxFont(font(), 11.5, QFont::DemiBold));
+            p.setPen(i == current ? tk().text : tk().muted);
+            p.drawText(QRectF(r.left(), r.bottom() + 6, r.width(), 16), Qt::AlignCenter, labels[i]);
+        }
+    }
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        for (int i = 0; i < 3; ++i) {
+            if (cardRect(i).adjusted(0, 0, 0, 24).contains(e->position()) && i != current) {
+                current = i;
+                update();
+                if (changed)
+                    changed(i);
+            }
+        }
+    }
+};
+
+// ============================================================== SettingsView
+namespace {
+constexpr double kPressureValues[] = {0.3, 0.5, 0.8};
+}
+
+int SettingsView::themeMode() {
+    const QVariant v = readAppSetting(QStringLiteral("home/themeMode"), QVariant());
+    if (v.isValid())
+        return std::clamp(v.toInt(), 0, 2);
+    return readAppSetting(QStringLiteral("home/darkMode"), false).toBool() ? Dark : Light;
+}
+
+void SettingsView::setThemeMode(int mode) {
+    writeAppSetting(QStringLiteral("home/themeMode"), mode);
+}
+
+SettingsView::SettingsView(QWidget* parent)
+    : QWidget(parent) {
+    setFocusPolicy(Qt::StrongFocus);
+    auto* row = new QHBoxLayout(this);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(0);
+
+    // Índice lateral.
+    m_nav = new QWidget(this);
+    m_nav->setFixedWidth(196);
+    auto* navCol = new QVBoxLayout(m_nav);
+    navCol->setContentsMargins(10, 16, 10, 16);
+    navCol->setSpacing(1);
+    row->addWidget(m_nav);
+
+    m_scroll = new QScrollArea(this);
+    m_scroll->setFrameShape(QFrame::NoFrame);
+    m_scroll->setWidgetResizable(true);
+    m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_scroll->viewport()->setAutoFillBackground(false);
+    auto* content = new QWidget;
+    content->setAutoFillBackground(false);
+    auto* outer = new QHBoxLayout(content);
+    outer->setContentsMargins(34, 20, 34, 40);
+    auto* paneBox = new QWidget(content);
+    paneBox->setMaximumWidth(600);
+    auto* pane = new QVBoxLayout(paneBox);
+    pane->setContentsMargins(0, 0, 0, 0);
+    pane->setSpacing(10);
+    outer->addWidget(paneBox, 1);
+    outer->addStretch(0);
+    m_scroll->setWidget(content);
+    row->addWidget(m_scroll, 1);
+
+    // --- Apariencia
+    QWidget* g = addGroup(pane, QStringLiteral("Apariencia"));
+    m_themePicker = new ThemePicker(g);
+    m_themePicker->changed = [this](int mode) {
+        setThemeMode(mode);
+        emit themeModeChanged(mode);
+    };
+    addRow(g, QStringLiteral("Tema"), QStringLiteral("Sistema sigue el modo claro u oscuro de tu escritorio."),
+           m_themePicker);
+    auto* soon = new SoonCard(paneBox);
+    m_themed.append(soon);
+    pane->addSpacing(2);
+    pane->addWidget(soon);
+
+    // --- Lápiz y tableta
+    g = addGroup(pane, QStringLiteral("Lápiz y tableta"));
+    m_pressureSeg = new SegmentedControl({QStringLiteral("Baja"), QStringLiteral("Normal"), QStringLiteral("Alta")}, g);
+    m_pressureSeg->changed = [this](int i) {
+        writeAppSetting(QStringLiteral("ink/pressureSensitivity"), kPressureValues[i]);
+        emit pressureSensitivityChanged(kPressureValues[i]);
+    };
+    addRow(g, QStringLiteral("Sensibilidad a la presión"),
+           QStringLiteral("Cuánto cambia el grosor del trazo según la fuerza del lápiz."), m_pressureSeg);
+
+    // --- Almacenamiento
+    g = addGroup(pane, QStringLiteral("Almacenamiento"));
+    m_pathLabel = new QLabel(g);
+    m_pathLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    auto* openDir = new TextButton(QStringLiteral("Abrir carpeta"), QStringLiteral("open"), [] {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(LibraryStore::resolveDirectory()));
+    }, g);
+    addRow(g, QStringLiteral("Carpeta de la biblioteca"), QString(), openDir);
+    m_storageLabel = new QLabel(g);
+    m_storageLabel->setObjectName(QStringLiteral("storage"));
+    addRow(g, QStringLiteral("Espacio usado"), QString(), m_storageLabel);
+    addRow(g, QStringLiteral("Papelera"),
+           QStringLiteral("Lo que borras se guarda %1 días y luego se elimina solo.")
+               .arg(LibraryStore::kTrashRetentionDays),
+           nullptr);
+
+    // --- Actualizaciones
+    g = addGroup(pane, QStringLiteral("Actualizaciones"));
+    auto* checkNow = new TextButton(QStringLiteral("Buscar ahora"), QStringLiteral("refresh"),
+                                    [this] { emit checkUpdatesRequested(); }, g);
+    addRow(g, QStringLiteral("Finily %1").arg(QCoreApplication::applicationVersion()), QString(), checkNow);
+    m_updatesLabel = g->findChildren<QLabel*>(QStringLiteral("rowDesc")).value(0);
+    m_autoCheck = new ToggleSwitch(g);
+    m_autoCheck->toggled = [](bool on) { writeAppSetting(QStringLiteral("updates/autoCheck"), on); };
+    addRow(g, QStringLiteral("Buscar actualizaciones al abrir"), QString(), m_autoCheck);
+
+    // --- Acerca de
+    g = addGroup(pane, QStringLiteral("Acerca de"));
+    auto* logo = new AboutLogo(g);
+    m_themed.append(logo);
+    {
+        auto* r = new QWidget(g);
+        auto* h = new QHBoxLayout(r);
+        h->setContentsMargins(14, 14, 14, 14);
+        h->setSpacing(14);
+        h->addWidget(logo);
+        auto* texts = new QVBoxLayout();
+        texts->setSpacing(2);
+        auto* t = new QLabel(QStringLiteral("Finily %1").arg(QCoreApplication::applicationVersion()), r);
+        t->setObjectName(QStringLiteral("rowTitle"));
+        auto* d = new QLabel(QStringLiteral("Licencia GPL-3.0 · Software libre para escribir y dibujar a mano."), r);
+        d->setObjectName(QStringLiteral("rowDesc"));
+        texts->addWidget(t);
+        texts->addWidget(d);
+        h->addLayout(texts, 1);
+        static_cast<SettingsGroup*>(g)->layout->addWidget(r);
+    }
+    pane->addStretch(1);
+
+    // Índice: cada entrada lleva a su sección.
+    const QStringList icons = {QStringLiteral("palette"), QStringLiteral("pen"), QStringLiteral("hdd"),
+                               QStringLiteral("refresh"), QStringLiteral("info")};
+    for (int i = 0; i < m_sectionHeads.size(); ++i) {
+        auto* item = new NavItem(icons.value(i), static_cast<QLabel*>(m_sectionHeads[i])->text(), QString(), m_nav);
+        item->run = [this, i] { showSection(i); };
+        m_themed.append(item);
+        navCol->addWidget(item);
+    }
+    navCol->addStretch(1);
+    auto* custom = new NavItem(QStringLiteral("sparkle"), QStringLiteral("Personalizar"), QStringLiteral("pronto"), m_nav);
+    custom->setToolTip(QStringLiteral("Próximamente: aspecto de carpetas, iconos y temas propios"));
+    m_themed.append(custom);
+    navCol->addWidget(custom);
+
+    connect(m_scroll->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int v) {
+        int active = 0;
+        for (int i = 0; i < m_sectionHeads.size(); ++i)
+            if (m_sectionHeads[i]->y() - 30 <= v) active = i;
+        if (v <= 0)
+            active = 0;
+        else if (v >= m_scroll->verticalScrollBar()->maximum())
+            active = int(m_sectionHeads.size()) - 1;
+        const auto items = m_nav->findChildren<QWidget*>();
+        int idx = 0;
+        for (QWidget* w : items) {
+            auto* n = dynamic_cast<NavItem*>(w);
+            if (!n || n->run == nullptr) continue;
+            n->on = idx++ == active;
+            n->update();
+        }
+    });
+}
+
+QWidget* SettingsView::addGroup(QVBoxLayout* pane, const QString& title) {
+    auto* head = new QLabel(title, pane->parentWidget());
+    head->setObjectName(QStringLiteral("sectionHead"));
+    if (!m_sectionHeads.isEmpty())
+        pane->addSpacing(14);
+    pane->addWidget(head);
+    m_sectionHeads.append(head);
+    auto* group = new SettingsGroup(pane->parentWidget());
+    m_themed.append(group);
+    pane->addWidget(group);
+    return group;
+}
+
+void SettingsView::addRow(QWidget* group, const QString& title, const QString& desc, QWidget* control) {
+    auto* r = new QWidget(group);
+    r->setMinimumHeight(52);
+    auto* h = new QHBoxLayout(r);
+    h->setContentsMargins(14, 10, 14, 10);
+    h->setSpacing(14);
+    auto* texts = new QVBoxLayout();
+    texts->setSpacing(2);
+    texts->addStretch(1);
+    auto* t = new QLabel(title, r);
+    t->setObjectName(QStringLiteral("rowTitle"));
+    texts->addWidget(t);
+    if (group->findChildren<QWidget*>().contains(m_pathLabel) && m_pathLabel->parentWidget() == group &&
+        title == QStringLiteral("Carpeta de la biblioteca")) {
+        m_pathLabel->setParent(r);
+        m_pathLabel->setObjectName(QStringLiteral("pathBox"));
+        texts->addSpacing(3);
+        texts->addWidget(m_pathLabel, 0, Qt::AlignLeft);
+    }
+    auto* d = new QLabel(desc, r);
+    d->setObjectName(QStringLiteral("rowDesc"));
+    d->setWordWrap(true);
+    d->setVisible(!desc.isEmpty() || title.startsWith(QStringLiteral("Finily")));
+    texts->addWidget(d);
+    texts->addStretch(1);
+    h->addLayout(texts, 1);
+    if (control) {
+        control->setParent(r);
+        if (auto* th = dynamic_cast<Themed*>(control))
+            m_themed.append(th);
+        h->addWidget(control, 0, Qt::AlignVCenter);
+    }
+    static_cast<SettingsGroup*>(group)->layout->addWidget(r);
+}
+
+void SettingsView::applyTheme(const HomePalette& pal, bool dark) {
+    m_pal = pal;
+    m_dark = dark;
+    const tokens::Palette tk = tokens::paletteFor(dark);
+    for (QWidget* w : m_themed) {
+        if (auto* th = dynamic_cast<Themed*>(w))
+            th->setTheme(dark);
+    }
+    setStyleSheet(QStringLiteral(
+        "QLabel { background: transparent; }"
+        "QLabel#sectionHead { color: %1; font-size: 17px; font-weight: 700; }"
+        "QLabel#rowTitle { color: %1; font-size: 12.5px; font-weight: 600; }"
+        "QLabel#rowDesc { color: %2; font-size: 11.5px; }"
+        "QLabel#pathBox { color: %3; background: %4; border-radius: 8px; padding: 5px 9px;"
+        " font-family: monospace; font-size: 11px; }"
+        "QLabel#storage { color: %3; font-size: 12px; font-weight: 600; }")
+                      .arg(tk.text.name(), tk.muted.name(), tk.icon.name(), tk.field.name()));
+    update();
+}
+
+void SettingsView::reload() {
+    m_themePicker->current = themeMode();
+    m_themePicker->update();
+    const double ps = readAppSetting(QStringLiteral("ink/pressureSensitivity"), 0.5).toDouble();
+    int best = 0;
+    for (int i = 1; i < 3; ++i)
+        if (std::abs(kPressureValues[i] - ps) < std::abs(kPressureValues[best] - ps)) best = i;
+    m_pressureSeg->current = best;
+    m_pressureSeg->update();
+    m_autoCheck->checked = readAppSetting(QStringLiteral("updates/autoCheck"), true).toBool();
+    m_autoCheck->update();
+
+    const QString root = LibraryStore::resolveDirectory();
+    QString shown = QDir::toNativeSeparators(root);
+    const QString home = QDir::homePath();
+    if (shown.startsWith(home))
+        shown = QStringLiteral("~") + shown.mid(home.size());
+    m_pathLabel->setText(shown);
+    const qint64 all = dirSize(root);
+    const qint64 trash = dirSize(QDir(root).filePath(QStringLiteral(".papelera")));
+    m_storageLabel->setText(trash > 0 ? QStringLiteral("%1 · papelera %2").arg(humanSize(all), humanSize(trash))
+                                      : humanSize(all));
+    if (m_updatesLabel) {
+        const qint64 last = readAppSetting(QStringLiteral("updates/lastCheckUtc"), 0).toLongLong();
+        m_updatesLabel->setText(
+            last > 0 ? QStringLiteral("Última comprobación: %1")
+                           .arg(QLocale(QLocale::Spanish).toString(QDateTime::fromSecsSinceEpoch(last), QStringLiteral("d MMM, HH:mm")))
+                     : QStringLiteral("Aún no se ha comprobado."));
+    }
+    showSection(0);
+}
+
+void SettingsView::showSection(int index) {
+    if (index < 0 || index >= m_sectionHeads.size())
+        return;
+    m_scroll->verticalScrollBar()->setValue(index == 0 ? 0 : m_sectionHeads[index]->y() - 10);
+    emit m_scroll->verticalScrollBar()->valueChanged(m_scroll->verticalScrollBar()->value());
+}
+
+void SettingsView::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    const QColor line = m_dark ? QColor(255, 255, 255, 18) : QColor(15, 23, 42, 18);
+    p.fillRect(QRect(m_nav->width(), 0, 1, height()), line);
+}
+
+void SettingsView::keyPressEvent(QKeyEvent* e) {
+    if (e->key() == Qt::Key_Escape) {
+        emit closeRequested();
+        return;
+    }
+    QWidget::keyPressEvent(e);
+}
+
+} // namespace finily

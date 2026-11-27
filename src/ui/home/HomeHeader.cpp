@@ -28,6 +28,8 @@ public:
         setAttribute(Qt::WA_Hover, true);
     }
     void setPalette(const HomePalette& pal) { m_pal = pal; update(); }
+    void setBadge(bool on) { m_badge = on; update(); }
+    void setPressedLook(bool on) { m_pressedLook = on; update(); }
 
 signals:
     void clicked();
@@ -36,12 +38,17 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        if (underMouse()) {
+        if (underMouse() || m_pressedLook) {
             painter.setPen(Qt::NoPen);
             painter.setBrush(m_pal.hover);
             painter.drawRoundedRect(QRectF(rect()), tokens::radius::Nav, tokens::radius::Nav);
         }
         paintUiIcon(&painter, QRectF(8, 8, 16, 16), m_icon, m_pal.icon);
+        if (m_badge) {
+            painter.setPen(QPen(m_pal.bg, 2));
+            painter.setBrush(m_pal.accent);
+            painter.drawEllipse(QPointF(24, 8), 3.5, 3.5);
+        }
     }
     void enterEvent(QEnterEvent*) override { update(); }
     void leaveEvent(QEvent*) override { update(); }
@@ -52,7 +59,65 @@ protected:
 
 private:
     QString m_icon;
+    bool m_badge = false;
+    bool m_pressedLook = false;
     HomePalette m_pal = homePaletteFor(false);
+};
+
+// Ficha de ámbito (.sfield .scope): «[carpeta] Apuntes ×».
+class SearchScopeChip : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit SearchScopeChip(QWidget* parent = nullptr)
+        : QWidget(parent) {
+        setCursor(Qt::PointingHandCursor);
+        setFixedHeight(24);
+        setToolTip(QStringLiteral("Buscar en toda la biblioteca"));
+        hide();
+    }
+    void setName(const QString& name) {
+        m_name = name;
+        const QFont f = chipFont();
+        setFixedWidth(8 + 12 + 5 + QFontMetrics(f).horizontalAdvance(name) + 5 + 12 + 6);
+        setVisible(!name.isEmpty());
+        update();
+    }
+    HomePalette pal = homePaletteFor(false);
+    bool dark = false;
+
+signals:
+    void cleared();
+
+protected:
+    QFont chipFont() const {
+        QFont f = font();
+        f.setPixelSize(12);
+        f.setWeight(QFont::DemiBold);
+        return f;
+    }
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const tokens::Palette tk = tokens::paletteFor(dark);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(15, 23, 42, dark ? 60 : 18));
+        p.drawRoundedRect(QRectF(rect()).adjusted(0, 1, 0, 1), 7, 7);
+        p.setBrush(tk.surface);
+        p.drawRoundedRect(QRectF(rect()), 7, 7);
+        paintUiIcon(&p, QRectF(8, 6, 12, 12), QStringLiteral("folder"), tk.icon);
+        p.setFont(chipFont());
+        p.setPen(tk.icon);
+        p.drawText(QRect(25, 0, width() - 25 - 18, height()), Qt::AlignLeft | Qt::AlignVCenter, m_name);
+        paintUiIcon(&p, QRectF(width() - 18, 6, 12, 12), QStringLiteral("x"), tk.faint);
+    }
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        if (e->button() == Qt::LeftButton && rect().contains(e->pos()))
+            emit cleared();
+    }
+
+private:
+    QString m_name;
 };
 
 // Píldora «+ Nuevo»: único disparador de creación (DESIGN.md).
@@ -108,6 +173,9 @@ public:
         setFixedHeight(36);
         auto* row = new QHBoxLayout(this);
         row->setContentsMargins(37, 0, 46, 0);
+        row->setSpacing(8);
+        scope = new SearchScopeChip(this);
+        row->addWidget(scope);
         edit = new QLineEdit(this);
         edit->setObjectName(QStringLiteral("finilySearch"));
         edit->setPlaceholderText(QStringLiteral("Buscar en la biblioteca"));
@@ -115,6 +183,7 @@ public:
         row->addWidget(edit);
     }
     QLineEdit* edit = nullptr;
+    SearchScopeChip* scope = nullptr;
     HomePalette pal = homePaletteFor(false);
 
 protected:
@@ -168,9 +237,19 @@ HomeHeader::HomeHeader(QWidget* parent)
     m_searchField->hide();
     row->addWidget(m_searchField, 1);
 
+    connect(m_searchField->scope, &SearchScopeChip::cleared, this, [this] {
+        emit searchScopeCleared();
+        m_search->setFocus(Qt::OtherFocusReason);
+    });
+    connect(m_search, &QLineEdit::returnPressed, this, &HomeHeader::searchSubmitted);
+
     m_searchBtn = new HeaderIconButton(QStringLiteral("search"), QStringLiteral("Buscar (Ctrl+F)"), this);
     connect(m_searchBtn, &HeaderIconButton::clicked, this, [this] { setSearchOpen(true); });
     row->addWidget(m_searchBtn);
+
+    m_filterBtn = new HeaderIconButton(QStringLiteral("filter"), QStringLiteral("Filtrar y ordenar"), this);
+    connect(m_filterBtn, &HeaderIconButton::clicked, this, &HomeHeader::filterRequested);
+    row->addWidget(m_filterBtn);
 
     m_newBtn = new HeaderNewButton(this);
     connect(m_newBtn, &HeaderNewButton::clicked, this, &HomeHeader::newRequested);
@@ -243,6 +322,40 @@ QRect HomeHeader::newButtonGeometry() const {
     return m_newBtn->geometry();
 }
 
+QRect HomeHeader::filterButtonGeometry() const {
+    return m_filterBtn->geometry();
+}
+
+void HomeHeader::setFilterActive(bool active) {
+    m_filterBtn->setBadge(active);
+}
+
+void HomeHeader::setFilterVisible(bool visible) {
+    m_filterBtn->setVisible(visible);
+}
+
+void HomeHeader::setSearchScope(const QString& name) {
+    m_searchField->scope->setName(name);
+}
+
+void HomeHeader::openSearch() {
+    setSearchOpen(true);
+}
+
+void HomeHeader::setLibraryControlsVisible(bool visible) {
+    if (!visible)
+        closeSearch();
+    m_searchBtn->setVisible(visible);
+    m_newBtn->setVisible(visible);
+    if (!visible)
+        m_filterBtn->setVisible(false);
+}
+
+void HomeHeader::closeSearch() {
+    if (m_searchField->isVisible())
+        setSearchOpen(false);
+}
+
 void HomeHeader::setSearchOpen(bool open) {
     m_titleBox->setVisible(!open);
     m_searchBtn->setVisible(!open);
@@ -268,10 +381,13 @@ bool HomeHeader::eventFilter(QObject* watched, QEvent* event) {
     return QWidget::eventFilter(watched, event);
 }
 
-void HomeHeader::applyTheme(const HomePalette& pal, bool) {
+void HomeHeader::applyTheme(const HomePalette& pal, bool dark) {
     m_pal = pal;
     m_reopenBtn->setPalette(pal);
     m_searchBtn->setPalette(pal);
+    m_filterBtn->setPalette(pal);
+    m_searchField->scope->pal = pal;
+    m_searchField->scope->dark = dark;
     m_newBtn->setPalette(pal);
     m_searchField->pal = pal;
     m_searchField->update();

@@ -258,6 +258,9 @@ HomeSidebar::HomeSidebar(QWidget* parent)
     connect(m_themeBtn, &SidebarIconButton::clicked, this, [this] { emit darkModeToggled(!m_dark); });
     icons->addWidget(m_themeBtn);
     icons->addStretch(1);
+    m_settingsBtn = new SidebarIconButton(QStringLiteral("gear"), QStringLiteral("Ajustes"), this);
+    connect(m_settingsBtn, &SidebarIconButton::clicked, this, &HomeSidebar::settingsRequested);
+    icons->addWidget(m_settingsBtn);
     col->addLayout(icons);
 
     setTreeOpen(m_treeOpen);
@@ -327,7 +330,7 @@ void HomeSidebar::applyTheme(const HomePalette& pal, bool dark) {
         row->setPalette(pal);
     for (SidebarNavRow* row : m_folderRows)
         row->setPalette(pal);
-    for (SidebarIconButton* btn : {m_collapseBtn, m_themeBtn})
+    for (SidebarIconButton* btn : {m_collapseBtn, m_themeBtn, m_settingsBtn})
         btn->setPalette(pal);
     m_themeBtn->setIcon(dark ? QStringLiteral("sun") : QStringLiteral("moon"));
     m_themeBtn->setToolTip(dark ? QStringLiteral("Modo claro") : QStringLiteral("Modo oscuro"));

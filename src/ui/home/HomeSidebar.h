@@ -37,6 +37,7 @@ signals:
     void folderMenuRequested(const finily::FolderMeta& meta, const QPoint& globalPos);
     void continueDraftRequested();
     void darkModeToggled(bool dark);
+    void settingsRequested();
     void collapseRequested();
 
 protected:
@@ -64,6 +65,7 @@ private:
     SidebarNavRow* m_trashRow = nullptr;
     QWidget* m_footLine = nullptr;
     SidebarIconButton* m_themeBtn = nullptr;
+    SidebarIconButton* m_settingsBtn = nullptr;
 };
 
 } // namespace finily

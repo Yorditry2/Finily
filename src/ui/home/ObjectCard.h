@@ -30,6 +30,13 @@ public:
     void beginRename();
     bool isRenaming() const { return m_renameEdit != nullptr; }
 
+    // Búsqueda (mockup 09): resalta la coincidencia en el nombre y muestra la
+    // ruta («Clases › Física») en lugar de la fecha.
+    void setHighlight(const QString& needle);
+    void setDetailOverride(const QString& detail);
+    QString displayName() const { return nameText(); }
+    void open() { activate(); }
+
 signals:
     void menuRequested(const QPoint& globalPos);
     void renameCommitted(const QString& newName);
@@ -61,6 +68,9 @@ private:
     qreal m_hover = 0.0;
     QPropertyAnimation* m_anim = nullptr;
     QLineEdit* m_renameEdit = nullptr;
+    QString m_highlight;
+    QString m_detailOverride;
+    bool m_hasDetailOverride = false;
 };
 
 } // namespace finily

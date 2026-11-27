@@ -2,6 +2,7 @@
 
 #include "core/Types.h"
 #include "engine/LibraryStore.h"
+#include "ui/home/LibraryViews.h"
 
 #include <QVector>
 #include <QWidget>
@@ -55,6 +56,8 @@ signals:
     void updateCancelRequested();
     void updateReleaseNotesRequested();
     void updateDismissed();
+    void pressureSensitivityChanged(double value);
+    void checkUpdatesRequested();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -87,9 +90,21 @@ private:
     ObjectCard* hoveredCard() const;
     FolderCard* folderCardFor(const QString& relativePath) const;
     void setDarkMode(bool dark);
+    void applyThemeMode(int mode);
+    void openSettings();
+    void leaveSettings();
     void applyTheme();
     void updateHeaderAndEmptyState();
     void relayoutGrid();
+    // Búsqueda y filtro (mockup 09) y estados vacíos (mockup 08).
+    bool isSearching() const;
+    bool searchIsScoped() const;
+    void onSearchTextChanged(const QString& text);
+    void setLibraryFilter(const LibraryFilter& filter);
+    void openFilterPanel();
+    void openFirstResult();
+    void configureEmptyState(int totalVisible);
+    void clearGroupLabels();
 
     HomeSidebar* m_sidebar = nullptr;
     HomeHeader* m_header = nullptr;
@@ -104,8 +119,16 @@ private:
 
     QScrollArea* m_scroll = nullptr;
     QWidget* m_gridContent = nullptr;
-    QWidget* m_emptyState = nullptr;
-    QLabel* m_emptyLabel = nullptr;
+    EmptyStateView* m_emptyState = nullptr;
+    FirstRunHint* m_firstRunHint = nullptr;
+    FilterChipsBar* m_chipsBar = nullptr;
+    FilterPanel* m_filterPanel = nullptr;
+    class SettingsView* m_settings = nullptr;
+    bool m_settingsOpen = false;
+    QVector<ResultGroupLabel*> m_groupLabels;
+    LibraryFilter m_filter;
+    bool m_searchWhole = false;
+    bool m_libraryEmpty = false;
     QVector<FolderCard*> m_folderCards;
     QVector<NotebookCard*> m_cards;
     QVector<TrashCard*> m_trashCards;
