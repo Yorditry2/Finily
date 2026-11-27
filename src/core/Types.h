@@ -77,6 +77,94 @@ enum class EraserMode {
     Partial
 };
 
+struct EraserTargets {
+    bool ink = true;         // Pen, Ballpoint y texto
+    bool highlighter = true; // Resaltador
+    bool shapes = false;     // Figuras y regiones sombreadas
+    bool operator==(const EraserTargets&) const = default;
+};
+
+struct LassoTargetFilter {
+    bool ink = true;    // Trazos (Pluma, Bolígrafo, Resaltador)
+    bool shapes = true; // Figuras y regiones
+    bool media = true;  // Texto e imágenes
+    bool operator==(const LassoTargetFilter&) const = default;
+};
+
+enum class LaserMode {
+    Dot = 0,
+    Trail = 1
+};
+
+struct AutoShapeOptions {
+    bool line = true;
+    bool curve = true;
+    bool circle = true;
+    bool triangle = true;
+    bool rectangle = true;
+    bool quadrilateral = true;
+    bool polygon = true;
+    bool radical = true;
+    bool rightAngleL = true;
+    bool operator==(const AutoShapeOptions&) const = default;
+};
+
+struct GeometryGestureOptions {
+    bool angleArc = true;
+    bool rightAngle = true;
+    bool freehandArrow = true;
+    bool attachArrowhead = true;
+    bool dividerDot = true;
+    bool edgeMarks = true;
+    bool holdEdgeMenu = true;
+    bool operator==(const GeometryGestureOptions&) const = default;
+};
+
+struct SmartGuideOptions {
+    bool enabled = true;
+    bool snapKeyPoints = true;
+    bool orthoPerpGuides = true;
+    bool alignXY = true;
+    bool operator==(const SmartGuideOptions&) const = default;
+};
+
+enum class TabletAction : int {
+    None = 0,
+    Undo,
+    Redo,
+    Pen,
+    Highlighter,
+    Eraser,
+    HoldEraser,
+    LastWriteTool,
+    RightClickMenu,
+    Lasso,
+    Select,
+    Shapes,
+    Polyline,
+    Hand,
+    Laser,
+    RadialMenu,
+    ToggleCleanUi,
+    NextPage,
+    PrevPage
+};
+
+enum class ToolbarDockMode : int {
+    Top = 0,
+    Left = 1,
+    Float = 2
+};
+
+enum class ShapeFamily : int {
+    None = 0,
+    Triangle,
+    Quad,
+    Circle,
+    Polygon,
+    Solid3D
+};
+
 enum class LinePattern {
     Solid,
     Dashed,
@@ -241,6 +329,7 @@ struct ImageItem {
     QString pdfSourcePath;
     QString groupId;
     bool locked = false;
+    double opacity = 1.0;
 };
 
 struct TextItem {
@@ -252,6 +341,9 @@ struct TextItem {
     QRectF bounds;
     QString groupId;
     bool locked = false;
+    int fontFamilyIndex = 0;  // 0=Inter, 1=Manuscrita, 2=Mono
+    bool bold = false;
+    bool italic = false;
 };
 
 struct DocumentSnapshot {
@@ -302,6 +394,8 @@ struct PenPreset {
     int tipStyle = 1;
     double opacity = 1.0;
     QString shortcut;
+    ShapeKind shapeKind = ShapeKind::Triangle;
+    int shapeSubVariant = 0;
 };
 
 inline ThemeConfig getThemeConfig(ThemeId id) {

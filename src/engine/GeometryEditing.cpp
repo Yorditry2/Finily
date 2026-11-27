@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 
 namespace finily {
 using namespace geometry_detail;
@@ -179,8 +180,12 @@ std::optional<double> segmentIntersectionT(const QPointF& a, const QPointF& b,
 
 } // namespace
 
-std::optional<ShapeItem> trySnapAngleArcAtVertex(const Stroke& stroke, const QVector<ShapeItem>& shapes, double zoom) {
-    if (stroke.points.size() < 4 || shapes.isEmpty())
+std::optional<ShapeItem> trySnapAngleArcAtVertex(const Stroke& stroke,
+                                                 const QVector<ShapeItem>& shapes,
+                                                 double zoom,
+                                                 bool allowAngleArc,
+                                                 bool allowRightAngle) {
+    if ((!allowAngleArc && !allowRightAngle) || stroke.points.size() < 4 || shapes.isEmpty())
         return std::nullopt;
     zoom = std::max(0.1, zoom);
 
@@ -385,6 +390,11 @@ std::optional<ShapeItem> trySnapAngleArcAtVertex(const Stroke& stroke, const QVe
     const double meanEndDist = 0.5 * (length(pStart - bestV) + length(pEnd - bestV));
     const bool isRightAngle = looksLikeSquareCorner && meanEndDist > 1e-3
         && length(pPeak - bestV) > meanEndDist * 1.10;
+
+    if (isRightAngle && !allowRightAngle)
+        return std::nullopt;
+    if (!isRightAngle && !allowAngleArc)
+        return std::nullopt;
 
     ShapeItem marker;
     marker.id = freshId();
@@ -1578,6 +1588,344 @@ bool tryAttachArrowheadToLine(const Stroke& stroke,
         return true;
     }
     return false;
+}
+
+namespace {
+
+int classifyTriangleVariant(const QVector<QPointF>& v) {
+    if (v.size() < 3)
+        return 0;
+    const double lab = length(v[1] - v[0]);
+    const double lbc = length(v[2] - v[1]);
+    const double lca = length(v[0] - v[2]);
+    const double maxL = std::max({lab, lbc, lca});
+    if (maxL <= 1e-4)
+        return 0;
+    if (std::max({std::abs(lab - lbc), std::abs(lbc - lca), std::abs(lca - lab)}) <= maxL * 0.025)
+        return 3; // Equilátero
+    for (int i = 0; i < 3; ++i) {
+        const QPointF u = v[(i + 1) % 3] - v[i];
+        const QPointF w = v[(i + 2) % 3] - v[i];
+        const double lu = length(u);
+        const double lw = length(w);
+        if (lu > 1e-4 && lw > 1e-4 && std::abs(dot(u, w) / (lu * lw)) <= 0.025)
+            return 2; // Rectángulo
+    }
+    if ((std::max(lab, lbc) > 1e-4 && std::abs(lab - lbc) <= std::max(lab, lbc) * 0.025)
+        || (std::max(lbc, lca) > 1e-4 && std::abs(lbc - lca) <= std::max(lbc, lca) * 0.025)
+        || (std::max(lca, lab) > 1e-4 && std::abs(lca - lab) <= std::max(lca, lab) * 0.025))
+        return 1; // Isósceles
+    return 0; // Libre
+}
+
+int classifyQuadPolylineVariant(const QVector<QPointF>& v) {
+    if (v.size() < 4)
+        return 6;
+    QPointF edges[4];
+    double len[4];
+    double maxLen = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        edges[i] = v[(i + 1) % 4] - v[i];
+        len[i] = length(edges[i]);
+        maxLen = std::max(maxLen, len[i]);
+    }
+    if (maxLen <= 1e-4)
+        return 6;
+
+    int rightCount = 0;
+    bool axisAligned = true;
+    for (int i = 0; i < 4; ++i) {
+        const QPointF a = v[(i + 3) % 4] - v[i];
+        const QPointF b = v[(i + 1) % 4] - v[i];
+        const double la = length(a);
+        const double lb = length(b);
+        if (la > 1e-4 && lb > 1e-4 && std::abs(dot(a, b) / (la * lb)) <= 0.035)
+            ++rightCount;
+        if (len[i] <= 1e-4 || std::min(std::abs(edges[i].x()), std::abs(edges[i].y())) > len[i] * 0.035)
+            axisAligned = false;
+    }
+
+    const bool allEqual = std::max({std::abs(len[0] - len[1]), std::abs(len[1] - len[2]),
+                                    std::abs(len[2] - len[3]), std::abs(len[3] - len[0])})
+        <= maxLen * 0.025;
+    if (axisAligned && rightCount == 4)
+        return allEqual ? 1 : 0;
+    if (allEqual)
+        return 2; // Rombo
+
+    auto areParallel = [](QPointF u, double lu, QPointF w, double lw) {
+        return lu > 1e-4 && lw > 1e-4 && std::abs(u.x() * w.y() - u.y() * w.x()) / (lu * lw) <= 0.035;
+    };
+    const bool p02 = areParallel(edges[0], len[0], edges[2], len[2]);
+    const bool p13 = areParallel(edges[1], len[1], edges[3], len[3]);
+    if (p02 && p13)
+        return (rightCount == 4) ? 0 : 3; // Paralelogramo
+    if (p02 || p13) {
+        if (rightCount >= 2)
+            return 5; // Trapecio rectángulo
+        const double legA = p02 ? len[1] : len[0];
+        const double legB = p02 ? len[3] : len[2];
+        if (std::max(legA, legB) > 1e-4 && std::abs(legA - legB) <= std::max(legA, legB) * 0.025)
+            return 4; // Trapecio isósceles
+    }
+    return 6; // Trapezoide
+}
+
+double regularPolygonRadiusIfUniform(const ShapeItem& shape) {
+    if (shape.kind != ShapeKind::Polyline || !shape.closed
+        || shape.vertices.size() < 5 || shape.vertices.size() > 12) {
+        return -1.0;
+    }
+    const int n = int(shape.vertices.size());
+    QPointF centroid;
+    for (const QPointF& pt : shape.vertices)
+        centroid += pt;
+    centroid /= double(n);
+    double meanR = 0.0;
+    for (const QPointF& pt : shape.vertices)
+        meanR += length(pt - centroid);
+    meanR /= double(n);
+    if (meanR <= 1e-4)
+        return -1.0;
+    for (const QPointF& pt : shape.vertices) {
+        if (std::abs(length(pt - centroid) - meanR) > meanR * 0.03)
+            return -1.0;
+    }
+    return meanR;
+}
+
+} // namespace
+
+ShapeFamily classifyShapeFamily(const ShapeItem& shape, int* outVariant) {
+    auto finish = [&](ShapeFamily family, int variant) {
+        if (outVariant)
+            *outVariant = variant;
+        return family;
+    };
+
+    switch (shape.kind) {
+    case ShapeKind::Triangle:
+        if (shape.vertices.size() >= 3)
+            return finish(ShapeFamily::Triangle, classifyTriangleVariant(shape.vertices));
+        break;
+    case ShapeKind::Rectangle:
+        if (shape.vertices.size() >= 2 && !parseTableSpec(shape.label)) {
+            const QRectF r = QRectF(shape.vertices[0], shape.vertices[1]).normalized();
+            const double maxSide = std::max(r.width(), r.height());
+            const bool isSquare = maxSide > 1e-4 && std::abs(r.width() - r.height()) <= maxSide * 0.02;
+            return finish(ShapeFamily::Quad, isSquare ? 1 : 0);
+        }
+        break;
+    case ShapeKind::Circle:
+        if (shape.vertices.size() >= 2)
+            return finish(ShapeFamily::Circle, 0);
+        break;
+    case ShapeKind::Arc:
+        if (shape.vertices.size() >= 3)
+            return finish(ShapeFamily::Circle, 1);
+        break;
+    case ShapeKind::Sector:
+        if (shape.vertices.size() >= 3)
+            return finish(ShapeFamily::Circle, 2);
+        break;
+    case ShapeKind::Ellipse:
+        if (shape.vertices.size() >= 2)
+            return finish(ShapeFamily::Circle, 3);
+        break;
+    case ShapeKind::Polyline:
+        if (shape.closed && shape.vertices.size() == 4)
+            return finish(ShapeFamily::Quad, classifyQuadPolylineVariant(shape.vertices));
+        if (shape.closed && shape.vertices.size() >= 5 && shape.vertices.size() <= 12)
+            return finish(ShapeFamily::Polygon, int(shape.vertices.size()));
+        break;
+    case ShapeKind::Solid3D:
+        if (shape.vertices.size() >= 2)
+            return finish(ShapeFamily::Solid3D, std::clamp(shape.solidKind, 0, 9));
+        break;
+    default:
+        break;
+    }
+    return finish(ShapeFamily::None, 0);
+}
+
+bool morphShapeToVariant(ShapeItem& shape, ShapeFamily family, int variant) {
+    if (family == ShapeFamily::None || shape.vertices.isEmpty())
+        return false;
+
+    QRectF r;
+    if ((shape.kind == ShapeKind::Arc || shape.kind == ShapeKind::Sector) && shape.vertices.size() >= 3) {
+        const double rad = length(shape.vertices[1] - shape.vertices[0]);
+        if (rad > 1e-4)
+            r = QRectF(shape.vertices[0] - QPointF(rad, rad), QSizeF(2.0 * rad, 2.0 * rad));
+    }
+    if (r.isEmpty()) {
+        r = shapeGeometryBounds(shape);
+        if (r.isEmpty())
+            r = vertexBounds(shape.vertices);
+    }
+    if (!isFinite(r.left()) || !isFinite(r.top()) || !isFinite(r.width()) || !isFinite(r.height()))
+        return false;
+    if (r.width() < 1e-4 && r.height() < 1e-4)
+        return false;
+    if (r.width() < 1e-4)
+        r.setWidth(1.0);
+    if (r.height() < 1e-4)
+        r.setHeight(1.0);
+
+    switch (family) {
+    case ShapeFamily::Triangle:
+        if (variant < 0 || variant > 3)
+            return false;
+        if (variant == 0) {
+            if (shape.kind == ShapeKind::Triangle && shape.vertices.size() >= 3)
+                shape.vertices = shape.vertices.mid(0, 3);
+            else
+                shape.vertices = {{r.center().x(), r.top()}, r.bottomRight(), r.bottomLeft()};
+        } else if (variant == 1) {
+            shape.vertices = {{r.center().x(), r.top()}, r.bottomRight(), r.bottomLeft()};
+        } else if (variant == 2) {
+            shape.vertices = {r.topLeft(), r.bottomRight(), r.bottomLeft()};
+        } else {
+            const double w = r.width();
+            const double h = w * std::sqrt(3.0) * 0.5;
+            const QPointF c = r.center();
+            shape.vertices = {
+                {c.x(), c.y() - h * 0.5},
+                {r.right(), c.y() + h * 0.5},
+                {r.left(), c.y() + h * 0.5},
+            };
+        }
+        shape.kind = ShapeKind::Triangle;
+        shape.closed = true;
+        break;
+
+    case ShapeFamily::Quad:
+        if (variant < 0 || variant > 6)
+            return false;
+        if (variant == 0) {
+            shape.kind = ShapeKind::Rectangle;
+            shape.vertices = {r.topLeft(), r.bottomRight()};
+        } else if (variant == 1) {
+            const double side = (r.width() + r.height()) * 0.5;
+            const QPointF half(side * 0.5, side * 0.5);
+            const QPointF c = r.center();
+            shape.kind = ShapeKind::Rectangle;
+            shape.vertices = {c - half, c + half};
+        } else if (variant == 2) {
+            shape.kind = ShapeKind::Polyline;
+            shape.vertices = {
+                {r.center().x(), r.top()},
+                {r.right(), r.center().y()},
+                {r.center().x(), r.bottom()},
+                {r.left(), r.center().y()},
+            };
+        } else if (variant == 3) {
+            shape.kind = ShapeKind::Polyline;
+            shape.vertices = {
+                {r.left() + r.width() * 0.22, r.top()},
+                r.topRight(),
+                {r.right() - r.width() * 0.22, r.bottom()},
+                r.bottomLeft(),
+            };
+        } else if (variant == 4) {
+            shape.kind = ShapeKind::Polyline;
+            shape.vertices = {
+                {r.left() + r.width() * 0.20, r.top()},
+                {r.right() - r.width() * 0.20, r.top()},
+                r.bottomRight(),
+                r.bottomLeft(),
+            };
+        } else if (variant == 5) {
+            shape.kind = ShapeKind::Polyline;
+            shape.vertices = {
+                r.topLeft(),
+                {r.right() - r.width() * 0.28, r.top()},
+                r.bottomRight(),
+                r.bottomLeft(),
+            };
+        } else {
+            shape.kind = ShapeKind::Polyline;
+            shape.vertices = {
+                {r.left() + r.width() * 0.18, r.top()},
+                {r.right() - r.width() * 0.08, r.top() + r.height() * 0.22},
+                r.bottomRight(),
+                {r.left(), r.bottom() - r.height() * 0.08},
+            };
+        }
+        shape.closed = true;
+        break;
+
+    case ShapeFamily::Circle: {
+        if (variant < 0 || variant > 3)
+            return false;
+        const bool hasRadialOrigin = (shape.kind == ShapeKind::Circle && shape.vertices.size() >= 2)
+            || ((shape.kind == ShapeKind::Arc || shape.kind == ShapeKind::Sector) && shape.vertices.size() >= 3);
+        const QPointF c = hasRadialOrigin ? shape.vertices[0] : r.center();
+        const double rad = hasRadialOrigin
+            ? std::max(1.0, length(shape.vertices[1] - shape.vertices[0]))
+            : std::max(1.0, (r.width() + r.height()) * 0.25);
+        if (variant == 0) {
+            shape.kind = ShapeKind::Circle;
+            shape.closed = true;
+            shape.vertices = {c, c + QPointF(rad, 0.0)};
+        } else if (variant == 1 || variant == 2) {
+            const bool keepRays = (shape.kind == ShapeKind::Arc || shape.kind == ShapeKind::Sector)
+                && shape.vertices.size() >= 3
+                && length(shape.vertices[1] - shape.vertices[0]) > 1e-4
+                && length(shape.vertices[2] - shape.vertices[0]) > 1e-4;
+            if (keepRays)
+                shape.vertices = shape.vertices.mid(0, 3);
+            else
+                shape.vertices = {c, c + QPointF(rad, 0.0), c + QPointF(0.0, -rad)};
+            shape.kind = (variant == 1) ? ShapeKind::Arc : ShapeKind::Sector;
+            shape.closed = (variant == 2);
+        } else {
+            if (shape.kind == ShapeKind::Ellipse && shape.vertices.size() >= 2)
+                shape.vertices = {r.topLeft(), r.bottomRight()};
+            else
+                shape.vertices = {c - QPointF(rad, rad), c + QPointF(rad, rad)};
+            shape.kind = ShapeKind::Ellipse;
+            shape.closed = true;
+        }
+        break;
+    }
+
+    case ShapeFamily::Polygon: {
+        if (variant < 5 || variant > 12)
+            return false;
+        const double uniformR = regularPolygonRadiusIfUniform(shape);
+        const double rad = (uniformR > 1.0) ? uniformR : std::max(1.0, std::min(r.width(), r.height()) * 0.5);
+        QVector<QPointF> poly;
+        poly.reserve(variant);
+        constexpr double start = -std::numbers::pi * 0.5;
+        for (int i = 0; i < variant; ++i) {
+            const double a = start + 2.0 * std::numbers::pi * i / double(variant);
+            poly.append(QPointF(std::cos(a), std::sin(a)) * rad);
+        }
+        const QPointF shift = r.center() - vertexBounds(poly).center();
+        for (QPointF& pt : poly)
+            pt += shift;
+        shape.kind = ShapeKind::Polyline;
+        shape.closed = true;
+        shape.vertices = std::move(poly);
+        break;
+    }
+
+    case ShapeFamily::Solid3D:
+        if (variant < 0 || variant > 9)
+            return false;
+        shape.kind = ShapeKind::Solid3D;
+        shape.closed = false;
+        shape.solidKind = variant;
+        shape.vertices = {r.topLeft(), r.bottomRight()};
+        break;
+
+    case ShapeFamily::None:
+        return false;
+    }
+
+    shape.bounds = computeShapeBounds(shape);
+    return true;
 }
 
 } // namespace finily

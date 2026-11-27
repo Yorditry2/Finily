@@ -57,14 +57,26 @@ inline void removeAppSetting(const QString& key) {
     settings.remove(key);
 }
 
-inline QFont textFont(double size) {
-    QFont font(QStringLiteral("Sans Serif"));
+inline QFont textFont(double size, int familyIndex = 0, bool bold = false, bool italic = false) {
+    QFont font;
+    if (familyIndex == 1)
+        font.setFamilies({QStringLiteral("Caveat"), QStringLiteral("Segoe Print"), QStringLiteral("Comic Sans MS"), QStringLiteral("cursive")});
+    else if (familyIndex == 2)
+        font.setFamilies({QStringLiteral("JetBrains Mono"), QStringLiteral("Fira Code"), QStringLiteral("Consolas"), QStringLiteral("monospace")});
+    else
+        font.setFamilies({QStringLiteral("Inter"), QStringLiteral("Sans Serif")});
     font.setPixelSize(std::max(1, qRound(size)));
+    font.setBold(bold);
+    font.setItalic(italic);
     return font;
 }
 
+inline QFont textFont(const TextItem& item) {
+    return textFont(item.fontSize, item.fontFamilyIndex, item.bold, item.italic);
+}
+
 inline QRectF textBounds(const TextItem& item) {
-    const QFontMetricsF metrics(textFont(item.fontSize));
+    const QFontMetricsF metrics(textFont(item));
     const QStringList lines = item.text.split(QLatin1Char('\n'));
     const double lineStep = std::max(metrics.height(), metrics.lineSpacing());
     QRectF total;
@@ -82,7 +94,7 @@ inline QRectF textBounds(const TextItem& item) {
 inline void drawTextItem(QPainter& painter, const TextItem& item) {
     painter.save();
     painter.setRenderHint(QPainter::TextAntialiasing);
-    const QFont font = textFont(item.fontSize);
+    const QFont font = textFont(item);
     painter.setFont(font);
     painter.setPen(item.color);
     const QFontMetricsF metrics(font);

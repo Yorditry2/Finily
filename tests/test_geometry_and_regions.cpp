@@ -442,6 +442,410 @@ private slots:
         QVERIFY(std::abs(hl->vertices[0].x() - 0.0) < 1e-4);
         QVERIFY(std::abs(hl->vertices[1].x() - 200.0) < 1e-4);
     }
+
+    void recognizeFreehandShapeRespectsAllOptions() {
+        auto makePolyStroke = [](const QVector<QPointF>& pts, int stepsPerEdge) {
+            Stroke s;
+            s.tool = ToolType::Pen;
+            s.size = 2.4;
+            qint64 t = 0;
+            for (qsizetype i = 0; i + 1 < pts.size(); ++i) {
+                for (int k = (i == 0 ? 0 : 1); k <= stepsPerEdge; ++k) {
+                    const double u = double(k) / double(stepsPerEdge);
+                    const QPointF p = pts[i] + (pts[i + 1] - pts[i]) * u;
+                    s.points.push_back({p.x(), p.y(), 0.5, t, 0.0, 0.0});
+                    t += 5;
+                }
+            }
+            return s;
+        };
+
+        const Stroke lineStroke = test::makeLineStroke(QPointF(0, 0), QPointF(120, 0), 12);
+        const Stroke radicalStroke =
+            makePolyStroke({{0, 40}, {16, 80}, {36, 10}, {120, 10}}, 8);
+        const Stroke triStroke =
+            makePolyStroke({{60, 0}, {120, 100}, {0, 100}, {60, 0}}, 8);
+        const Stroke rectStroke =
+            makePolyStroke({{0, 0}, {120, 0}, {120, 80}, {0, 80}, {0, 0}}, 8);
+        const Stroke quadStroke =
+            makePolyStroke({{20, 0}, {100, 0}, {135, 80}, {0, 80}, {20, 0}}, 8);
+
+        QVector<QPointF> hexPts;
+        for (int i = 0; i <= 6; ++i) {
+            const double a = (double(i % 6) / 6.0) * 2.0 * std::numbers::pi;
+            hexPts.append(QPointF(90.0 + 82.0 * std::cos(a), 80.0 + 60.0 * std::sin(a)));
+        }
+        const Stroke polyStroke = makePolyStroke(hexPts, 3);
+
+        Stroke circleStroke;
+        circleStroke.tool = ToolType::Pen;
+        circleStroke.size = 2.4;
+        for (int i = 0; i <= 36; ++i) {
+            const double a = (double(i) / 36.0) * 2.0 * std::numbers::pi;
+            circleStroke.points.push_back(
+                {80.0 + 60.0 * std::cos(a), 80.0 + 60.0 * std::sin(a), 0.5, i * 4, 0.0, 0.0});
+        }
+
+        const Stroke rightAngleLStroke = makePolyStroke({{0, 0}, {0, 80}, {80, 80}}, 8);
+
+        Stroke curveStroke;
+        curveStroke.tool = ToolType::Pen;
+        curveStroke.size = 2.4;
+        for (int i = 0; i <= 20; ++i) {
+            const double t = double(i) / 20.0;
+            const double u = 1.0 - t;
+            const QPointF p = u * u * QPointF(0, 0) + 2.0 * u * t * QPointF(60, -80)
+                + t * t * QPointF(120, 0);
+            curveStroke.points.push_back({p.x(), p.y(), 0.5, i * 4, 0.0, 0.0});
+        }
+
+        // Default options recognize all 9 shape kinds.
+        QCOMPARE(recognizeFreehandShape(lineStroke)->kind, ShapeKind::Line);
+        QCOMPARE(recognizeFreehandShape(radicalStroke)->kind, ShapeKind::Radical);
+        QCOMPARE(recognizeFreehandShape(triStroke)->kind, ShapeKind::Triangle);
+        QCOMPARE(recognizeFreehandShape(rectStroke)->kind, ShapeKind::Rectangle);
+        const auto qDefault = recognizeFreehandShape(quadStroke);
+        QVERIFY(qDefault.has_value());
+        QCOMPARE(qDefault->kind, ShapeKind::Polyline);
+        QCOMPARE(qDefault->vertices.size(), 4);
+        QVERIFY(qDefault->closed);
+        const auto pDefault = recognizeFreehandShape(polyStroke);
+        QVERIFY(pDefault.has_value());
+        QCOMPARE(pDefault->kind, ShapeKind::Polyline);
+        QCOMPARE(pDefault->vertices.size(), 6);
+        QCOMPARE(recognizeFreehandShape(circleStroke)->kind, ShapeKind::Circle);
+        const auto lDefault = recognizeFreehandShape(rightAngleLStroke);
+        QVERIFY(lDefault.has_value());
+        QCOMPARE(lDefault->kind, ShapeKind::Polyline);
+        QCOMPARE(lDefault->vertices.size(), 3);
+        QVERIFY(!lDefault->closed);
+        QCOMPARE(recognizeFreehandShape(curveStroke)->kind, ShapeKind::Curve);
+
+        {
+            AutoShapeOptions opts;
+            opts.line = false;
+            QVERIFY(!recognizeFreehandShape(lineStroke, opts).has_value());
+        }
+        {
+            AutoShapeOptions opts;
+            opts.radical = false;
+            QVERIFY(!recognizeFreehandShape(radicalStroke, opts).has_value());
+        }
+        {
+            AutoShapeOptions opts;
+            opts.triangle = false;
+            QVERIFY(!recognizeFreehandShape(triStroke, opts).has_value());
+        }
+        {
+            AutoShapeOptions opts;
+            opts.rectangle = false;
+            QVERIFY(!recognizeFreehandShape(rectStroke, opts).has_value());
+        }
+        {
+            AutoShapeOptions opts;
+            opts.quadrilateral = false;
+            QVERIFY(!recognizeFreehandShape(quadStroke, opts).has_value());
+        }
+        {
+            AutoShapeOptions opts;
+            opts.polygon = false;
+            QVERIFY(!recognizeFreehandShape(polyStroke, opts).has_value());
+        }
+        {
+            // Very round stroke must return nullopt when opts.circle == false (no polygon/square fallback).
+            AutoShapeOptions opts;
+            opts.circle = false;
+            QVERIFY(!recognizeFreehandShape(circleStroke, opts).has_value());
+        }
+        {
+            AutoShapeOptions opts;
+            opts.rightAngleL = false;
+            opts.curve = false;
+            QVERIFY(!recognizeFreehandShape(rightAngleLStroke, opts).has_value());
+            // With curve=true and rightAngleL=false, it must NOT emit the 3-pt L polyline.
+            opts.curve = true;
+            const auto res = recognizeFreehandShape(rightAngleLStroke, opts);
+            QVERIFY(!res.has_value() || res->kind != ShapeKind::Polyline);
+        }
+        {
+            AutoShapeOptions opts;
+            opts.curve = false;
+            QVERIFY(!recognizeFreehandShape(curveStroke, opts).has_value());
+        }
+    }
+
+    void trySnapAngleArcAtVertexRespectsIndividualSwitches() {
+        ShapeItem tri;
+        tri.id = QStringLiteral("t_sw");
+        tri.kind = ShapeKind::Triangle;
+        tri.vertices = {QPointF(0, 0), QPointF(160, 0), QPointF(0, 160)};
+        tri.closed = true;
+        tri.bounds = computeShapeBounds(tri);
+
+        Stroke sq;
+        sq.tool = ToolType::Pen;
+        sq.size = 2.4;
+        for (int i = 0; i <= 5; ++i)
+            sq.points.push_back({20.0, double(i) * 4.0, 0.5, i * 5, 0.0, 0.0});
+        for (int i = 1; i <= 5; ++i)
+            sq.points.push_back({20.0 - double(i) * 4.0, 20.0, 0.5, 25 + i * 5, 0.0, 0.0});
+
+        Stroke arc;
+        arc.tool = ToolType::Pen;
+        arc.size = 2.4;
+        for (int i = 0; i <= 10; ++i) {
+            const double ang = (double(i) / 10.0) * (std::numbers::pi * 0.5);
+            arc.points.push_back({24.0 * std::cos(ang), 24.0 * std::sin(ang), 0.5, i * 5, 0.0, 0.0});
+        }
+
+        // Disabling angleArc keeps right-angle corner snapping, blocks curved arc.
+        const auto sqNoArc = trySnapAngleArcAtVertex(sq, {tri}, 1.0, false, true);
+        QVERIFY(sqNoArc.has_value());
+        QCOMPARE(sqNoArc->kind, ShapeKind::RightAngle);
+        QVERIFY(!trySnapAngleArcAtVertex(arc, {tri}, 1.0, false, true).has_value());
+
+        // Disabling rightAngle keeps curved arc snapping, blocks square corner.
+        QVERIFY(!trySnapAngleArcAtVertex(sq, {tri}, 1.0, true, false).has_value());
+        const auto arcNoRight = trySnapAngleArcAtVertex(arc, {tri}, 1.0, true, false);
+        QVERIFY(arcNoRight.has_value());
+        QCOMPARE(arcNoRight->kind, ShapeKind::AngleMarker);
+
+        // Both false disables both.
+        QVERIFY(!trySnapAngleArcAtVertex(sq, {tri}, 1.0, false, false).has_value());
+        QVERIFY(!trySnapAngleArcAtVertex(arc, {tri}, 1.0, false, false).has_value());
+    }
+
+    void smartGuideOptionsToggleEachStage() {
+        const ShapeItem diag = test::makeShape(ShapeKind::Line, {QPointF(0, 0), QPointF(100, 100)});
+        const ShapeItem vert = test::makeShape(ShapeKind::Line, {QPointF(200, 0), QPointF(200, 120)});
+        const QVector<ShapeItem> shapes{diag, vert};
+
+        // 1. snapKeyPoints: near (200, 0) snaps when true, skips contact when false.
+        {
+            const SmartGuideOptions onlyKp{true, true, false, false};
+            const SnapResult hit = snapPointWithGuides(QPointF(202, 2), std::nullopt, shapes, {}, 1.0, onlyKp);
+            QVERIFY(hit.contact);
+            QCOMPARE(hit.point, QPointF(200, 0));
+
+            const SmartGuideOptions noKp{true, false, false, false};
+            const SnapResult miss = snapPointWithGuides(QPointF(202, 2), std::nullopt, shapes, {}, 1.0, noKp);
+            QVERIFY(!miss.contact);
+            QCOMPARE(miss.point, QPointF(202, 2));
+        }
+
+        // 2. orthoPerpGuides: perpendicular snap and cardinal 0° snap respect orthoPerpGuides.
+        {
+            const SmartGuideOptions withOrtho{true, true, true, false};
+            const SnapResult perp =
+                snapPointWithGuides(QPointF(-18, 122), QPointF(50, 50), shapes, {}, 1.0, withOrtho);
+            const QPointF d = perp.point - QPointF(50, 50);
+            QVERIFY(std::abs(d.x() * 100.0 + d.y() * 100.0) < 1e-4);
+
+            const SmartGuideOptions noOrtho{true, true, false, false};
+            const SnapResult rawPerp =
+                snapPointWithGuides(QPointF(-18, 122), QPointF(50, 50), shapes, {}, 1.0, noOrtho);
+            QCOMPARE(rawPerp.point, QPointF(-18, 122));
+            QVERIFY(rawPerp.guides.isEmpty());
+        }
+
+        // 3. alignXY: aligns X/Y with distant vertices and self handles when enabled.
+        {
+            const SmartGuideOptions onlyAlign{true, false, false, true};
+            const SnapResult aligned =
+                snapPointWithGuides(QPointF(202, 300), std::nullopt, shapes, {}, 1.0, onlyAlign);
+            QVERIFY(!aligned.contact);
+            QCOMPARE(aligned.point.x(), 200.0);
+
+            const SmartGuideOptions noAlign{true, false, false, false};
+            const SnapResult raw =
+                snapPointWithGuides(QPointF(202, 300), std::nullopt, shapes, {}, 1.0, noAlign);
+            QCOMPARE(raw.point, QPointF(202, 300));
+
+            const ShapeItem rect = test::makeShape(ShapeKind::Rectangle, {QPointF(0, 0), QPointF(100, 80)});
+            const SnapResult ext{QPointF(102, 3), {}, false};
+            QCOMPARE(snapShapeVertex(rect, 1, ext, QPointF(102, 3), 1.0, onlyAlign).point, QPointF(100, 0));
+            QCOMPARE(snapShapeVertex(rect, 1, ext, QPointF(102, 3), 1.0, noAlign).point, QPointF(102, 3));
+        }
+
+        // 4. Master switch enabled=false suppresses everything.
+        {
+            const SmartGuideOptions disabled{false, true, true, true};
+            const SnapResult res =
+                snapPointWithGuides(QPointF(202, 2), QPointF(50, 50), shapes, {}, 1.0, disabled);
+            QVERIFY(!res.contact);
+            QCOMPARE(res.point, QPointF(202, 2));
+            QVERIFY(res.guides.isEmpty());
+        }
+    }
+
+    void classifyAndMorphShapeFamiliesAcrossAllVariants() {
+        // 1. Triangle family (0=Libre, 1=Isósceles, 2=Rectángulo, 3=Equilátero)
+        {
+            ShapeItem tri = test::makeShape(
+                ShapeKind::Triangle, {QPointF(10, 0), QPointF(110, 20), QPointF(0, 80)});
+            tri.closed = true;
+            int variant = -1;
+            QCOMPARE(classifyShapeFamily(tri, &variant), ShapeFamily::Triangle);
+            QCOMPARE(variant, 0);
+
+            QVERIFY(morphShapeToVariant(tri, ShapeFamily::Triangle, 2));
+            QCOMPARE(classifyShapeFamily(tri, &variant), ShapeFamily::Triangle);
+            QCOMPARE(variant, 2);
+            QCOMPARE(tri.vertices.size(), 3);
+
+            QVERIFY(morphShapeToVariant(tri, ShapeFamily::Triangle, 1));
+            QCOMPARE(classifyShapeFamily(tri, &variant), ShapeFamily::Triangle);
+            QCOMPARE(variant, 1);
+
+            const QRectF preBounds = shapeGeometryBounds(tri);
+            QVERIFY(morphShapeToVariant(tri, ShapeFamily::Triangle, 3));
+            QCOMPARE(classifyShapeFamily(tri, &variant), ShapeFamily::Triangle);
+            QCOMPARE(variant, 3);
+            const QRectF eqBounds = shapeGeometryBounds(tri);
+            QVERIFY(std::abs(eqBounds.width() - preBounds.width()) < 1e-4);
+            QVERIFY(std::abs(eqBounds.center().x() - preBounds.center().x()) < 1e-4);
+            QVERIFY(std::abs(eqBounds.center().y() - preBounds.center().y()) < 1e-4);
+            const double s0 = QLineF(tri.vertices[0], tri.vertices[1]).length();
+            const double s1 = QLineF(tri.vertices[1], tri.vertices[2]).length();
+            const double s2 = QLineF(tri.vertices[2], tri.vertices[0]).length();
+            QVERIFY(std::abs(s0 - s1) < 1e-4 && std::abs(s1 - s2) < 1e-4);
+
+            QVERIFY(morphShapeToVariant(tri, ShapeFamily::Triangle, 0));
+            QCOMPARE(tri.kind, ShapeKind::Triangle);
+            QCOMPARE(tri.bounds, computeShapeBounds(tri));
+        }
+
+        // 2. Quad family (0=Rectángulo, 1=Cuadrado, 2=Rombo, 3=Paralelogramo, 4=Trapecio iso, 5=Trapecio rect, 6=Trapezoide)
+        {
+            ShapeItem quad = test::makeShape(
+                ShapeKind::Rectangle, {QPointF(0, 0), QPointF(120, 80)});
+            quad.closed = true;
+            int variant = -1;
+            QCOMPARE(classifyShapeFamily(quad, &variant), ShapeFamily::Quad);
+            QCOMPARE(variant, 0);
+
+            // Test non-square bounds across 2..6 and back to 0 (Rectángulo), then equalized 1 (Cuadrado) -> 2 (Rombo).
+            for (int v : {2, 3, 4, 5, 6, 0}) {
+                QVERIFY(morphShapeToVariant(quad, ShapeFamily::Quad, v));
+                QCOMPARE(classifyShapeFamily(quad, &variant), ShapeFamily::Quad);
+                QCOMPARE(variant, v);
+                QCOMPARE(quad.bounds, computeShapeBounds(quad));
+            }
+
+            QVERIFY(morphShapeToVariant(quad, ShapeFamily::Quad, 1));
+            QCOMPARE(classifyShapeFamily(quad, &variant), ShapeFamily::Quad);
+            QCOMPARE(variant, 1);
+            const QRectF sqR = shapeGeometryBounds(quad);
+            QVERIFY(std::abs(sqR.width() - 100.0) < 1e-4);
+            QVERIFY(std::abs(sqR.height() - 100.0) < 1e-4);
+            QVERIFY(std::abs(sqR.center().x() - 60.0) < 1e-4);
+            QVERIFY(std::abs(sqR.center().y() - 40.0) < 1e-4);
+
+            // Rombo even from a 100x100 square must classify back as variant 2 (not Cuadrado).
+            QVERIFY(morphShapeToVariant(quad, ShapeFamily::Quad, 2));
+            QCOMPARE(classifyShapeFamily(quad, &variant), ShapeFamily::Quad);
+            QCOMPARE(variant, 2);
+            QCOMPARE(quad.bounds, computeShapeBounds(quad));
+        }
+
+        // 3. Circle family (0=Círculo, 1=Arco, 2=Sector, 3=Elipse)
+        {
+            ShapeItem circle = test::makeShape(
+                ShapeKind::Circle, {QPointF(100, 100), QPointF(150, 100)});
+            circle.closed = true;
+            int variant = -1;
+            QCOMPARE(classifyShapeFamily(circle, &variant), ShapeFamily::Circle);
+            QCOMPARE(variant, 0);
+
+            QVERIFY(morphShapeToVariant(circle, ShapeFamily::Circle, 1));
+            QCOMPARE(circle.kind, ShapeKind::Arc);
+            QVERIFY(!circle.closed);
+            QCOMPARE(circle.vertices,
+                     (QVector<QPointF>{QPointF(100, 100), QPointF(150, 100), QPointF(100, 50)}));
+            QCOMPARE(classifyShapeFamily(circle, &variant), ShapeFamily::Circle);
+            QCOMPARE(variant, 1);
+
+            QVERIFY(morphShapeToVariant(circle, ShapeFamily::Circle, 2));
+            QCOMPARE(circle.kind, ShapeKind::Sector);
+            QVERIFY(circle.closed);
+            QCOMPARE(circle.vertices.size(), 3);
+            QCOMPARE(classifyShapeFamily(circle, &variant), ShapeFamily::Circle);
+            QCOMPARE(variant, 2);
+
+            QVERIFY(morphShapeToVariant(circle, ShapeFamily::Circle, 3));
+            QCOMPARE(circle.kind, ShapeKind::Ellipse);
+            QVERIFY(circle.closed);
+            QCOMPARE(classifyShapeFamily(circle, &variant), ShapeFamily::Circle);
+            QCOMPARE(variant, 3);
+
+            QVERIFY(morphShapeToVariant(circle, ShapeFamily::Circle, 0));
+            QCOMPARE(circle.kind, ShapeKind::Circle);
+            QVERIFY(circle.closed);
+            QCOMPARE(circle.vertices[0], QPointF(100, 100));
+            QVERIFY(std::abs(QLineF(circle.vertices[0], circle.vertices[1]).length() - 50.0) < 1e-4);
+            QCOMPARE(classifyShapeFamily(circle, &variant), ShapeFamily::Circle);
+            QCOMPARE(variant, 0);
+        }
+
+        // 4. Polygon family (5..12)
+        {
+            ShapeItem poly = test::makeShape(
+                ShapeKind::Rectangle, {QPointF(50, 50), QPointF(150, 150)});
+            poly.closed = true;
+            const QPointF expectedCenter(100, 100);
+            for (int n = 5; n <= 12; ++n) {
+                QVERIFY(morphShapeToVariant(poly, ShapeFamily::Polygon, n));
+                QCOMPARE(poly.kind, ShapeKind::Polyline);
+                QVERIFY(poly.closed);
+                QCOMPARE(poly.vertices.size(), n);
+                int variant = -1;
+                QCOMPARE(classifyShapeFamily(poly, &variant), ShapeFamily::Polygon);
+                QCOMPARE(variant, n);
+                const QPointF c = shapeGeometryBounds(poly).center();
+                QVERIFY(std::abs(c.x() - expectedCenter.x()) < 1e-4);
+                QVERIFY(std::abs(c.y() - expectedCenter.y()) < 1e-4);
+                const double side0 = QLineF(poly.vertices[0], poly.vertices[1]).length();
+                for (int i = 1; i < n; ++i) {
+                    const double sideI = QLineF(poly.vertices[i], poly.vertices[(i + 1) % n]).length();
+                    QVERIFY(std::abs(sideI - side0) < 1e-4);
+                }
+            }
+        }
+
+        // 5. Solid3D family (0..9)
+        {
+            ShapeItem solid = test::makeShape(
+                ShapeKind::Solid3D, {QPointF(0, 0), QPointF(80, 80)});
+            for (int k = 0; k <= 9; ++k) {
+                QVERIFY(morphShapeToVariant(solid, ShapeFamily::Solid3D, k));
+                QCOMPARE(solid.kind, ShapeKind::Solid3D);
+                QCOMPARE(solid.solidKind, k);
+                int variant = -1;
+                QCOMPARE(classifyShapeFamily(solid, &variant), ShapeFamily::Solid3D);
+                QCOMPARE(variant, k);
+                QCOMPARE(solid.bounds, computeShapeBounds(solid));
+            }
+        }
+
+        // 6. None / invalid variant guards
+        {
+            const ShapeItem line = test::makeShape(ShapeKind::Line, {QPointF(0, 0), QPointF(50, 0)});
+            const ShapeItem table =
+                test::makeShape(ShapeKind::Rectangle, {QPointF(0, 0), QPointF(100, 80)},
+                                QStringLiteral("tabla:3x4"));
+            QCOMPARE(classifyShapeFamily(line), ShapeFamily::None);
+            QCOMPARE(classifyShapeFamily(table), ShapeFamily::None);
+
+            ShapeItem rect = test::makeShape(ShapeKind::Rectangle, {QPointF(0, 0), QPointF(60, 40)});
+            QVERIFY(!morphShapeToVariant(rect, ShapeFamily::None, 0));
+            QVERIFY(!morphShapeToVariant(rect, ShapeFamily::Triangle, 4));
+            QVERIFY(!morphShapeToVariant(rect, ShapeFamily::Quad, 7));
+            QVERIFY(!morphShapeToVariant(rect, ShapeFamily::Circle, -1));
+            QVERIFY(!morphShapeToVariant(rect, ShapeFamily::Polygon, 4));
+            QVERIFY(!morphShapeToVariant(rect, ShapeFamily::Polygon, 13));
+            QVERIFY(!morphShapeToVariant(rect, ShapeFamily::Solid3D, 10));
+        }
+    }
 };
 
 QTEST_MAIN(TestGeometryAndRegions)

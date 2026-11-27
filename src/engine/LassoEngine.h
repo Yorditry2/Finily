@@ -5,7 +5,7 @@
 #include <QSet>
 
 namespace finily {
-void selectByLasso(const QPolygonF& lassoPoly,const QVector<Stroke>& strokes,const QVector<ShapeItem>& shapes,QSet<QString>& outStrokeIds,QSet<QString>& outShapeIds);
+void selectByLasso(const QPolygonF& lassoPoly,const QVector<Stroke>& strokes,const QVector<ShapeItem>& shapes,QSet<QString>& outStrokeIds,QSet<QString>& outShapeIds,const LassoTargetFilter& filter = {});
 QRectF computeSelectionBounds(const QVector<Stroke>& strokes,const QVector<ShapeItem>& shapes,const QSet<QString>& strokeIds,const QSet<QString>& shapeIds);
 void translateSelection(QVector<Stroke>& strokes,QVector<ShapeItem>& shapes,const QSet<QString>& strokeIds,const QSet<QString>& shapeIds,const QPointF& delta);
 void scaleSelection(QVector<Stroke>& strokes,QVector<ShapeItem>& shapes,const QSet<QString>& strokeIds,const QSet<QString>& shapeIds,const QPointF& anchor,double scaleX,double scaleY);

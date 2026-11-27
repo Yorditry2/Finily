@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><title>Finily — Editor: funciones</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+body{margin:0;padding:28px;background:#EDEDEA;font-family:Inter,sans-serif;color:#18181B;font-size:13px}
+h1{font-size:20px;margin:0 0 4px}.lead{color:#52525B;margin:0 0 20px;max-width:960px;line-height:1.5}
+.card{background:#fff;border-radius:16px;padding:18px 22px;margin-bottom:18px;box-shadow:0 10px 30px -18px rgba(15,23,42,.3);max-width:1180px}
+h2{font-size:15px;margin:0 0 10px}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;vertical-align:top;padding:9px 10px;border-bottom:1px solid #F0F0EE;line-height:1.45}
+th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#71717A}
+td:first-child{font-weight:700;white-space:nowrap}
+.tag{display:inline-block;font-size:10.5px;font-weight:700;border-radius:6px;padding:2px 7px}
+.k{background:#E7F6EC;color:#16794C}.m{background:#FEF3C7;color:#A16207}.x{background:#FDE8E8;color:#B42318}.n{background:#E0E7FF;color:#3730A3}
+.bar{display:flex;align-items:center;gap:3px;padding:6px 8px;border-radius:12px;background:#FAFAF9;border:1px solid rgba(15,23,42,.08);width:max-content}
+.t{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;position:relative}
+.t.on{background:#18181B;color:#fff}.t svg{width:20px;height:20px}
+.t .chev{position:absolute;right:3px;bottom:3px;width:0;height:0;border-left:4px solid transparent;border-top:4px solid currentColor;opacity:.45;transform:rotate(-45deg)}
+.sep{width:1px;height:22px;background:rgba(15,23,42,.1);margin:0 6px}
+.grp{display:flex;flex-direction:column;align-items:center;gap:4px}.grp small{font-size:10px;color:#A1A1AA;font-weight:600}
+.row{display:flex;align-items:flex-end;gap:6px}
+.panels{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:6px}
+.pan{border:1px solid #EEE;border-radius:14px;padding:12px}.pan h3{font-size:12.5px;margin:0 0 3px}.pan p{margin:0 0 10px;color:#71717A;font-size:11.5px;line-height:1.4}
+.opts{display:flex;flex-wrap:wrap;gap:6px}.o{font-size:11px;font-weight:600;padding:6px 9px;border-radius:8px;background:#F4F4F5}.o.on{background:#18181B;color:#fff}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.flow div{background:#FAFAF9;border-radius:12px;padding:12px;line-height:1.45}.flow b{display:block;margin-bottom:4px}
+</style></head><body>
+<h1>17 · Editor — qué hace cada herramienta</h1>
+<p class="lead">Partimos de la función, no del dibujo. Se revisó qué hace hoy cada botón de la barra (código: <code>FloatingToolbar.cpp</code>, <code>ToolType</code>, <code>ShapeKind</code>) para decidir si se queda, se une con otra o se mueve. El diseño general de tu captura no cambia.</p>
+
+<div class="card"><h2>1 · Inventario y decisión</h2>
+<table><tr><th>Botón hoy</th><th>Qué hace</th><th>Problema</th><th>Propuesta</th></tr>
+<tr><td>Pluma (P)</td><td>Escribir. 4 puntas (incluye bolígrafo), presión, tinta líquida.</td><td>Las puntas están escondidas; el bolígrafo existe como herramienta aparte en el código.</td><td><span class="tag k">Se queda</span> Un solo botón «Escribir»; la punta se elige en su panel. El icono cambia según la punta elegida.</td></tr>
+<tr><td>Resaltador (H)</td><td>Trazo translúcido, 3 puntas.</td><td>—</td><td><span class="tag k">Se queda</span> Con su propio color y grosor recordados (no comparte con la pluma).</td></tr>
+<tr><td>Borrador (E)</td><td>Borra trazo entero o solo lo que tocas (parcial); también figuras.</td><td>El modo no se ve; hay que adivinarlo.</td><td><span class="tag k">Se queda</span> Panel: «Trazo completo / Solo lo que toco», tamaño, «Borrar página». El icono muestra el modo.</td></tr>
+<tr><td>Relleno (F)</td><td>Sombrea una región cerrada (6 tramas).</td><td>Está junto a la pluma pero solo sirve sobre figuras; confunde a quien quiere “pintar”.</td><td><span class="tag m">Se mueve</span> Dentro de Figuras, como «Sombrear región» con sus tramas.</td></tr>
+<tr><td>Seleccionar (U)</td><td>Toca un objeto para moverlo/editar vértices.</td><td>Hay dos herramientas para seleccionar (esta y Lazo).</td><td><span class="tag n">Se une</span> Con Lazo en «Seleccionar»: tocar = objeto, rodear = lazo. Un solo botón.</td></tr>
+<tr><td>Lazo (A)</td><td>Rodea tinta para moverla, ordenarla, convertir a fórmula.</td><td>Ídem.</td><td><span class="tag n">Se une</span> Ver arriba. La barra contextual aparece al seleccionar.</td></tr>
+<tr><td>Figuras (S)</td><td>16 tipos: línea, círculo, elipse, triángulo, rectángulo, radical, polilínea, curva, ángulo recto, llave, ejes, región sombreada, sólido 3D, arco, sector, marcador de ángulo.</td><td>Muchas figuras en una sola lista; las de medición se mezclan con las básicas.</td><td><span class="tag k">Se queda</span> Panel por categorías: Básicas · Matemáticas · Medidas · 3D · Sombrear. Recuerda la última usada.</td></tr>
+<tr><td>Texto (T)</td><td>Caja de texto editable.</td><td>—</td><td><span class="tag k">Se queda</span></td></tr>
+<tr><td>Láser (K)</td><td>Puntero que se desvanece, para explicar.</td><td>Es de presentación; ocupa sitio fijo aunque casi no se usa al tomar apuntes.</td><td><span class="tag m">Se mueve</span> Al final del grupo «Explicar» o dentro de «…» → Presentar. Sigue con la tecla K.</td></tr>
+<tr><td>Stickers / fórmulas (Ctrl+K)</td><td>Biblioteca de fórmulas y figuras de geometría/ciencia.</td><td>El icono (imagen) no dice “biblioteca”.</td><td><span class="tag n">Se une</span> En «Insertar»: Stickers y fórmulas · Imagen · Página de PDF · Tabla.</td></tr>
+<tr><td>Mano</td><td>Desplazar el lienzo.</td><td>Con tableta se usa 2 dedos / barra espaciadora.</td><td><span class="tag x">Fuera de la barra</span> Espacio + arrastrar, dos dedos o rueda.</td></tr>
+<tr><td>Puntos de color</td><td>Cambio rápido de color.</td><td>No queda claro si es el color de la pluma o del resaltador.</td><td><span class="tag k">Se queda</span> Los colores son <b>de la herramienta activa</b> y cambian al cambiar de herramienta.</td></tr>
+<tr><td>Grosores</td><td>3 grosores.</td><td>Iguales para todas las herramientas.</td><td><span class="tag k">Se queda</span> 3 presets por herramienta (la pluma fina ≠ resaltador grueso); doble clic = editar el preset.</td></tr>
+</table></div>
+
+<div class="card"><h2>2 · Barra resultante (misma posición que tu captura)</h2>
+<div class="row">
+ <div class="grp"><div class="bar">
+  <div class="t on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 3.5l5 5L9 20H4v-5z"/><path d="M13 6l5 5"/></svg><i class="chev"></i></div>
+  <div class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3.5l6.5 6.5-7 7-6.5-6.5z"/><path d="M7 10.5l6.5 6.5-2 2H8l-2.5-2.5v-3.5z"/><path d="M4 21h7" stroke="#FACC15" stroke-width="3"/></svg><i class="chev"></i></div>
+  <div class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 19.5 3.8 14.8a1.6 1.6 0 0 1 0-2.3l8.7-8.7a1.6 1.6 0 0 1 2.3 0l5.4 5.4a1.6 1.6 0 0 1 0 2.3L12 19.5z"/><path d="M8 10l6.5 6.5"/><path d="M12 19.5h8"/></svg><i class="chev"></i></div>
+ </div><small>Escribir</small></div>
+ <div class="grp"><div class="bar">
+  <div class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="10" rx="8.5" ry="5.5" stroke-dasharray="3 2.6"/><path d="M8 15c-1 1.6-.6 3.6 1.4 4.5"/></svg></div>
+ </div><small>Seleccionar</small></div>
+ <div class="grp"><div class="bar">
+  <div class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5l4.2 7.3H2.8z"/><circle cx="17" cy="7.2" r="3.7"/><rect x="5" y="13.5" width="14" height="7" rx="1.6"/></svg><i class="chev"></i></div>
+  <div class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7V4.5h15V7"/><path d="M12 4.5v15"/><path d="M9 19.5h6"/></svg></div>
+  <div class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="5"/></svg><i class="chev"></i></div>
+ </div><small>Crear · Figuras / Texto / Insertar</small></div>
+ <div class="grp"><div class="bar">
+  <div class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" fill="#E5484D" stroke="#E5484D"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></div>
+ </div><small>Explicar · Láser</small></div>
+ <div class="sep" style="align-self:center"></div>
+ <div class="grp"><div class="bar"><span style="font-size:11px;color:#71717A;padding:0 6px">grosores + colores de la herramienta activa</span></div><small>Ajustes rápidos</small></div>
+</div>
+<p style="color:#71717A;font-size:12px;margin:12px 0 0">De 11 botones a 8. La flechita ◢ indica que el botón tiene panel (segundo toque o mantener pulsado). La magia (auto-forma / ecuación) sale de la barra: se activa sola al mantener el trazo quieto, y la conversión a fórmula está en la barra de selección.</p>
+</div>
+
+<div class="card"><h2>3 · Qué abre cada panel</h2>
+<div class="panels">
+ <div class="pan"><h3>Escribir</h3><p>Punta, presión y estabilizador.</p><div class="opts"><span class="o on">Pluma</span><span class="o">Bolígrafo</span><span class="o">Lápiz</span><span class="o">Caligrafía</span><span class="o">Presión ✓</span><span class="o">Suavizado: medio</span><span class="o">Auto-forma ✓</span></div></div>
+ <div class="pan"><h3>Resaltador</h3><p>Punta y si va detrás de la tinta.</p><div class="opts"><span class="o on">Recto</span><span class="o">Biselado</span><span class="o">Redondo</span><span class="o">Trazo recto auto ✓</span><span class="o">Detrás del texto ✓</span></div></div>
+ <div class="pan"><h3>Borrador</h3><p>Modo y alcance.</p><div class="opts"><span class="o on">Trazo completo</span><span class="o">Solo lo que toco</span><span class="o">Tamaño S M L</span><span class="o">Solo resaltador</span><span class="o">Borrar página…</span></div></div>
+ <div class="pan"><h3>Figuras</h3><p>Por categorías; recuerda la última.</p><div class="opts"><span class="o on">Básicas: línea, círculo, elipse, triángulo, rectángulo</span><span class="o">Matemáticas: ejes, radical, llave, curva, polilínea</span><span class="o">Medidas: ángulo recto, marcador de ángulo, arco, sector, cota</span><span class="o">3D: sólidos</span><span class="o">Sombrear región (6 tramas)</span></div></div>
+ <div class="pan"><h3>Insertar</h3><p>Todo lo que se agrega desde fuera.</p><div class="opts"><span class="o">Stickers y fórmulas (Ctrl+K)</span><span class="o">Imagen…</span><span class="o">Imagen → vector</span><span class="o">Página de PDF…</span><span class="o">Tabla</span></div></div>
+ <div class="pan"><h3>Seleccionar</h3><p>Sin panel: la barra contextual aparece sobre la selección.</p><div class="opts"><span class="o">Color</span><span class="o">Ordenar escritura</span><span class="o">Convertir a fórmula</span><span class="o">Duplicar</span><span class="o">Borrar</span><span class="o">…</span></div></div>
+</div></div>
+
+<div class="card"><h2>4 · Comportamientos</h2>
+<div class="flow">
+ <div><b>Volver a la pluma</b>Botón del lápiz Wacom o tecla P: cambia entre la herramienta actual y la última de escritura.</div>
+ <div><b>Goma del lápiz</b>Si el lápiz tiene goma, usarla activa el borrador temporalmente sin cambiar la barra.</div>
+ <div><b>Colores por herramienta</b>Pluma y resaltador recuerdan su color y grosor por separado.</div>
+ <div><b>Pizarra vs cuaderno</b>En pizarra no aparece «1 / 1» ni «Página de PDF»; en cuaderno sí.</div>
+</div></div>
+</body></html>

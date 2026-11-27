@@ -172,13 +172,20 @@ QJsonObject serializePage(const PageData& document, bool& valid) {
     for (const auto& shape : document.shapes)
         shapes.append(shapeJson(shape));
     for (const auto& item : document.texts) {
-        texts.append(QJsonObject{{"id", item.id},
-                                 {"groupId", item.groupId},
-                                 {"pos", QJsonArray{item.pos.x(), item.pos.y()}},
-                                 {"text", item.text},
-                                 {"color", item.color.name(QColor::HexArgb)},
-                                 {"fontSize", item.fontSize},
-                                 {"locked", item.locked}});
+        QJsonObject obj{{"id", item.id},
+                        {"groupId", item.groupId},
+                        {"pos", QJsonArray{item.pos.x(), item.pos.y()}},
+                        {"text", item.text},
+                        {"color", item.color.name(QColor::HexArgb)},
+                        {"fontSize", item.fontSize},
+                        {"locked", item.locked}};
+        if (item.fontFamilyIndex != 0)
+            obj.insert(QStringLiteral("fontFamily"), item.fontFamilyIndex);
+        if (item.bold)
+            obj.insert(QStringLiteral("bold"), true);
+        if (item.italic)
+            obj.insert(QStringLiteral("italic"), true);
+        texts.append(obj);
     }
     for (const auto& image : document.images) {
         if (!image.isPdfPage && image.image.isNull())
@@ -192,6 +199,8 @@ QJsonObject serializePage(const PageData& document, bool& valid) {
                           {"pdfPageIndex", image.pdfPageIndex},
                           {"pdfSourcePath", image.pdfSourcePath},
                           {"locked", image.locked}};
+        if (image.opacity < 0.999)
+            value.insert(QStringLiteral("opacity"), image.opacity);
         const qint64 key = image.image.cacheKey();
         QString encoded;
         {
@@ -501,6 +510,7 @@ PageData deserializePage(const QJsonObject& root,
         if (!image.isPdfPage)
             image.groupId = o.value("groupId").toString();
         image.locked = o.value("locked").toBool();
+        image.opacity = std::clamp(o.value("opacity").toDouble(1.0), 0.05, 1.0);
         image.pdfSourcePath = o.value("pdfSourcePath").toString();
         image.pdfPageIndex = o.value("pdfPageIndex").toInt(-1);
         image.image = QImage::fromData(QByteArray::fromBase64(o.value("png").toString().toLatin1()), "PNG");
@@ -537,6 +547,9 @@ PageData deserializePage(const QJsonObject& root,
         item.text = o.value("text").toString();
         item.color = QColor(o.value("color").toString());
         item.fontSize = o.value("fontSize").toDouble(22);
+        item.fontFamilyIndex = std::clamp(o.value("fontFamily").toInt(0), 0, 2);
+        item.bold = o.value("bold").toBool(false);
+        item.italic = o.value("italic").toBool(false);
         if (item.text.trimmed().isEmpty() || !item.color.isValid() || !isFinite(item.fontSize)
             || item.fontSize < 1 || item.fontSize > 1000) {
             continue;
@@ -620,8 +633,16 @@ QImage renderPageThumbnail(const PageData& page, ThemeId themeId,
                            Viewport{0, 0, zoom}, visibleWorld, templateScale, sheet);
     for (bool pdf : {true, false}) {
         for (const auto& item : images) {
-            if (item.isPdfPage == pdf && !item.image.isNull())
-                painter.drawImage(item.rect, item.image);
+            if (item.isPdfPage == pdf && !item.image.isNull()) {
+                if (item.opacity < 0.999) {
+                    painter.save();
+                    painter.setOpacity(painter.opacity() * item.opacity);
+                    painter.drawImage(item.rect, item.image);
+                    painter.restore();
+                } else {
+                    painter.drawImage(item.rect, item.image);
+                }
+            }
         }
     }
     for (const auto& shape : shapes) {

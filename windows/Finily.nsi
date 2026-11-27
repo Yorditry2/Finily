@@ -12,6 +12,8 @@ InstallDir "$LOCALAPPDATA\Programs\Finily"
 
 !define APP_STAGE "$INSTDIR\app.new"
 !define APP_BACKUP "$INSTDIR\app.previous"
+!define MUI_ICON "finily.ico"
+!define MUI_UNICON "finily.ico"
 
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_TITLE "Instalación completada"

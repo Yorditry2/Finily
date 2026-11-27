@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QGuiApplication>
+#include <QIcon>
 #include <QStringList>
 
 int main(int argc, char* argv[]) {
@@ -25,7 +26,9 @@ int main(int argc, char* argv[]) {
     QApplication::setApplicationDisplayName("Finily");
     QApplication::setOrganizationName("Finily");
     QApplication::setOrganizationDomain("finily.app");
+    QGuiApplication::setDesktopFileName(QStringLiteral("finily"));
     QApplication::setApplicationVersion(QStringLiteral(FINILY_VERSION));
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/resources/icons/app/finily-app.svg")));
 
     // Inter va embebida (resources/fonts, licencia OFL) para que se vea igual
     // en Linux y Windows; si no cargara, se usa la del sistema.

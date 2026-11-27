@@ -840,41 +840,46 @@ void selectByLasso(const QPolygonF& poly,
                    const QVector<Stroke>& strokes,
                    const QVector<ShapeItem>& shapes,
                    QSet<QString>& strokeIds,
-                   QSet<QString>& shapeIds) {
+                   QSet<QString>& shapeIds,
+                   const LassoTargetFilter& filter) {
     strokeIds.clear();
     shapeIds.clear();
     if (poly.size() < 3) {
         return;
     }
-    for (const auto& s : strokes) {
-        if (s.points.isEmpty()) {
-            continue;
-        }
-        qsizetype inside = 0;
-        QPointF center;
-        for (const auto& p : s.points) {
-            const QPointF q(p.x, p.y);
-            center += q;
-            if (poly.containsPoint(q, Qt::OddEvenFill)) {
-                ++inside;
+    if (filter.ink) {
+        for (const auto& s : strokes) {
+            if (s.points.isEmpty()) {
+                continue;
+            }
+            qsizetype inside = 0;
+            QPointF center;
+            for (const auto& p : s.points) {
+                const QPointF q(p.x, p.y);
+                center += q;
+                if (poly.containsPoint(q, Qt::OddEvenFill)) {
+                    ++inside;
+                }
+            }
+            center /= double(s.points.size());
+            if (double(inside) / double(s.points.size()) >= 0.40
+                || poly.containsPoint(center, Qt::OddEvenFill)) {
+                strokeIds.insert(s.id);
             }
         }
-        center /= double(s.points.size());
-        if (double(inside) / double(s.points.size()) >= 0.40
-            || poly.containsPoint(center, Qt::OddEvenFill)) {
-            strokeIds.insert(s.id);
-        }
     }
-    for (const auto& s : shapes) {
-        if (s.vertices.isEmpty() || !s.shadeVisible) {
-            continue;
-        }
-        bool selected = poly.containsPoint(computeShapeBounds(s).center(), Qt::OddEvenFill);
-        for (const QPointF p : getShapeHandles(s)) {
-            selected = selected || poly.containsPoint(p, Qt::OddEvenFill);
-        }
-        if (selected) {
-            shapeIds.insert(s.id);
+    if (filter.shapes) {
+        for (const auto& s : shapes) {
+            if (s.vertices.isEmpty() || !s.shadeVisible) {
+                continue;
+            }
+            bool selected = poly.containsPoint(computeShapeBounds(s).center(), Qt::OddEvenFill);
+            for (const QPointF p : getShapeHandles(s)) {
+                selected = selected || poly.containsPoint(p, Qt::OddEvenFill);
+            }
+            if (selected) {
+                shapeIds.insert(s.id);
+            }
         }
     }
 }

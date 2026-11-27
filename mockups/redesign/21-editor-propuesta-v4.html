@@ -1,0 +1,1313 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finily — 21 · Propuesta integral del Editor (v4 interactiva)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Caveat:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 18px 20px 28px;
+    background: var(--background, #EFEEEB);
+    color: var(--foreground, #18181B);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 12.5px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .fn-shell { max-width: 1160px; margin: 0 auto; }
+  .fn-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .fn-head h1 { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 3px; }
+  .fn-head p { margin: 0; color: var(--muted-foreground, #52525B); font-size: 12px; max-width: 760px; line-height: 1.45; }
+
+  /* Controles de demostración (fuera de la ventana de Finily) */
+  .fn-tour {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    padding: 8px 10px; margin-bottom: 12px; border-radius: 12px;
+    background: var(--card, rgba(255,255,255,0.75));
+    border: 1px solid var(--border, rgba(15,23,42,0.08));
+  }
+  .fn-tour-lbl { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted-foreground, #71717A); margin-right: 4px; }
+  .fn-pill {
+    border: 1px solid rgba(15,23,42,0.1); background: rgba(255,255,255,0.85); color: #27272A;
+    font: 600 11px/1 'Inter', sans-serif; padding: 6px 10px; border-radius: 999px; cursor: pointer;
+    transition: transform .12s cubic-bezier(.22,1,.36,1), background .12s, color .12s;
+  }
+  .fn-pill:hover { background: #fff; transform: translateY(-1px); }
+  .fn-pill.on { background: #18181B; color: #FFFFFF; border-color: #18181B; }
+  .fn-sep { width: 1px; height: 18px; background: var(--border, rgba(15,23,42,0.12)); margin: 0 4px; }
+
+  /* Escalado responsivo del lienzo 1140x650 para verse nítido en chat y navegador */
+  .stage-outer { width: 100%; overflow: hidden; border-radius: 16px; box-shadow: 0 22px 48px -18px rgba(15,23,42,0.32), 0 4px 12px -2px rgba(15,23,42,0.08); }
+  .stage-scaler { width: 1140px; height: 650px; transform-origin: top left; }
+
+  /* ==================== TOKENS INTERNOS DEL EDITOR FINILY ==================== */
+  .ed {
+    --ed-bg: #FBFBFA;
+    --ed-desk-nb: #F1F1EF;
+    --ed-sheet: #FFFFFF;
+    --ed-grid: rgba(15, 23, 42, 0.055);
+    --ed-surface: rgba(255, 255, 255, 0.88);
+    --ed-surface-solid: #FFFFFF;
+    --ed-subtle: #F4F4F5;
+    --ed-tabs-bg: #F1F1EF;
+    --ed-border: rgba(15, 23, 42, 0.08);
+    --ed-border-soft: rgba(15, 23, 42, 0.06);
+    --ed-text: #18181B;
+    --ed-muted: #71717A;
+    --ed-icon: #3F3F46;
+    --ed-hover: rgba(24, 24, 27, 0.06);
+    --ed-accent: #18181B;
+    --ed-accent-fg: #FFFFFF;
+    --ed-shadow: 0 20px 46px -12px rgba(15,23,42,0.18), 0 5px 14px -3px rgba(15,23,42,0.07);
+    --ed-cap-shadow: 0 10px 26px -10px rgba(15,23,42,0.20), 0 2px 6px rgba(15,23,42,0.06);
+    --ed-danger: #DC2626;
+
+    position: relative; width: 1140px; height: 650px; overflow: hidden; user-select: none;
+    background: var(--ed-bg); color: var(--ed-text);
+    transition: background .25s ease, color .25s ease;
+  }
+  .ed.dark {
+    --ed-bg: #1A1B22;
+    --ed-desk-nb: #121318;
+    --ed-sheet: #20222B;
+    --ed-grid: rgba(255, 255, 255, 0.055);
+    --ed-surface: rgba(30, 31, 40, 0.90);
+    --ed-surface-solid: #1E1F28;
+    --ed-subtle: #2A2C38;
+    --ed-tabs-bg: #131419;
+    --ed-border: rgba(255, 255, 255, 0.09);
+    --ed-border-soft: rgba(255, 255, 255, 0.06);
+    --ed-text: #F4F4F5;
+    --ed-muted: #9397A5;
+    --ed-icon: #D4D4D8;
+    --ed-hover: rgba(244, 244, 245, 0.08);
+    --ed-accent: #F4F4F5;
+    --ed-accent-fg: #14151A;
+    --ed-shadow: 0 24px 52px -12px rgba(0,0,0,0.62), 0 6px 16px -3px rgba(0,0,0,0.35);
+    --ed-cap-shadow: 0 12px 28px -10px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.3);
+    --ed-danger: #F87171;
+  }
+
+  .ed svg.ic {
+    width: 17px; height: 17px; fill: none; stroke: currentColor;
+    stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0;
+  }
+
+  /* Fondos de pizarra y hoja de cuaderno */
+  .canvas-layer { position: absolute; inset: 0; z-index: 1; }
+  .ed.mode-nb { background: var(--ed-desk-nb); }
+  .tpl-grid {
+    background-image: linear-gradient(var(--ed-grid) 1px, transparent 1px), linear-gradient(90deg, var(--ed-grid) 1px, transparent 1px);
+  }
+  .tpl-dots {
+    background-image: radial-gradient(var(--ed-grid) 1.35px, transparent 1.35px);
+  }
+  .tpl-ruled {
+    background-image: repeating-linear-gradient(transparent 0 calc(var(--cell, 26px) - 1px), var(--ed-grid) calc(var(--cell, 26px) - 1px) var(--cell, 26px));
+  }
+  .nb-sheet {
+    position: absolute; left: 50%; top: 102px; width: 560px; height: 526px; transform: translateX(-50%);
+    background-color: var(--sheet-custom, var(--ed-sheet)); border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(15,23,42,0.08), 0 16px 36px -14px rgba(15,23,42,0.26);
+    overflow: hidden;
+  }
+
+  /* ==================== CABECERA 2 FILAS (PROPUESTA F REFINADA) ==================== */
+  .chrome-top {
+    position: absolute; left: 0; right: 0; top: 0; z-index: 10;
+    background: var(--ed-surface); backdrop-filter: blur(16px) saturate(1.35);
+    border-bottom: 1px solid var(--ed-border);
+  }
+  .tabs-row {
+    height: 38px; display: flex; align-items: flex-end; gap: 3px; padding: 4px 10px 0;
+    background: var(--ed-tabs-bg); border-bottom: 1px solid var(--ed-border-soft);
+  }
+  .tabs-row .ib { margin-bottom: 3px; }
+  .btab {
+    height: 32px; min-width: 110px; max-width: 188px; padding: 0 10px 0 11px;
+    border-radius: 10px 10px 0 0; display: flex; align-items: center; gap: 7px;
+    font-size: 11.5px; font-weight: 500; color: var(--ed-muted); cursor: pointer; position: relative;
+  }
+  .btab:hover { background: var(--ed-hover); color: var(--ed-text); }
+  .btab.on {
+    background: var(--ed-surface-solid); color: var(--ed-text); font-weight: 600;
+    box-shadow: 0 -1px 0 var(--ed-border), -1px 0 0 var(--ed-border), 1px 0 0 var(--ed-border);
+    margin-bottom: -1px; padding-bottom: 1px;
+  }
+  .btab .t-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .btab .unsaved { width: 6px; height: 6px; border-radius: 50%; background: #F59E0B; flex-shrink: 0; }
+  .btab .close-x { opacity: 0; width: 16px; height: 16px; border-radius: 5px; display: grid; place-items: center; }
+  .btab:hover .close-x, .btab.on .close-x { opacity: 0.65; }
+  .btab .close-x:hover { opacity: 1; background: var(--ed-hover); }
+
+  .bar-row {
+    height: 46px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; gap: 8px;
+  }
+  .bar-side { display: flex; align-items: center; gap: 2px; }
+  .bar-center { display: flex; align-items: center; gap: 2px; }
+
+  /* Botones icónicos unificados (mínimo 34-36px escritorio, escalable a 42px táctil) */
+  .ib {
+    width: 34px; height: 34px; border-radius: 9px; border: none; background: transparent;
+    color: var(--ed-icon); display: inline-grid; place-items: center; cursor: pointer; position: relative; padding: 0;
+    transition: background .12s ease, color .12s ease, transform .12s ease;
+  }
+  .ib:hover { background: var(--ed-hover); color: var(--ed-text); }
+  .ib:active { transform: scale(0.95); }
+  .ib.on { background: var(--ed-accent); color: var(--ed-accent-fg); }
+  .ib .sub-chev {
+    position: absolute; right: 3px; bottom: 3px; width: 5px; height: 5px; opacity: 0.5;
+    border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg);
+  }
+  .ib.pill-btn { width: auto; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; font: 600 11.5px 'Inter', sans-serif; }
+  .vdiv { width: 1px; height: 20px; background: var(--ed-border); margin: 0 4px; flex-shrink: 0; }
+  .hdiv { height: 1px; width: 22px; background: var(--ed-border); margin: 4px auto; }
+
+  .grip {
+    width: 10px; height: 22px; margin-right: 3px; cursor: grab; opacity: 0.45;
+    background-image: radial-gradient(currentColor 1.1px, transparent 1.2px); background-size: 4px 5px;
+    border-radius: 3px;
+  }
+  .grip:hover { opacity: 0.85; }
+
+  /* Grosores y colores rápidos en la barra (sincronizados 1:1 con los paneles) */
+  .wslot {
+    width: 30px; height: 28px; border-radius: 8px; border: none; background: transparent;
+    color: var(--ed-icon); display: grid; place-items: center; cursor: pointer; padding: 0;
+  }
+  .wslot:hover { background: var(--ed-hover); }
+  .wslot.on { background: var(--ed-accent); color: var(--ed-accent-fg); }
+  .wslot i { display: block; width: 15px; border-radius: 99px; background: currentColor; }
+
+  .cswatch {
+    width: 20px; height: 20px; border-radius: 50%; border: none; margin: 0 2px; cursor: pointer; padding: 0;
+    box-shadow: inset 0 0 0 1px rgba(15,23,42,0.14); transition: transform .12s ease;
+  }
+  .cswatch:hover { transform: scale(1.1); }
+  .cswatch.on { box-shadow: 0 0 0 2px var(--ed-surface-solid), 0 0 0 3.5px var(--ed-text); }
+  .cswatch.wheel {
+    background: conic-gradient(#E5484D, #F59E0B, #22A06B, #3B82F6, #8B5CF6, #EC4899, #E5484D);
+  }
+
+  /* Barra desacoplada a la izquierda o flotante abajo */
+  .dock-capsule {
+    position: absolute; z-index: 11; display: flex; align-items: center; gap: 2px; padding: 5px;
+    background: var(--ed-surface); backdrop-filter: blur(16px) saturate(1.4);
+    border: 1px solid var(--ed-border); border-radius: 14px; box-shadow: var(--ed-shadow);
+  }
+  .dock-capsule.left { left: 12px; top: 100px; flex-direction: column; }
+  .dock-capsule.float { left: 50%; bottom: 16px; transform: translateX(-50%); }
+
+  /* ==================== POPOVERS Y PANELES (CÁPSULAS PROPIAS) ==================== */
+  .pop {
+    position: absolute; z-index: 20; width: 318px; padding: 14px; border-radius: 16px;
+    background: var(--ed-surface-solid); border: 1px solid var(--ed-border);
+    box-shadow: var(--ed-shadow); color: var(--ed-text);
+    animation: popIn .16s cubic-bezier(.22,1,.36,1);
+  }
+  @keyframes popIn {
+    from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .pop-hd { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+  .pop-hd h3 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
+  .pop-hd .sub { font-size: 11.5px; font-weight: 600; color: var(--ed-muted); }
+  .kicker {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--ed-muted); margin: 12px 0 6px; display: flex; justify-content: space-between; align-items: center;
+  }
+  .kicker:first-child { margin-top: 0; }
+  .more-link {
+    display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 600;
+    color: var(--ed-muted); background: none; border: none; padding: 4px 2px; cursor: pointer;
+  }
+  .more-link:hover { color: var(--ed-text); }
+
+  /* Filas de punta con trazo real */
+  .tip-list { display: grid; gap: 5px; }
+  .tip-row {
+    display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 10px;
+    border: 1px solid var(--ed-border-soft); background: transparent; color: var(--ed-text);
+    cursor: pointer; font: 600 11.5px 'Inter', sans-serif; text-align: left;
+  }
+  .tip-row:hover { background: var(--ed-hover); }
+  .tip-row.on { border-color: var(--ed-accent); box-shadow: inset 0 0 0 1px var(--ed-accent); }
+  .tip-row span { width: 68px; flex-shrink: 0; }
+  .tip-row svg { width: 100%; height: 28px; display: block; }
+
+  /* Control ÚNICO de grosor (sincronizado con barra + deslizador fino al tocar el activo) */
+  .size-row { display: flex; align-items: center; gap: 6px; }
+  .size-dot {
+    width: 38px; height: 36px; border-radius: 10px; border: none; background: var(--ed-subtle);
+    color: var(--ed-icon); display: grid; place-items: center; cursor: pointer; padding: 0; position: relative;
+  }
+  .size-dot.on { background: var(--ed-accent); color: var(--ed-accent-fg); }
+  .size-dot i { border-radius: 50%; background: currentColor; display: block; }
+  .mm-badge {
+    margin-left: auto; font: 600 11px 'Inter', sans-serif; font-variant-numeric: tabular-nums;
+    padding: 5px 9px; border-radius: 999px; background: var(--ed-subtle); color: var(--ed-text);
+    border: none; cursor: pointer;
+  }
+  .fine-tune {
+    margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: var(--ed-subtle);
+    display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 600; color: var(--ed-muted);
+  }
+  .fine-tune input[type=range], .ed-range {
+    flex: 1; accent-color: var(--ed-accent); height: 4px; cursor: pointer;
+  }
+  .hint-txt { font-size: 10.5px; color: var(--ed-muted); margin-top: 5px; }
+
+  /* Segmentado y fichas */
+  .seg { display: flex; background: var(--ed-subtle); border-radius: 9px; padding: 2px; gap: 2px; }
+  .seg button {
+    flex: 1; border: none; background: transparent; color: var(--ed-muted);
+    font: 600 11px 'Inter', sans-serif; padding: 6px 6px; border-radius: 7px; cursor: pointer;
+  }
+  .seg button.on { background: var(--ed-surface-solid); color: var(--ed-text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    border: none; background: var(--ed-subtle); color: var(--ed-muted);
+    font: 600 11px 'Inter', sans-serif; padding: 6px 10px; border-radius: 999px; cursor: pointer;
+  }
+  .chip.on { background: var(--ed-accent); color: var(--ed-accent-fg); }
+
+  /* Cuadrículas visuales (Relleno, Figuras, Plantillas) */
+  .pat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .pat-card {
+    border: 1px solid var(--ed-border); border-radius: 10px; background: transparent; color: var(--ed-muted);
+    padding: 7px 6px; display: flex; flex-direction: column; align-items: center; gap: 4px;
+    font: 600 10.5px 'Inter', sans-serif; cursor: pointer;
+  }
+  .pat-card:hover { background: var(--ed-hover); }
+  .pat-card.on { border-color: var(--ed-accent); box-shadow: inset 0 0 0 1px var(--ed-accent); color: var(--ed-text); }
+
+  .shp-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+  .shp-btn {
+    height: 38px; border-radius: 9px; border: none; background: transparent; color: var(--ed-icon);
+    display: grid; place-items: center; cursor: pointer; padding: 0;
+  }
+  .shp-btn:hover { background: var(--ed-hover); color: var(--ed-text); }
+  .shp-btn.on { background: var(--ed-accent); color: var(--ed-accent-fg); }
+  .shp-btn svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* Panel lateral izquierdo: Elementos (compatible con Páginas a la derecha) */
+  .side-panel {
+    position: absolute; top: 92px; bottom: 12px; z-index: 15; width: 286px;
+    background: var(--ed-surface-solid); border: 1px solid var(--ed-border); border-radius: 16px;
+    box-shadow: var(--ed-shadow); padding: 12px; display: flex; flex-direction: column; gap: 9px;
+  }
+  .side-panel.left { left: 12px; }
+  .side-panel.right { right: 12px; width: 164px; }
+  .quick-insert { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+  .qi-btn {
+    border: 1px solid var(--ed-border); background: var(--ed-subtle); color: var(--ed-text);
+    border-radius: 9px; padding: 7px 4px; display: flex; align-items: center; justify-content: center; gap: 5px;
+    font: 600 11px 'Inter', sans-serif; cursor: pointer;
+  }
+  .qi-btn:hover { background: var(--ed-hover); border-color: var(--ed-text); }
+  .search-box {
+    display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-radius: 9px;
+    border: 1px solid var(--ed-border); background: var(--ed-subtle); color: var(--ed-muted);
+  }
+  .search-box input {
+    border: none; background: transparent; color: var(--ed-text); font: 500 11.5px 'Inter', sans-serif;
+    width: 100%; outline: none;
+  }
+  .el-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; overflow-y: auto; padding-right: 2px; flex: 1; }
+  .el-tile {
+    border: 1px solid var(--ed-border-soft); background: var(--ed-subtle); color: var(--ed-text);
+    border-radius: 10px; padding: 10px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 5px; font: 600 11px 'Inter', sans-serif; text-align: center; cursor: grab; min-height: 68px;
+  }
+  .el-tile:hover { border-color: var(--ed-accent); }
+  .dashed-cta {
+    border: 1px dashed var(--ed-border); background: transparent; color: var(--ed-muted);
+    border-radius: 10px; padding: 8px; font: 600 11px 'Inter', sans-serif; cursor: pointer; text-align: center;
+  }
+  .dashed-cta:hover { color: var(--ed-text); border-color: var(--ed-text); }
+
+  /* Miniaturas de páginas (derecha) */
+  .pg-item {
+    display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer;
+    font-size: 10.5px; font-weight: 600; color: var(--ed-muted);
+  }
+  .pg-thumb {
+    width: 92px; height: 118px; border-radius: 6px; background: var(--ed-sheet);
+    border: 1.5px solid var(--ed-border); box-shadow: 0 4px 10px -6px rgba(15,23,42,0.25);
+    position: relative; overflow: hidden;
+  }
+  .pg-item.on { color: var(--ed-text); }
+  .pg-item.on .pg-thumb { border-color: var(--ed-accent); box-shadow: 0 0 0 1px var(--ed-accent); }
+
+  /* Cápsulas contextuales flotantes sobre el lienzo (Figura recién creada / Selección / Texto) */
+  .ctx-bar {
+    position: absolute; z-index: 14; display: flex; align-items: center; gap: 3px; padding: 5px 6px;
+    border-radius: 12px; background: var(--ed-surface-solid); border: 1px solid var(--ed-border);
+    box-shadow: var(--ed-cap-shadow);
+  }
+
+  /* Modales centrados (Biblioteca común y ⚙ Ajustes globales del editor) */
+  .modal-veil {
+    position: absolute; inset: 0; z-index: 30; background: rgba(15, 23, 42, 0.28);
+    backdrop-filter: blur(2px); display: grid; place-items: center;
+  }
+  .modal-box {
+    width: 650px; height: 440px; border-radius: 18px; background: var(--ed-surface-solid);
+    border: 1px solid var(--ed-border); box-shadow: var(--ed-shadow);
+    display: flex; overflow: hidden; animation: popIn .18s cubic-bezier(.22,1,.36,1);
+  }
+  .modal-nav {
+    width: 176px; background: var(--ed-subtle); border-right: 1px solid var(--ed-border-soft);
+    padding: 14px 10px; display: flex; flex-direction: column; gap: 3px;
+  }
+  .modal-nav .nav-sec { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ed-muted); padding: 8px 8px 4px; }
+  .nav-it {
+    border: none; background: transparent; color: var(--ed-muted); text-align: left;
+    font: 600 12px 'Inter', sans-serif; padding: 7px 10px; border-radius: 8px; cursor: pointer;
+  }
+  .nav-it:hover { background: var(--ed-hover); color: var(--ed-text); }
+  .nav-it.on { background: var(--ed-accent); color: var(--ed-accent-fg); }
+  .modal-body { flex: 1; padding: 16px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+  .set-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 9px 0; border-bottom: 1px solid var(--ed-border-soft);
+  }
+  .set-row b { display: block; font-size: 12px; font-weight: 600; }
+  .set-row small { display: block; font-size: 11px; color: var(--ed-muted); margin-top: 2px; }
+  .sw-toggle {
+    width: 32px; height: 18px; border-radius: 99px; border: none; background: var(--ed-border);
+    position: relative; cursor: pointer; flex-shrink: 0; padding: 0;
+  }
+  .sw-toggle::after {
+    content: ''; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px;
+    border-radius: 50%; background: #FFFFFF; transition: transform .14s ease;
+  }
+  .sw-toggle.on { background: var(--ed-accent); }
+  .ed.dark .sw-toggle.on::after { background: #14151A; }
+  .sw-toggle.on::after { transform: translateX(14px); }
+
+  /* Resumen inferior de decisiones */
+  .fn-notes {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; margin-top: 14px;
+  }
+  .fn-card {
+    padding: 12px 14px; border-radius: 12px;
+    background: var(--card, #FFFFFF); border: 1px solid var(--border, rgba(15,23,42,0.08));
+    line-height: 1.45; font-size: 11.8px; color: var(--muted-foreground, #52525B);
+  }
+  .fn-card b { color: var(--foreground, #18181B); display: block; margin-bottom: 3px; font-size: 12.2px; }
+</style>
+</head>
+<body>
+<div class="fn-shell">
+  <div class="fn-head">
+    <div>
+      <h1>21 · Propuesta integral del Editor (v4 interactiva)</h1>
+      <p>Une tu barra de 2 filas (<b>14</b>), los iconos con tinta viva en la punta (<b>16A</b>) y los paneles limpios con un solo <b>⚙</b> global (<b>20</b>), resolviendo los huecos pendientes: grosores sincronizados barra↔panel, ajuste fino con un toque, <i>Imagen / PDF / Tabla</i> en Elementos, <i>Hoja / Páginas / Exportar</i> a la derecha y soporte PC + futura tablet.</p>
+    </div>
+  </div>
+
+  <!-- Tira rápida de pruebas interactivas -->
+  <div class="fn-tour" id="tourBar"></div>
+
+  <!-- Ventana simulada de Finily 1140 × 650 -->
+  <div class="stage-outer" id="stageOuter">
+    <div class="stage-scaler" id="stageScaler">
+      <div class="ed" id="edRoot"></div>
+    </div>
+  </div>
+
+  <div class="fn-notes">
+    <div class="fn-card">
+      <b>1. Orden limpio y contextual en la barra</b>
+      <span><code>Puntero · Mano · Lazo</code> van juntos al inicio (cuando están activos, grosores y colores se ocultan solos). <code>Pluma</code>, <code>Resaltador</code> y <code>Láser</code> recuerdan cada uno sus propios 3 grosores y 6 colores.</span>
+    </div>
+    <div class="fn-card">
+      <b>2. Grosores 1:1 y amigables con Wacom / Tablet</b>
+      <span>Los 3 grosores de la barra son exactamente los mismos 3 del panel. Tocar de nuevo el punto activo despliega ahí mismo el deslizador en <code>mm</code> (sin depender solo de mantener pulsado).</span>
+    </div>
+    <div class="fn-card">
+      <b>3. Cero funciones huérfanas</b>
+      <span><code>Elementos</code> a la izquierda suma arriba <b>Imagen · PDF · Tabla</b> y convive sin chocar con <b>Páginas</b> a la derecha. A la derecha vuelven <b>Hoja</b>, <b>Zoom</b>, <b>Exportar</b> y el único <b>⚙</b> global.</span>
+    </div>
+    <div class="fn-card">
+      <b>4. Trazo pegado a la figura y nombre visible</b>
+      <span>En <code>Figuras</code> la cuadrícula sigue sin texto, pero el subtítulo muestra cuál elegiste (útil en tablet sin cursor). Al soltar la figura sale su cápsula de línea/flechas/medidas.</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const IC = {
+  home: '<path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1z"/>',
+  board: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7.5 12c1.5-2 3-2 4.5 0s3 2 4.5 0"/>',
+  book: '<path d="M6 3.5h12a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z"/><path d="M8.5 3.5v17"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M6 12h12"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  chevR: '<path d="M9 6l6 6-6 6"/>',
+  fit: '<path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a5.5 5.5 0 0 1 0 11h-3"/>',
+  redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a5.5 5.5 0 0 0 0 11h3"/>',
+  sel: '<path d="M5.5 3.5l13 7.5-5.8 1.6-2.4 5.9z"/>',
+  hand: '<path d="M8 12.5V6a1.5 1.5 0 0 1 3 0v5M11 10.5V4.8a1.5 1.5 0 0 1 3 0v5.7M14 10.5V6.2a1.5 1.5 0 0 1 3 0v7.3a6.8 6.8 0 0 1-6.8 6.8h-.7a6 6 0 0 1-5-2.7l-2.2-3.6a1.5 1.5 0 0 1 2.5-1.7L8 15"/>',
+  lasso: '<ellipse cx="12" cy="10.5" rx="8.5" ry="5.5" stroke-dasharray="3 2.6"/><path d="M8 15.5c-1 1.5-.5 3.4 1.4 4.2"/><circle cx="9.8" cy="20" r="1.2" fill="currentColor"/>',
+  er: '<path d="M8.5 19.5 3.8 14.8a1.6 1.6 0 0 1 0-2.3l8.7-8.7a1.6 1.6 0 0 1 2.3 0l5.4 5.4a1.6 1.6 0 0 1 0 2.3L12 19.5z"/><path d="M8 10l6.5 6.5"/><path d="M12 19.5h8"/>',
+  fill: '<path d="m5 11 7-7 7 7-7 7z"/><path d="M19 14.8s2.2 2.3 2.2 3.7a2.2 2.2 0 0 1-4.4 0c0-1.4 2.2-3.7 2.2-3.7z"/>',
+  shapes: '<path d="M7.2 3.8l4.2 7.2H3z"/><circle cx="17" cy="7.4" r="3.6"/><rect x="5" y="13.5" width="14" height="6.8" rx="1.5"/>',
+  text: '<path d="M4.5 7V4.5h15V7"/><path d="M12 4.5v15"/><path d="M9 19.5h6"/>',
+  el: '<rect x="3.5" y="3.5" width="7.2" height="7.2" rx="1.6"/><circle cx="16.8" cy="7.1" r="3.6"/><path d="M3.8 20l3.6-6.2L11 20z"/><rect x="13.5" y="13.5" width="6.8" height="6.8" rx="1.4"/>',
+  laser: '<path d="m4.5 19.5 10.5-10.5"/><circle cx="17.2" cy="6.8" r="2.8"/><path d="M17.2 2v1.5M22 6.8h-1.5M13.5 3.2l1 1M20.8 10.5l-1-1"/>',
+  pages: '<rect x="4" y="3.5" width="12" height="15" rx="2"/><path d="M8 21h10a2 2 0 0 0 2-2V7.5"/>',
+  paper: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4.5"/>',
+  export: '<path d="M12 14.5V3.5M7.8 7.5 12 3.3l4.2 4.2"/><path d="M4.5 14.5v4a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 2.9-1.2V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.2 4.2"/>',
+  img: '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="m3.5 17 5-4.5 3.5 3 3-2.5 5.5 4.5"/>',
+  pdf: '<path d="M6 3h8l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M14 3v5h5"/><path d="M8 15h8M8 11.5h4"/>',
+  table: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9.2 4.5v15M14.8 4.5v15"/>',
+  copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/>',
+  trash: '<path d="M4.5 7h15M9.5 11v5.5M14.5 11v5.5M6.5 7l.8 11.5a2 2 0 0 0 2 1.8h5.4a2 2 0 0 0 2-1.8L17.5 7M9 7V4.5h6V7"/>',
+  more: '<circle cx="6" cy="12" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="18" cy="12" r="1.2" fill="currentColor"/>'
+};
+
+function svg(k, extra = '') {
+  return `<svg class="ic" viewBox="0 0 24 24" ${extra}>${IC[k] || ''}</svg>`;
+}
+function penIcon(color) {
+  return `<svg class="ic" viewBox="0 0 24 24"><path d="M15.5 3.5l5 5L9 20H4v-5z"/><path d="M13 6l5 5"/><path d="M4 20l3.4-.6L4.6 16.6z" fill="${color}" stroke="${color}"/></svg>`;
+}
+function hlIcon(color) {
+  return `<svg class="ic" viewBox="0 0 24 24"><path d="M14 3.5l6.5 6.5-7 7-6.5-6.5z"/><path d="M7 10.5l6.5 6.5-2 2H8l-2.5-2.5v-3.5z"/><path d="M4 21h7.5" stroke="${color}" stroke-width="3"/></svg>`;
+}
+
+const SHAPES = [
+  ['Básicas', [
+    ['Línea', '<path d="M5 19 19 5"/>'],
+    ['Flecha', '<path d="M5 19 19 5M11 5h8v8"/>'],
+    ['Círculo', '<circle cx="12" cy="12" r="7.5"/>'],
+    ['Elipse', '<ellipse cx="12" cy="12" rx="8.5" ry="5.5"/>'],
+    ['Triángulo', '<path d="M12 4.5 20 19H4z"/>'],
+    ['Rectángulo', '<rect x="4" y="6" width="16" height="12" rx="1.2"/>']
+  ]],
+  ['Matemáticas', [
+    ['Polilínea', '<path d="M4 18 9 8l5 7 6-10"/>'],
+    ['Curva', '<path d="M4 18C8 4 16 4 20 18"/>'],
+    ['Ejes', '<path d="M5 3.5v15.5h15.5"/>'],
+    ['Radical', '<path d="M3 13h3l3 7 5-16h7"/>'],
+    ['Llave', '<path d="M10 4c-3 0-2 8-5 8 3 0 2 8 5 8"/>'],
+    ['Polígono', '<path d="M12 3.5 19.5 9l-2.8 9.5H7.3L4.5 9z"/>']
+  ]],
+  ['Medidas', [
+    ['Ángulo recto', '<path d="M5 5v14h14M5 14h5v5"/>'],
+    ['Ángulo', '<path d="M4 19h16M4 19 17 6M10.5 19a6.5 6.5 0 0 0-2-4.6"/>'],
+    ['Arco', '<path d="M4 17a9 9 0 0 1 16 0"/>'],
+    ['Sector', '<path d="M12 18 4.5 10.5a10.6 10.6 0 0 1 15 0z"/>'],
+    ['Cota', '<path d="M4 8v8M20 8v8M4 12h16"/>']
+  ]],
+  ['Sólidos 3D', [
+    ['Cubo', '<path d="M4 8l8-4 8 4v9l-8 4-8-4zM4 8l8 4 8-4M12 12v9"/>'],
+    ['Cilindro', '<ellipse cx="12" cy="6.5" rx="7" ry="2.5"/><path d="M5 6.5v11c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-11"/>'],
+    ['Cono', '<path d="M12 3.5 5 18M12 3.5l7 14.5"/><ellipse cx="12" cy="18" rx="7" ry="2.5"/>'],
+    ['Esfera', '<circle cx="12" cy="12" r="8"/><ellipse cx="12" cy="12" rx="8" ry="3"/>'],
+    ['Pirámide', '<path d="M12 3.5 4.5 17.5 12 20.5l7.5-3zM12 3.5v17"/>']
+  ]]
+];
+
+const S = {
+  dark: false,
+  docMode: 'board', // 'board' | 'nb'
+  dock: 'top',      // 'top' | 'left' | 'float'
+  activeTab: 1,
+  tabs: [
+    { kind: 'book', title: 'Física · Dinámica', dirty: false },
+    { kind: 'board', title: 'Plano inclinado (clase)', dirty: true },
+    { kind: 'book', title: 'Cálculo II', dirty: false }
+  ],
+  tool: 'pen',
+  panel: 'pen',     // 'pen'|'hl'|'er'|'fill'|'lasso'|'shapes'|'laser'|'paper'|'export'|'color'|null
+  elementsOpen: false,
+  pagesOpen: false,
+  modal: null,      // 'library' | 'settings' | null
+  libCat: 'Escritura',
+  setCat: 'Escritura',
+  fineTuneOpen: false,
+  ctxDemo: 'none',  // 'none' | 'shape' | 'lasso' | 'text'
+
+  // Estado independiente por herramienta
+  penTip: 0,
+  penSlot: 1,
+  penWidths: [1.2, 2.4, 4.5],
+  penColor: 0,
+  penPalette: ['#18181B', '#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED'],
+
+  hlSlot: 1,
+  hlWidths: [6.0, 10.0, 16.0],
+  hlOpacity: 40,
+  hlColor: 0,
+  hlPalette: ['#FACC15', '#86EFAC', '#93C5FD', '#F9A8D4', '#FDBA74', '#C4B5FD'],
+
+  erMode: 0,
+  erSlot: 1,
+  erWidths: [8.0, 16.0, 28.0],
+  erTargets: { ink: true, hl: true, shapes: false },
+
+  fillMode: 0,
+  fillPat: 1,
+  fillOpacity: 30,
+
+  lassoMode: 0,
+  lassoTargets: { ink: true, shapes: true, media: true },
+
+  shapeName: 'Triángulo',
+  shapeLine: 0,
+  showAngles: true,
+
+  laserMode: 1,
+  laserColor: 0,
+  laserPalette: ['#EF4444', '#22C55E', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6'],
+
+  elCat: 'Fórmulas',
+  elQuery: '',
+
+  tpl: 'grid', // 'blank'|'grid'|'dots'|'ruled'
+  mm: 5,
+  sheetColor: '',
+  zoom: 100,
+  activePage: 1,
+
+  cfg: {
+    pressure: true,
+    pressureProfile: 1,
+    smooth: 1,
+    holdShape: true,
+    mathBeauty: true,
+    smartGuides: true,
+    autoMeasures: false,
+    hlBehind: true,
+    hlStraight: true,
+    stylusEraser: true,
+    twoFingerPan: true
+  }
+};
+
+function currentPalette() {
+  if (S.tool === 'hl') return [S.hlPalette, S.hlColor];
+  if (S.tool === 'laser') return [S.laserPalette, S.laserColor];
+  const pal = [...S.penPalette];
+  if (S.dark && pal[0] === '#18181B') pal[0] = '#F4F4F5';
+  return [pal, S.penColor];
+}
+function currentSlots() {
+  if (S.tool === 'hl') return [S.hlWidths, S.hlSlot, 'mm'];
+  if (S.tool === 'er') return [S.erWidths, S.erSlot, 'mm'];
+  return [S.penWidths, S.penSlot, 'mm'];
+}
+function usesInkBar() {
+  return !['sel', 'hand', 'lasso', 'er', 'el'].includes(S.tool);
+}
+
+function selectTool(t) {
+  if (t === 'el') {
+    S.elementsOpen = !S.elementsOpen;
+    S.panel = null;
+    render();
+    return;
+  }
+  if (S.tool === t) {
+    if (['pen', 'hl', 'er', 'fill', 'lasso', 'shapes', 'laser'].includes(t)) {
+      S.panel = (S.panel === t) ? null : t;
+    }
+  } else {
+    S.tool = t;
+    S.fineTuneOpen = false;
+    if (['pen', 'hl', 'er', 'fill', 'lasso', 'shapes', 'laser'].includes(t)) {
+      S.panel = t;
+    } else {
+      S.panel = null;
+    }
+    if (t === 'shapes') S.ctxDemo = 'shape';
+    else if (t === 'text') S.ctxDemo = 'text';
+    else if (t === 'sel' || t === 'lasso') S.ctxDemo = 'lasso';
+    else S.ctxDemo = 'none';
+  }
+  render();
+}
+
+function setPresetScene(kind) {
+  S.modal = null;
+  S.fineTuneOpen = false;
+  if (kind === 'pen') { S.tool = 'pen'; S.panel = 'pen'; S.ctxDemo = 'none'; }
+  else if (kind === 'hl') { S.tool = 'hl'; S.panel = 'hl'; S.ctxDemo = 'none'; }
+  else if (kind === 'er') { S.tool = 'er'; S.panel = 'er'; S.ctxDemo = 'none'; }
+  else if (kind === 'fill') { S.tool = 'fill'; S.panel = 'fill'; S.ctxDemo = 'none'; }
+  else if (kind === 'shapes') { S.tool = 'shapes'; S.panel = 'shapes'; S.ctxDemo = 'shape'; }
+  else if (kind === 'dual') { S.docMode = 'nb'; S.elementsOpen = true; S.pagesOpen = true; S.panel = null; S.ctxDemo = 'none'; }
+  else if (kind === 'paper') { S.panel = 'paper'; }
+  else if (kind === 'library') { S.panel = null; S.modal = 'library'; }
+  else if (kind === 'settings') { S.panel = null; S.modal = 'settings'; }
+  render();
+}
+
+function renderSizeControl(accentCol) {
+  const [ws, idx, unit] = currentSlots();
+  const min = S.tool === 'er' ? 4 : (S.tool === 'hl' ? 4 : 0.5);
+  const max = S.tool === 'er' ? 40 : (S.tool === 'hl' ? 24 : 8.0);
+  const step = S.tool === 'pen' ? 0.2 : 1;
+  return `
+    <div class="kicker"><span>Grosor (sincronizado con barra)</span></div>
+    <div class="size-row">
+      ${ws.map((w, i) => {
+        const px = Math.max(4, Math.min(20, S.tool === 'pen' ? w * 2.6 : w * 0.65));
+        return `<button class="size-dot ${i === idx ? 'on' : ''}" onclick="clickSizeSlot(${i})" title="Toca de nuevo para ajustar mm">
+          <i style="width:${px}px;height:${px}px;${i !== idx && accentCol ? `background:${accentCol}` : ''}"></i>
+        </button>`;
+      }).join('')}
+      <button class="mm-badge" onclick="S.fineTuneOpen=!S.fineTuneOpen;render()">${ws[idx].toFixed(S.tool === 'pen' ? 1 : 0)} ${unit} ▾</button>
+    </div>
+    ${S.fineTuneOpen ? `
+      <div class="fine-tune">
+        <span>${min}</span>
+        <input type="range" min="${min}" max="${max}" step="${step}" value="${ws[idx]}" oninput="updateSlotWidth(this.value)">
+        <span>${max} ${unit}</span>
+      </div>` : `<div class="hint-txt">Toca el punto activo o la medida para ajustar los mm exactos</div>`}
+  `;
+}
+
+window.clickSizeSlot = (i) => {
+  if (S.tool === 'hl') {
+    if (S.hlSlot === i) S.fineTuneOpen = !S.fineTuneOpen; else { S.hlSlot = i; }
+  } else if (S.tool === 'er') {
+    if (S.erSlot === i) S.fineTuneOpen = !S.fineTuneOpen; else { S.erSlot = i; }
+  } else {
+    if (S.penSlot === i) S.fineTuneOpen = !S.fineTuneOpen; else { S.penSlot = i; }
+  }
+  render();
+};
+
+window.updateSlotWidth = (val) => {
+  const v = parseFloat(val);
+  if (S.tool === 'hl') S.hlWidths[S.hlSlot] = v;
+  else if (S.tool === 'er') S.erWidths[S.erSlot] = v;
+  else S.penWidths[S.penSlot] = v;
+  render();
+};
+
+function renderToolsCluster(vertical = false) {
+  const [pal, cIdx] = currentPalette();
+  const activePenCol = (S.dark && S.penPalette[S.penColor] === '#18181B') ? '#F4F4F5' : S.penPalette[S.penColor];
+  const activeHlCol = S.hlPalette[S.hlColor];
+  const sep = vertical ? '<div class="hdiv"></div>' : '<div class="vdiv"></div>';
+  const hasPanel = ['pen', 'hl', 'er', 'fill', 'lasso', 'shapes', 'laser'];
+
+  const btn = (id, label, iconHtml, forcedOn = false) => {
+    const isOn = forcedOn || (id !== 'el' && S.tool === id);
+    return `<button class="ib ${isOn ? 'on' : ''}" title="${label}" onclick="selectTool('${id}')">
+      ${iconHtml}${hasPanel.includes(id) ? '<span class="sub-chev"></span>' : ''}
+    </button>`;
+  };
+
+  return `
+    <div class="grip" title="Clic para probar anclaje: Arriba / Izquierda / Flotante" onclick="cycleDock()"></div>
+    ${btn('sel', 'Puntero (V)', svg('sel'))}
+    ${btn('hand', 'Mano / Mover lienzo (Espacio)', svg('hand'))}
+    ${btn('lasso', 'Lazo múltiple (L)', svg('lasso'))}
+    ${sep}
+    ${btn('pen', 'Pluma (P)', penIcon(activePenCol))}
+    ${btn('hl', 'Resaltador (H)', hlIcon(activeHlCol))}
+    ${btn('er', 'Borrador (E)', svg('er'))}
+    ${btn('fill', 'Relleno y tramos (G)', svg('fill'))}
+    ${sep}
+    ${btn('shapes', 'Figuras (S)', svg('shapes'))}
+    ${btn('text', 'Texto (T)', svg('text'))}
+    ${btn('el', 'Elementos, Imagen, PDF y Tabla', svg('el'), S.elementsOpen)}
+    ${btn('laser', 'Puntero láser', svg('laser'))}
+    ${!vertical && usesInkBar() ? `
+      ${sep}
+      ${(() => {
+        const [ws, idx] = currentSlots();
+        return ws.map((w, i) => {
+          const h = Math.max(2, Math.min(8, S.tool === 'hl' ? w * 0.45 : w * 1.15));
+          return `<button class="wslot ${i === idx ? 'on' : ''}" title="${w} mm" onclick="clickBarWidth(${i})"><i style="height:${h}px"></i></button>`;
+        }).join('');
+      })()}
+      ${sep}
+      ${pal.map((c, i) => `<button class="cswatch ${i === cIdx ? 'on' : ''}" style="background:${c}" onclick="pickColor(${i})"></button>`).join('')}
+      <button class="cswatch wheel ${S.panel === 'color' ? 'on' : ''}" title="Selector de color propio" onclick="S.panel=(S.panel==='color'?null:'color');render()"></button>
+    ` : ''}
+  `;
+}
+
+window.clickBarWidth = (i) => {
+  if (S.tool === 'hl') S.hlSlot = i;
+  else S.penSlot = i;
+  render();
+};
+window.pickColor = (i) => {
+  if (S.tool === 'hl') S.hlColor = i;
+  else if (S.tool === 'laser') S.laserColor = i;
+  else S.penColor = i;
+  render();
+};
+window.cycleDock = () => {
+  S.dock = S.dock === 'top' ? 'left' : (S.dock === 'left' ? 'float' : 'top');
+  render();
+};
+
+function renderPopover() {
+  if (!S.panel) return '';
+  const [pal, cIdx] = currentPalette();
+  const ink = pal[cIdx];
+  const wave = 'M8 20c24-22 44 12 72-3s36-16 64-3 44 10 80-11';
+  const baseTop = S.dock === 'float' ? 'auto;bottom:76px' : '92px';
+  const leftAnchor = S.dock === 'left' ? 68 : 310;
+
+  if (S.panel === 'pen') {
+    const tips = [
+      ['Pluma', `<path d="${wave}" fill="none" stroke="${ink}" stroke-width="3.6" stroke-linecap="round"/>`],
+      ['Bolígrafo', `<path d="${wave}" fill="none" stroke="${ink}" stroke-width="1.8" stroke-linecap="round"/>`],
+      ['Grafito', `<path d="${wave}" fill="none" stroke="${ink}" stroke-width="2.3" stroke-dasharray="1.3 1.7" opacity=".82" stroke-linecap="round"/>`],
+      ['Marcador', `<path d="${wave}" fill="none" stroke="${ink}" stroke-width="5.4" stroke-linecap="butt" opacity=".9"/>`]
+    ];
+    return `<div class="pop" style="top:${baseTop};left:${leftAnchor}px" onclick="event.stopPropagation()">
+      <div class="pop-hd"><h3>Pluma</h3><button class="more-link" onclick="S.panel=null;S.modal='library';S.libCat='Escritura';render()">Más puntas ${svg('chevR','style="width:13px;height:13px"')}</button></div>
+      <div class="tip-list">
+        ${tips.map((t, i) => `<button class="tip-row ${S.penTip === i ? 'on' : ''}" onclick="S.penTip=${i};render()"><span>${t[0]}</span><svg viewBox="0 0 232 28">${t[1]}</svg></button>`).join('')}
+      </div>
+      ${renderSizeControl(ink)}
+    </div>`;
+  }
+
+  if (S.panel === 'hl') {
+    return `<div class="pop" style="top:${baseTop};left:${leftAnchor + 34}px;width:296px" onclick="event.stopPropagation()">
+      <div class="pop-hd"><h3>Resaltador</h3><span class="sub">${S.hlOpacity} %</span></div>
+      <div class="kicker"><span>Opacidad</span></div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input class="ed-range" type="range" min="15" max="75" step="5" value="${S.hlOpacity}" oninput="S.hlOpacity=+this.value;render()">
+      </div>
+      ${renderSizeControl(ink)}
+    </div>`;
+  }
+
+  if (S.panel === 'er') {
+    return `<div class="pop" style="top:${baseTop};left:${leftAnchor + 68}px;width:308px" onclick="event.stopPropagation()">
+      <div class="pop-hd"><h3>Borrador</h3></div>
+      <div class="seg">
+        <button class="${S.erMode === 0 ? 'on' : ''}" onclick="S.erMode=0;render()">Trazo completo</button>
+        <button class="${S.erMode === 1 ? 'on' : ''}" onclick="S.erMode=1;render()">Solo lo que toco</button>
+      </div>
+      ${renderSizeControl()}
+      <div class="kicker"><span>Qué borra</span></div>
+      <div class="chips">
+        <button class="chip ${S.erTargets.ink ? 'on' : ''}" onclick="S.erTargets.ink=!S.erTargets.ink;render()">Tinta</button>
+        <button class="chip ${S.erTargets.hl ? 'on' : ''}" onclick="S.erTargets.hl=!S.erTargets.hl;render()">Resaltador</button>
+        <button class="chip ${S.erTargets.shapes ? 'on' : ''}" onclick="S.erTargets.shapes=!S.erTargets.shapes;render()">Figuras</button>
+      </div>
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--ed-border-soft)">
+        <button style="border:none;background:none;color:var(--ed-danger);font:600 11.5px Inter;cursor:pointer;padding:0" onclick="S.panel=null;render()">Limpiar toda la página…</button>
+      </div>
+    </div>`;
+  }
+
+  if (S.panel === 'fill') {
+    const pats = ['Suave', 'Diagonal', 'Puntos', 'Sólido', 'Cruzado', 'Cuadrícula'];
+    const patSvg = (i) => {
+      const c = ink;
+      const body = [
+        `<rect width="56" height="34" fill="${c}" opacity=".22"/>`,
+        `<g stroke="${c}" stroke-width="1.4">${Array.from({length:10},(_,k)=>`<path d="M${k*8-16} 34 L${k*8+16} 0"/>`).join('')}</g>`,
+        `<g fill="${c}">${Array.from({length:28},(_,k)=>`<circle cx="${5+(k%7)*7.5}" cy="${5+Math.floor(k/7)*8}" r="1.4"/>`).join('')}</g>`,
+        `<rect width="56" height="34" fill="${c}" opacity=".75"/>`,
+        `<g stroke="${c}" stroke-width="1.1">${Array.from({length:10},(_,k)=>`<path d="M${k*8-16} 34 L${k*8+16} 0M${k*8-16} 0 L${k*8+16} 34"/>`).join('')}</g>`,
+        `<g stroke="${c}" stroke-width="1.1">${Array.from({length:8},(_,k)=>`<path d="M${k*7.5} 0V34M0 ${k*7}H56"/>`).join('')}</g>`
+      ][i];
+      return `<svg viewBox="0 0 56 34" width="56" height="34"><clipPath id="fp${i}"><path d="M6 30 L50 30 L50 5Z"/></clipPath><g clip-path="url(#fp${i})">${body}</g><path d="M6 30 L50 30 L50 5Z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>`;
+    };
+    return `<div class="pop" style="top:${baseTop};left:${leftAnchor + 95}px;width:332px" onclick="event.stopPropagation()">
+      <div class="pop-hd"><h3>Relleno</h3><span class="sub">${S.fillMode === 0 ? 'Área cerrada' : 'Resaltar lado'}</span></div>
+      <div class="seg" style="margin-bottom:10px">
+        <button class="${S.fillMode === 0 ? 'on' : ''}" onclick="S.fillMode=0;render()">Región</button>
+        <button class="${S.fillMode === 1 ? 'on' : ''}" onclick="S.fillMode=1;render()">Tramo / Arco</button>
+      </div>
+      <div class="pat-grid">
+        ${pats.map((n, i) => `<button class="pat-card ${S.fillPat === i ? 'on' : ''}" onclick="S.fillPat=${i};render()">${patSvg(i)}<span>${n}</span></button>`).join('')}
+      </div>
+      <div class="kicker"><span>Opacidad</span><span>${S.fillOpacity} %</span></div>
+      <input class="ed-range" style="width:100%" type="range" min="10" max="90" step="5" value="${S.fillOpacity}" oninput="S.fillOpacity=+this.value;render()">
+    </div>`;
+  }
+
+  if (S.panel === 'lasso') {
+    return `<div class="pop" style="top:${baseTop};left:${leftAnchor - 40}px;width:276px" onclick="event.stopPropagation()">
+      <div class="pop-hd"><h3>Lazo</h3></div>
+      <div class="seg">
+        <button class="${S.lassoMode === 0 ? 'on' : ''}" onclick="S.lassoMode=0;render()">Libre</button>
+        <button class="${S.lassoMode === 1 ? 'on' : ''}" onclick="S.lassoMode=1;render()">Rectángulo</button>
+      </div>
+      <div class="kicker"><span>Qué selecciona</span></div>
+      <div class="chips">
+        <button class="chip ${S.lassoTargets.ink ? 'on' : ''}" onclick="S.lassoTargets.ink=!S.lassoTargets.ink;render()">Escritura</button>
+        <button class="chip ${S.lassoTargets.shapes ? 'on' : ''}" onclick="S.lassoTargets.shapes=!S.lassoTargets.shapes;render()">Figuras</button>
+        <button class="chip ${S.lassoTargets.media ? 'on' : ''}" onclick="S.lassoTargets.media=!S.lassoTargets.media;render()">Texto e imágenes</button>
+      </div>
+    </div>`;
+  }
+
+  if (S.panel === 'shapes') {
+    return `<div class="pop" style="top:${baseTop};left:${leftAnchor + 110}px;width:304px" onclick="event.stopPropagation()">
+      <div class="pop-hd"><h3>Figuras</h3><span class="sub">${S.shapeName}</span></div>
+      ${SHAPES.map(([grpName, items]) => `
+        <div class="kicker"><span>${grpName}</span></div>
+        <div class="shp-grid">
+          ${items.map(([name, path]) => `<button class="shp-btn ${S.shapeName === name ? 'on' : ''}" title="${name}" onclick="S.shapeName='${name}';S.ctxDemo='shape';render()"><svg viewBox="0 0 24 24">${path}</svg></button>`).join('')}
+        </div>
+      `).join('')}
+      <div style="display:flex;justify-content:flex-end;margin-top:8px">
+        <button class="more-link" onclick="S.panel=null;S.modal='library';S.libCat='Figuras';render()">Más figuras (troncos, octaedro…) ${svg('chevR','style="width:13px;height:13px"')}</button>
+      </div>
+    </div>`;
+  }
+
+  if (S.panel === 'laser') {
+    return `<div class="pop" style="top:${baseTop};left:${leftAnchor + 210}px;width:224px" onclick="event.stopPropagation()">
+      <div class="pop-hd"><h3>Láser</h3></div>
+      <div class="seg">
+        <button class="${S.laserMode === 0 ? 'on' : ''}" onclick="S.laserMode=0;render()">Punto</button>
+        <button class="${S.laserMode === 1 ? 'on' : ''}" onclick="S.laserMode=1;render()">Estela</button>
+      </div>
+      <div class="hint-txt">La duración de la estela se ajusta en ⚙</div>
+    </div>`;
+  }
+
+  if (S.panel === 'color') {
+    return `<div class="pop" style="top:92px;left:560px;width:264px" onclick="event.stopPropagation()">
+      <div class="pop-hd"><h3>Color personalizado</h3><span class="sub">${ink}</span></div>
+      <div style="height:112px;border-radius:10px;background:linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,${ink});position:relative;border:1px solid var(--ed-border)">
+        <span style="position:absolute;right:22px;top:18px;width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)"></span>
+      </div>
+      <div style="height:12px;border-radius:99px;margin:10px 0;background:linear-gradient(90deg,#EF4444,#F59E0B,#22C55E,#06B6D4,#3B82F6,#8B5CF6,#EC4899,#EF4444)"></div>
+      <div class="kicker"><span>Tonos rápidos</span></div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">
+        ${['#0F172A','#0284C7','#0D9488','#65A30D','#EA580C','#E11D48','#9333EA'].map(c => `<button class="cswatch" style="background:${c};margin:0" onclick="replaceActiveSwatch('${c}')"></button>`).join('')}
+      </div>
+      <div class="hint-txt" style="margin-top:8px">Sustituye el círculo seleccionado en la barra</div>
+    </div>`;
+  }
+
+  if (S.panel === 'paper') {
+    const tones = S.dark
+      ? ['#1A1B22', '#13241B', '#18202C', '#23201E', '#FFFFFF', '#FBF7EE']
+      : ['#FFFFFF', '#FBF7EE', '#F4F6F8', '#EEF5F0', '#1A1B22', '#152A20'];
+    const tpls = [
+      ['blank', `<rect x="4" y="4" width="44" height="30" rx="3" fill="none" stroke="currentColor" stroke-opacity=".25"/>`],
+      ['grid', `<g stroke="currentColor" stroke-opacity=".35" stroke-width="1"><path d="M14 4v30M26 4v30M38 4v30M4 12h44M4 20h44M4 28h44"/></g>`],
+      ['dots', `<g fill="currentColor" fill-opacity=".45">${Array.from({length:15},(_,k)=>`<circle cx="${10+(k%5)*8}" cy="${9+Math.floor(k/5)*8}" r="1.2"/>`).join('')}</g>`],
+      ['ruled', `<g stroke="currentColor" stroke-opacity=".35" stroke-width="1"><path d="M4 11h44M4 18h44M4 25h44M4 32h44"/></g>`]
+    ];
+    return `<div class="pop" style="top:92px;right:16px;width:296px" onclick="event.stopPropagation()">
+      <div class="pop-hd"><h3>Hoja y fondo</h3><span class="sub">${S.docMode === 'nb' ? 'Cuaderno A4' : 'Pizarra ∞'}</span></div>
+      <div class="seg" style="margin-bottom:10px">
+        <button class="${S.docMode === 'board' ? 'on' : ''}" onclick="S.docMode='board';render()">Pizarra infinita</button>
+        <button class="${S.docMode === 'nb' ? 'on' : ''}" onclick="S.docMode='nb';render()">Cuaderno con hojas</button>
+      </div>
+      <div class="kicker"><span>Color de hoja</span></div>
+      <div style="display:flex;align-items:center;gap:6px">
+        ${tones.map(c => `<button class="cswatch ${S.sheetColor === c ? 'on' : ''}" style="background:${c}" onclick="S.sheetColor='${c}';render()"></button>`).join('')}
+      </div>
+      <div class="kicker"><span>Plantilla (muestra neutra fija)</span></div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+        ${tpls.map(([id, g]) => `<button class="pat-card ${S.tpl === id ? 'on' : ''}" onclick="S.tpl='${id}';render()"><svg viewBox="0 0 52 38" width="52" height="38">${g}</svg></button>`).join('')}
+      </div>
+      <div class="kicker"><span>Trama</span><span>${S.mm} mm</span></div>
+      <div class="seg">
+        ${[4, 5, 7, 10].map(m => `<button class="${S.mm === m ? 'on' : ''}" onclick="S.mm=${m};render()">${m} mm</button>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  if (S.panel === 'export') {
+    return `<div class="pop" style="top:92px;right:12px;width:248px;padding:8px" onclick="event.stopPropagation()">
+      ${[
+        ['pdf', 'Exportar a PDF vectorial…', 'Ctrl+E'],
+        ['img', 'Guardar página como PNG…', ''],
+        ['book', 'Guardar copia .finily…', 'Ctrl+S']
+      ].map(([icName, lbl, kb]) => `
+        <button class="tip-row" style="width:100%;border:none;justify-content:space-between;padding:8px 10px" onclick="S.panel=null;render()">
+          <span style="display:flex;align-items:center;gap:8px;width:auto">${svg(icName)} ${lbl}</span>
+          <small style="color:var(--ed-muted)">${kb}</small>
+        </button>
+      `).join('')}
+    </div>`;
+  }
+  return '';
+}
+
+window.replaceActiveSwatch = (col) => {
+  if (S.tool === 'hl') S.hlPalette[S.hlColor] = col;
+  else if (S.tool === 'laser') S.laserPalette[S.laserColor] = col;
+  else S.penPalette[S.penColor] = col;
+  S.panel = null;
+  render();
+};
+
+function renderElementsPanel() {
+  if (!S.elementsOpen) return '';
+  const itemsByCat = {
+    'Fórmulas': ['a² + b² = c²', 'ΣF = m · a', 'v = v₀ + a·t', 'x = (−b ± √Δ)/2a', 'E = m·c²', 'P·V = n·R·T'],
+    'Geometría': ['Triángulo 30°-60°', 'Circunferencia unit.', 'Ángulos entre paralelas', 'Prisma recto'],
+    'Física': ['Plano inclinado', 'Resorte + masa', 'Polea ideal', 'Circuito RC'],
+    'Química': ['Anillo benceno', 'Tabla periódica min.', 'Matraz Erlenmeyer', 'Enlace covalente'],
+    'Mis elementos': ['Mi membrete', 'Ejes con cuadrícula']
+  };
+  const list = (itemsByCat[S.elCat] || itemsByCat['Fórmulas']).filter(x => x.toLowerCase().includes(S.elQuery.toLowerCase()));
+
+  return `<div class="side-panel left" style="${S.dock === 'left' ? 'left:66px' : ''}" onclick="event.stopPropagation()">
+    <div class="pop-hd" style="margin-bottom:2px">
+      <h3>Elementos e inserción</h3>
+      <button class="ib" style="width:26px;height:26px" onclick="S.elementsOpen=false;render()">${svg('x','style="width:14px;height:14px"')}</button>
+    </div>
+    <div class="quick-insert">
+      <button class="qi-btn" title="Insertar o vectorizar imagen">${svg('img','style="width:14px;height:14px"')} Imagen</button>
+      <button class="qi-btn" title="Importar páginas de PDF">${svg('pdf','style="width:14px;height:14px"')} PDF</button>
+      <button class="qi-btn" title="Crear tabla NxM">${svg('table','style="width:14px;height:14px"')} Tabla</button>
+    </div>
+    <div class="search-box">
+      ${svg('search','style="width:14px;height:14px"')}
+      <input placeholder="Buscar fórmula, bloque…" value="${S.elQuery}" oninput="S.elQuery=this.value;render()">
+    </div>
+    <div class="chips">
+      ${['Fórmulas', 'Geometría', 'Física', 'Química', 'Mis elementos'].map(c => `<button class="chip ${S.elCat === c ? 'on' : ''}" onclick="S.elCat='${c}';render()">${c}</button>`).join('')}
+    </div>
+    <div class="el-grid">
+      ${list.map(t => `<div class="el-tile">${t}</div>`).join('')}
+    </div>
+    <button class="dashed-cta" onclick="S.modal='library';S.libCat='Elementos';render()">+ Explorar biblioteca y paquetes</button>
+  </div>`;
+}
+
+function renderPagesPanel() {
+  if (!S.pagesOpen || S.docMode !== 'nb') return '';
+  return `<div class="side-panel right" onclick="event.stopPropagation()">
+    <div class="pop-hd" style="margin-bottom:4px">
+      <h3>Páginas</h3>
+      <button class="ib" style="width:26px;height:26px" onclick="S.pagesOpen=false;render()">${svg('x','style="width:14px;height:14px"')}</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;overflow-y:auto;flex:1;align-items:center">
+      ${[1, 2, 3].map(n => `
+        <div class="pg-item ${S.activePage === n ? 'on' : ''}" onclick="S.activePage=${n};render()">
+          <div class="pg-thumb tpl-${S.tpl}" style="--cell:12px">
+            ${n === 2 ? `<svg viewBox="0 0 92 118" style="position:absolute;inset:0"><path d="M14 34 L72 34 L72 18 Z" fill="none" stroke="#3B82F6" stroke-width="1.6"/><path d="M14 54h54M14 68h42" stroke="#71717A" stroke-width="1.5"/></svg>` : ''}
+          </div>
+          <span>${n}</span>
+        </div>
+      `).join('')}
+      <button class="dashed-cta" style="width:92px">+ Página</button>
+    </div>
+  </div>`;
+}
+
+function renderCanvasArtwork() {
+  const strokeMain = S.dark ? '#F4F4F5' : '#18181B';
+  const dashAttr = ['','stroke-dasharray="7 5"','stroke-dasharray="1.5 6"','','',''][S.shapeLine] || '';
+  const cellPx = S.mm * 4.8;
+
+  const artSvg = `
+    <svg width="100%" height="100%" viewBox="0 0 1140 650" style="position:absolute;inset:0;pointer-events:none">
+      <text x="330" y="168" font-family="Caveat, cursive" font-size="36" font-weight="600" fill="${strokeMain}">Plano inclinado · Dinámica</text>
+      <path d="M328 178c70 4 190 3 272-2" fill="none" stroke="#FACC15" stroke-opacity=".55" stroke-width="12" stroke-linecap="round"/>
+
+      <!-- Figura geométrica de ejemplo -->
+      <path d="M350 455 L680 455 L680 265 Z" fill="${S.fillPat === 1 ? 'rgba(37,99,235,0.08)' : 'none'}" stroke="${strokeMain}" stroke-width="2.4" stroke-linejoin="round" ${dashAttr}/>
+      ${S.showAngles ? `
+        <path d="M412 455 a62 62 0 0 0 -8 -31" fill="none" stroke="#2563EB" stroke-width="1.8"/>
+        <text x="422" y="444" font-family="Caveat, cursive" font-size="23" font-weight="600" fill="#2563EB">30°</text>
+        <path d="M660 455 v-20 h20" fill="none" stroke="${strokeMain}" stroke-width="1.6"/>
+      ` : ''}
+      <rect x="495" y="328" width="66" height="42" rx="3" transform="rotate(-30 528 349)" fill="none" stroke="#2563EB" stroke-width="2.3"/>
+      <path d="M532 350 L532 430" stroke="#DC2626" stroke-width="2.3" stroke-linecap="round"/>
+      <path d="M525 421 L532 432 L539 421" fill="none" stroke="#DC2626" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="544" y="428" font-family="Caveat, cursive" font-size="23" font-weight="600" fill="#DC2626">m·g</text>
+
+      <!-- Ecuaciones manuscritas -->
+      <text x="745" y="305" font-family="Caveat, cursive" font-size="29" font-weight="600" fill="${strokeMain}">ΣFₓ = m · g · sen(30°)</text>
+      <text x="745" y="352" font-family="Caveat, cursive" font-size="29" font-weight="600" fill="${strokeMain}">F = 5 · 9,8 · 0,5 = 24,5 N</text>
+
+      ${S.ctxDemo === 'shape' ? `
+        <circle cx="350" cy="455" r="5" fill="#fff" stroke="#2563EB" stroke-width="2"/>
+        <circle cx="680" cy="455" r="5" fill="#fff" stroke="#2563EB" stroke-width="2"/>
+        <circle cx="680" cy="265" r="5" fill="#fff" stroke="#2563EB" stroke-width="2"/>
+      ` : ''}
+      ${S.ctxDemo === 'lasso' ? `
+        <rect x="732" y="274" width="276" height="96" rx="8" fill="rgba(37,99,235,0.05)" stroke="#2563EB" stroke-width="1.5" stroke-dasharray="5 4"/>
+      ` : ''}
+    </svg>
+  `;
+
+  if (S.docMode === 'nb') {
+    return `<div class="canvas-layer">
+      <div class="nb-sheet tpl-${S.tpl}" style="--cell:${cellPx}px;${S.sheetColor ? `--sheet-custom:${S.sheetColor}` : ''}">
+        <div style="transform:translate(-260px,-95px) scale(0.92);width:1140px;height:650px;position:relative">${artSvg}</div>
+      </div>
+    </div>`;
+  }
+  return `<div class="canvas-layer tpl-${S.tpl}" style="--cell:${cellPx}px;${S.sheetColor ? `background-color:${S.sheetColor}` : ''}">${artSvg}</div>`;
+}
+
+function renderContextOverlays() {
+  if (S.ctxDemo === 'shape') {
+    const lines = [
+      '<path d="M3 12h18"/>',
+      '<path d="M3 12h18" stroke-dasharray="4 3"/>',
+      '<path d="M3 12h18" stroke-dasharray=".5 4.5"/>',
+      '<path d="M3 12h16M14 7l5 5-5 5"/>',
+      '<path d="M7 7l-5 5 5 5M3 12h18M17 7l5 5-5 5"/>',
+      '<path d="M4 8v8M20 8v8M4 12h16"/>'
+    ];
+    return `<div class="ctx-bar" style="left:430px;top:212px" onclick="event.stopPropagation()">
+      ${lines.map((d, i) => `<button class="ib ${S.shapeLine === i ? 'on' : ''}" style="width:32px;height:28px" title="Estilo de trazo" onclick="S.shapeLine=${i};render()"><svg class="ic" viewBox="0 0 24 24">${d}</svg></button>`).join('')}
+      <div class="vdiv"></div>
+      <button class="chip ${S.showAngles ? 'on' : ''}" onclick="S.showAngles=!S.showAngles;render()">Ángulos</button>
+      <button class="ib" style="width:28px;height:28px" title="Duplicar">${svg('copy','style="width:15px;height:15px"')}</button>
+      <button class="ib" style="width:28px;height:28px;color:var(--ed-danger)" title="Eliminar" onclick="S.ctxDemo='none';render()">${svg('trash','style="width:15px;height:15px"')}</button>
+    </div>`;
+  }
+  if (S.ctxDemo === 'lasso') {
+    return `<div class="ctx-bar" style="left:715px;top:224px" onclick="event.stopPropagation()">
+      <button class="chip on">Enderezar</button>
+      <button class="chip">A fórmula</button>
+      <button class="chip">Guardar elemento</button>
+      <div class="vdiv"></div>
+      <button class="ib" style="width:28px;height:28px">${svg('copy','style="width:15px;height:15px"')}</button>
+      <button class="ib" style="width:28px;height:28px;color:var(--ed-danger)" onclick="S.ctxDemo='none';render()">${svg('trash','style="width:15px;height:15px"')}</button>
+    </div>`;
+  }
+  if (S.ctxDemo === 'text') {
+    return `
+      <div style="position:absolute;left:430px;top:220px;z-index:13;border:1.5px solid #2563EB;border-radius:6px;padding:6px 12px;background:var(--ed-surface-solid);font:600 20px Inter;color:var(--ed-text)">Teorema del trabajo y la energía|</div>
+      <div class="ctx-bar" style="left:430px;top:172px" onclick="event.stopPropagation()">
+        <button class="chip on">Inter</button>
+        <button class="chip">Manuscrita</button>
+        <button class="chip">Mono</button>
+        <div class="vdiv"></div>
+        <button class="ib" style="width:26px;height:26px">${svg('minus','style="width:14px;height:14px"')}</button>
+        <span style="font:700 11.5px Inter;padding:0 4px">20</span>
+        <button class="ib" style="width:26px;height:26px">${svg('plus','style="width:14px;height:14px"')}</button>
+        <div class="vdiv"></div>
+        <button class="ib on" style="width:26px;height:26px;font:700 12px Inter">B</button>
+        <button class="ib" style="width:26px;height:26px;font:italic 700 12px Georgia">I</button>
+      </div>`;
+  }
+  return '';
+}
+
+function renderModal() {
+  if (!S.modal) return '';
+
+  if (S.modal === 'library') {
+    const cats = ['Escritura', 'Caligrafía', 'Figuras', 'Elementos', 'Paletas', 'Descargados'];
+    return `<div class="modal-veil" onclick="S.modal=null;render()">
+      <div class="modal-box" onclick="event.stopPropagation()">
+        <div class="modal-nav">
+          <div class="nav-sec">Biblioteca</div>
+          ${cats.map(c => `<button class="nav-it ${S.libCat === c ? 'on' : ''}" onclick="S.libCat='${c}';render()">${c}</button>`).join('')}
+        </div>
+        <div class="modal-body">
+          <div class="pop-hd">
+            <h3>Biblioteca · ${S.libCat}</h3>
+            <button class="ib" style="width:28px;height:28px" onclick="S.modal=null;render()">${svg('x')}</button>
+          </div>
+          <div style="color:var(--ed-muted);font-size:11.5px;margin-bottom:4px">Elige qué 4 favoritos aparecen en tu panel rápido. Los paquetes futuros se instalan aquí sin cambiar la barra.</div>
+          ${S.libCat === 'Figuras' ? `
+            <div class="pat-grid" style="grid-template-columns:repeat(3,1fr)">
+              ${['Prisma triangular', 'Octaedro', 'Tetraedro', 'Tronco de cono', 'Tronco de pirámide', 'Polígono N lados'].map(n => `
+                <div class="el-tile" style="cursor:pointer" onclick="S.shapeName='${n}';S.modal=null;S.tool='shapes';render()">${n}<small style="color:var(--ed-muted);font-weight:500">Fijar en panel</small></div>
+              `).join('')}
+            </div>
+          ` : `
+            <div class="tip-list">
+              ${[
+                ['Pluma estilográfica', 'Favorito en barra', 3.6, ''],
+                ['Bolígrafo técnico', 'Favorito en barra', 1.7, ''],
+                ['Lápiz grafito 2B', 'Favorito en barra', 2.2, 'stroke-dasharray="1.3 1.7"'],
+                ['Marcador biselado', 'Favorito en barra', 5.2, 'stroke-linecap="butt"'],
+                ['Tiza de pizarra', 'Disponible', 4.0, 'stroke-dasharray="2 1.4" opacity=".8"']
+              ].map(([n, tag, w, ex], i) => `
+                <div class="tip-row ${i < 4 ? 'on' : ''}">
+                  <span style="width:128px">${n}<br><small style="color:var(--ed-muted);font-weight:500">${tag}</small></span>
+                  <svg viewBox="0 0 240 28"><path d="M8 20c24-22 44 12 72-3s36-16 64-3 44 10 80-11" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" ${ex}/></svg>
+                </div>
+              `).join('')}
+            </div>
+          `}
+          <button class="dashed-cta" style="margin-top:auto">+ Próximamente: paquetes y creaciones de la comunidad</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  if (S.modal === 'settings') {
+    const secs = ['Escritura', 'Resaltador', 'Figuras', 'Tableta y táctil', 'Paneles'];
+    const sw = (key) => `<button class="sw-toggle ${S.cfg[key] ? 'on' : ''}" onclick="S.cfg.${key}=!S.cfg.${key};render()"></button>`;
+    let body = '';
+    if (S.setCat === 'Escritura') {
+      body = `
+        <div class="set-row"><div><b>Sensible a la presión</b><small>El trazo responde a la fuerza del lápiz Wacom / S-Pen</small></div>${sw('pressure')}</div>
+        <div class="set-row"><div><b>Perfil de presión</b><small>Adapta la curva de fuerza a tu mano</small></div>
+          <div class="seg" style="width:190px">${['Ligera','Normal','Firme'].map((t,i)=>`<button class="${S.cfg.pressureProfile===i?'on':''}" onclick="S.cfg.pressureProfile=${i};render()">${t}</button>`).join('')}</div>
+        </div>
+        <div class="set-row"><div><b>Suavizado de trazo</b><small>Filtra micro-temblores sin añadir retraso</small></div>
+          <div class="seg" style="width:190px">${['Bajo','Medio','Alto'].map((t,i)=>`<button class="${S.cfg.smooth===i?'on':''}" onclick="S.cfg.smooth=${i};render()">${t}</button>`).join('')}</div>
+        </div>
+        <div class="set-row"><div><b>Figura perfecta al mantener</b><small>Detener la punta al final convierte el trazo en figura exacta</small></div>${sw('holdShape')}</div>
+        <div class="set-row"><div><b>Embellecer escritura matemática</b><small>Pulir trazos y operadores en modo ecuación</small></div>${sw('mathBeauty')}</div>
+      `;
+    } else if (S.setCat === 'Resaltador') {
+      body = `
+        <div class="set-row"><div><b>Pintar detrás de la escritura</b><small>Nunca apaga el negro de las letras ni fórmulas</small></div>${sw('hlBehind')}</div>
+        <div class="set-row"><div><b>Enderezar al soltar</b><small>Alinea subrayados largos automáticamente</small></div>${sw('hlStraight')}</div>
+      `;
+    } else if (S.setCat === 'Figuras') {
+      body = `
+        <div class="set-row"><div><b>Guías inteligentes e imantado</b><small>Conecta vértices y sugiere ángulos notables (30°, 45°, 90°)</small></div>${sw('smartGuides')}</div>
+        <div class="set-row"><div><b>Mostrar medidas automáticas</b><small>Etiqueta longitudes y ángulos al crear la figura</small></div>${sw('autoMeasures')}</div>
+      `;
+    } else if (S.setCat === 'Tableta y táctil') {
+      body = `
+        <div class="set-row"><div><b>Goma trasera del lápiz</b><small>Cambiar automáticamente a Borrador al girar el lápiz</small></div>${sw('stylusEraser')}</div>
+        <div class="set-row"><div><b>Gestos con dos dedos (Tablets)</b><small>Mover lienzo y pellizcar para zoom rechazando la palma al escribir</small></div>${sw('twoFingerPan')}</div>
+      `;
+    } else {
+      body = `
+        <div class="set-row"><div><b>Posición de la barra de herramientas</b><small>También puedes arrastrarla desde el asa de puntos</small></div>
+          <div class="seg" style="width:220px">${[['top','Arriba'],['left','Izquierda'],['float','Flotante']].map(([k,t])=>`<button class="${S.dock===k?'on':''}" onclick="S.dock='${k}';render()">${t}</button>`).join('')}</div>
+        </div>
+      `;
+    }
+
+    return `<div class="modal-veil" onclick="S.modal=null;render()">
+      <div class="modal-box" onclick="event.stopPropagation()">
+        <div class="modal-nav">
+          <div class="nav-sec">Ajustes del editor</div>
+          ${secs.map(s => `<button class="nav-it ${S.setCat === s ? 'on' : ''}" onclick="S.setCat='${s}';render()">${s}</button>`).join('')}
+        </div>
+        <div class="modal-body">
+          <div class="pop-hd">
+            <h3>${S.setCat}</h3>
+            <button class="ib" style="width:28px;height:28px" onclick="S.modal=null;render()">${svg('x')}</button>
+          </div>
+          ${body}
+        </div>
+      </div>
+    </div>`;
+  }
+  return '';
+}
+
+function renderTourBar() {
+  const tour = document.getElementById('tourBar');
+  const btn = (lbl, active, fn) => `<button class="fn-pill ${active ? 'on' : ''}" onclick="${fn}">${lbl}</button>`;
+  tour.innerHTML = `
+    <span class="fn-tour-lbl">Probar vista:</span>
+    ${btn('1 · Pluma', S.panel === 'pen' && !S.modal, "setPresetScene('pen')")}
+    ${btn('2 · Resaltador', S.panel === 'hl', "setPresetScene('hl')")}
+    ${btn('3 · Borrador', S.panel === 'er', "setPresetScene('er')")}
+    ${btn('4 · Relleno', S.panel === 'fill', "setPresetScene('fill')")}
+    ${btn('5 · Figuras + cápsula', S.panel === 'shapes', "setPresetScene('shapes')")}
+    ${btn('6 · Elementos + Páginas', S.elementsOpen && S.pagesOpen, "setPresetScene('dual')")}
+    ${btn('7 · Hoja', S.panel === 'paper', "setPresetScene('paper')")}
+    ${btn('8 · Biblioteca', S.modal === 'library', "setPresetScene('library')")}
+    ${btn('9 · ⚙ Ajustes', S.modal === 'settings', "setPresetScene('settings')")}
+    <span class="fn-sep"></span>
+    ${btn(S.dark ? 'Modo: Oscuro' : 'Modo: Claro', S.dark, 'S.dark=!S.dark;render()')}
+    ${btn('Barra: ' + (S.dock === 'top' ? 'Arriba' : S.dock === 'left' ? 'Izquierda' : 'Flotante'), S.dock !== 'top', 'cycleDock()')}
+  `;
+}
+
+function render() {
+  renderTourBar();
+  const root = document.getElementById('edRoot');
+  root.className = `ed ${S.dark ? 'dark' : ''} mode-${S.docMode}`;
+
+  root.innerHTML = `
+    <div onclick="S.panel=null;render()" style="position:absolute;inset:0;z-index:2">
+      ${renderCanvasArtwork()}
+    </div>
+
+    <!-- Cabecera superior en 2 filas -->
+    <div class="chrome-top" onclick="event.stopPropagation()">
+      <div class="tabs-row">
+        <button class="ib" title="Volver a Inicio">${svg('home')}</button>
+        ${S.tabs.map((t, i) => `
+          <div class="btab ${S.activeTab === i ? 'on' : ''}" onclick="S.activeTab=${i};S.docMode='${t.kind === 'book' ? 'nb' : 'board'}';render()">
+            ${svg(t.kind, 'style="width:14px;height:14px"')}
+            <span class="t-name">${t.title}</span>
+            ${t.dirty ? '<span class="unsaved" title="Cambios sin guardar"></span>' : ''}
+            <span class="close-x">${svg('x', 'style="width:11px;height:11px"')}</span>
+          </div>
+        `).join('')}
+        <button class="ib" style="width:28px;height:28px" title="Nueva pestaña">${svg('plus','style="width:15px;height:15px"')}</button>
+        <div style="flex:1"></div>
+        <button class="ib" style="width:30px;height:30px" title="Pantalla completa / Modo enfoque">${svg('fit','style="width:15px;height:15px"')}</button>
+      </div>
+
+      <div class="bar-row">
+        <div class="bar-side">
+          <button class="ib" title="Deshacer (Ctrl+Z)">${svg('undo')}</button>
+          <button class="ib" title="Rehacer (Ctrl+Y)">${svg('redo')}</button>
+        </div>
+
+        <div class="bar-center">
+          ${S.dock === 'top' ? renderToolsCluster(false) : `<span style="font-size:11.5px;color:var(--ed-muted);font-weight:500">Herramientas desacopladas (${S.dock === 'left' ? 'izquierda' : 'flotante'}) · <u style="cursor:pointer" onclick="S.dock='top';render()">volver arriba</u></span>`}
+        </div>
+
+        <div class="bar-side">
+          ${S.docMode === 'nb' ? `
+            <button class="ib pill-btn ${S.pagesOpen ? 'on' : ''}" title="Panel de páginas" onclick="S.pagesOpen=!S.pagesOpen;render()">
+              ${svg('pages','style="width:15px;height:15px"')} <span>${S.activePage} / 3</span>
+            </button>
+          ` : ''}
+          <button class="ib ${S.panel === 'paper' ? 'on' : ''}" title="Hoja, fondo y trama" onclick="S.panel=(S.panel==='paper'?null:'paper');render()">${svg('paper')}</button>
+          <div class="vdiv"></div>
+          <button class="ib" style="width:28px;height:28px" onclick="S.zoom=Math.max(50,S.zoom-25);render()">${svg('minus','style="width:14px;height:14px"')}</button>
+          <button class="ib pill-btn" style="padding:0 6px;min-width:46px;justify-content:center" title="Restablecer zoom" onclick="S.zoom=100;render()">${S.zoom} %</button>
+          <button class="ib" style="width:28px;height:28px" onclick="S.zoom=Math.min(200,S.zoom+25);render()">${svg('plus','style="width:14px;height:14px"')}</button>
+          <div class="vdiv"></div>
+          <button class="ib ${S.panel === 'export' ? 'on' : ''}" title="Exportar y guardar" onclick="S.panel=(S.panel==='export'?null:'export');render()">${svg('export')}</button>
+          <button class="ib ${S.modal === 'settings' ? 'on' : ''}" title="Ajustes del editor" onclick="S.panel=null;S.modal='settings';render()">${svg('gear')}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Si la barra está acoplada a la izquierda o flotante -->
+    ${S.dock === 'left' ? `<div class="dock-capsule left" onclick="event.stopPropagation()">${renderToolsCluster(true)}</div>` : ''}
+    ${S.dock === 'float' ? `<div class="dock-capsule float" onclick="event.stopPropagation()">${renderToolsCluster(false)}</div>` : ''}
+
+    ${renderElementsPanel()}
+    ${renderPagesPanel()}
+    ${renderContextOverlays()}
+    ${renderPopover()}
+    ${renderModal()}
+  `;
+}
+
+function fitStage() {
+  const outer = document.getElementById('stageOuter');
+  const scaler = document.getElementById('stageScaler');
+  if (!outer || !scaler) return;
+  const w = outer.clientWidth;
+  const scale = Math.min(1, w / 1140);
+  scaler.style.transform = `scale(${scale})`;
+  outer.style.height = Math.round(650 * scale) + 'px';
+}
+
+window.addEventListener('resize', fitStage);
+render();
+fitStage();
+</script>
+</body>
+</html>

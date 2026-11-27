@@ -311,7 +311,14 @@ bool exportPagesToPdf(const QString& path, const QVector<PageData>& notebook,
                 for (const auto& image : images) {
                     if (image.isPdfPage == (pass == 0) && image.rect.intersects(rect)
                         && !image.image.isNull()) {
-                        painter.drawImage(image.rect, image.image);
+                        if (image.opacity < 0.999) {
+                            painter.save();
+                            painter.setOpacity(painter.opacity() * image.opacity);
+                            painter.drawImage(image.rect, image.image);
+                            painter.restore();
+                        } else {
+                            painter.drawImage(image.rect, image.image);
+                        }
                     }
                 }
             }

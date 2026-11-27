@@ -26,10 +26,16 @@ void drawSelectionOverlay(QPainter& painter,const ShapeItem& shape,const ThemeCo
 void drawSmartGuides(QPainter& painter,const QVector<SmartGuide>& guides,const ThemeConfig& theme,double zoom);
 struct SnapResult { QPointF point; QVector<SmartGuide> guides; bool contact = false; };
 SnapResult snapShapeVertex(const ShapeItem& shape, int index, const SnapResult& external,
-                          QPointF raw, double zoom);
+                          QPointF raw, double zoom,
+                          const SmartGuideOptions& guideOpts = {});
 SnapResult snapPointWithGuides(const QPointF& rawWorld,const std::optional<QPointF>& anchorWorld,
                               const QVector<ShapeItem>& otherShapes,const QString& excludeShapeId,double zoom,
-                              bool align = true);
+                              bool align = true,const SmartGuideOptions& guideOpts = {});
+inline SnapResult snapPointWithGuides(const QPointF& rawWorld,const std::optional<QPointF>& anchorWorld,
+                                      const QVector<ShapeItem>& otherShapes,const QString& excludeShapeId,double zoom,
+                                      const SmartGuideOptions& guideOpts) {
+    return snapPointWithGuides(rawWorld, anchorWorld, otherShapes, excludeShapeId, zoom, true, guideOpts);
+}
 std::optional<ShapeItem> shadedRegionAt(const QPointF& point, const QVector<ShapeItem>& shapes,
                                       const QColor& color, ShadePattern pattern);
 std::optional<ShapeItem> shadedRegionForShape(const ShapeItem& shape, const QColor& color, ShadePattern pattern);
@@ -37,13 +43,16 @@ void initializeShapeLinks(QVector<ShapeItem>& shapes);
 void attachNewShape(QVector<ShapeItem>& shapes);
 bool updateShapeLinks(QVector<ShapeItem>& shapes, const QVector<ShapeItem>& original,
                       const QSet<QString>& edited);
-std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke);
+std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke, const AutoShapeOptions& opts = {});
 std::optional<ShapeItem> tryRecognizeFreehandArrow(const Stroke& stroke, double zoom);
 bool tryAttachArrowheadToLine(const Stroke& stroke, QVector<ShapeItem>& shapes, double zoom,
                               QString* outUpdatedId = nullptr);
 bool trySnapFreehandDividerOnEdge(const Stroke& stroke, QVector<ShapeItem>& shapes, double zoom,
                                   QString* outCreatedId = nullptr);
-std::optional<ShapeItem> trySnapAngleArcAtVertex(const Stroke& stroke, const QVector<ShapeItem>& shapes, double zoom);
+std::optional<ShapeItem> trySnapAngleArcAtVertex(const Stroke& stroke, const QVector<ShapeItem>& shapes, double zoom,
+                                                 bool allowAngleArc = true, bool allowRightAngle = true);
+ShapeFamily classifyShapeFamily(const ShapeItem& shape, int* outVariant = nullptr);
+bool morphShapeToVariant(ShapeItem& shape, ShapeFamily family, int variant);
 std::optional<ShapeItem> trySnapCongruenceStrokeOnEdge(const Stroke& stroke,
                                                        const QVector<ShapeItem>& shapes,
                                                        double zoom,

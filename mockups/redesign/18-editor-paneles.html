@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><title>Finily — Editor: paneles</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;padding:28px;background:#EDEDEA;font-family:Inter,sans-serif;color:#18181B;font-size:12.5px}
+h1{font-size:20px;margin:0 0 4px}.lead{color:#52525B;margin:0 0 20px;max-width:980px;line-height:1.5}
+.sc{max-width:1180px;margin-bottom:26px}.sc h2{font-size:15px;margin:0 0 2px}.sc .d{color:#71717A;margin-bottom:8px;line-height:1.45;max-width:980px}
+.win{position:relative;height:540px;border-radius:16px;overflow:hidden;background:#FBFBFA;background-image:linear-gradient(rgba(15,23,42,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(15,23,42,.05) 1px,transparent 1px);background-size:24px 24px;box-shadow:0 14px 36px -20px rgba(15,23,42,.4)}
+.tabs{height:38px;background:#F1F1EF;display:flex;align-items:flex-end;padding:0 10px;gap:2px;font-size:11.5px;color:#71717A}
+.tabs div{padding:0 14px;height:32px;display:flex;align-items:center;border-radius:10px 10px 0 0;width:150px}
+.tabs .on{background:#fff;color:#18181B;font-weight:600}
+.tools{height:46px;background:#fff;border-bottom:1px solid #ECECEA;display:flex;align-items:center;justify-content:center;gap:2px;position:relative}
+.tools .l{position:absolute;left:12px;display:flex;gap:2px}.tools .r{position:absolute;right:12px;display:flex;gap:6px;align-items:center;font-weight:700;font-size:11.5px}
+.b{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;color:#3F3F46}
+.b svg{width:18px;height:18px}.b.on{background:#18181B;color:#fff}
+.sep{width:1px;height:20px;background:#E4E4E7;margin:0 6px}
+.w{width:30px;height:28px;border-radius:8px;display:grid;place-items:center}.w.on{background:#18181B}.w i{display:block;width:15px;border-radius:3px;background:#3F3F46}.w.on i{background:#fff}
+.c{width:20px;height:20px;border-radius:50%;margin:0 3px}.c.on{box-shadow:0 0 0 2px #fff,0 0 0 3.5px #18181B}
+.pan{position:absolute;top:92px;background:#fff;border:1px solid rgba(15,23,42,.08);border-radius:16px;box-shadow:0 20px 40px -18px rgba(15,23,42,.35);padding:14px;width:320px}
+.pan h3{margin:0 0 10px;font-size:13px}
+.lab{font-size:10.5px;font-weight:700;color:#A1A1AA;text-transform:uppercase;letter-spacing:.05em;margin:12px 0 6px}
+.lab:first-of-type{margin-top:0}
+.grid{display:grid;gap:6px}
+.opt{border:1px solid #EEE;border-radius:10px;padding:8px;display:flex;flex-direction:column;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#52525B}
+.opt.on{border-color:#18181B;box-shadow:inset 0 0 0 1px #18181B;color:#18181B}
+.opt svg{width:100%;height:26px}
+.rw{display:flex;align-items:center;justify-content:space-between;padding:6px 0;font-weight:500}
+.sw{width:30px;height:18px;border-radius:9px;background:#18181B;position:relative}.sw::after{content:'';position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff}
+.sw.off{background:#E4E4E7}.sw.off::after{left:2px;right:auto}
+.seg{display:flex;background:#F4F4F5;border-radius:9px;padding:2px}.seg span{flex:1;text-align:center;padding:6px 4px;border-radius:7px;font-size:11px;font-weight:600;color:#71717A}.seg .on{background:#fff;color:#18181B;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.sl{height:4px;border-radius:2px;background:#E4E4E7;position:relative;margin:10px 0}.sl b{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:#18181B}.sl i{position:absolute;top:-6px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.q{position:absolute;right:16px;bottom:16px;width:300px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:12px;padding:12px;line-height:1.5;font-size:12px}
+.q b{display:block;margin-bottom:4px}
+.ink{position:absolute;left:60px;bottom:30px;opacity:.5}
+.cat{font-size:11px;font-weight:600;padding:5px 9px;border-radius:999px;background:#F4F4F5;color:#52525B}.cat.on{background:#18181B;color:#fff}
+.tile{aspect-ratio:1;border-radius:10px;background:#F7F7F5;display:grid;place-items:center;font-size:11px;color:#52525B;font-weight:600;text-align:center}
+</style></head><body>
+<h1>18 · Editor — qué abre cada botón</h1>
+<p class="lead">La barra es <b>la de tu captura, con tus iconos de hoy</b> (no se rediseñan aquí). Cada escena abre el panel de un botón para decidir uno por uno. Ya aplicado lo que dijiste: Relleno se queda y crece; Lazo y Seleccionar siguen separados; Láser sigue como botón; Stickers + fórmulas pasan a «Elementos» (como en Canva); Mano sale de la barra. El recuadro amarillo de cada escena es la pregunta para ti.</p>
+<div id="out"></div>
+<script>
+const P={pen:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',hl:'<path d="M9 15 5 19h5l1.5-1.5"/><path d="m8 14 3 3 9-9-3-3z"/>',er:'<path d="M7 20h12"/><path d="M5.5 15.5 14 7a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L12.5 19h-4z"/>',fill:'<path d="m5 11 7-7 7 7-7 7z"/><path d="M19 15s2 2.2 2 3.5a2 2 0 0 1-4 0c0-1.3 2-3.5 2-3.5z"/>',lasso:'<path d="M7 18c-2.5-1-4-3-4-5.5C3 8 7 5 12 5s9 3 9 7-4 6.5-9 6.5"/>',sel:'<path d="M5 3l14 8-6 1.5L10 19z"/>',shapes:'<circle cx="8.5" cy="8.5" r="4.5"/><path d="M13 13h7v7h-7z"/>',text:'<path d="M5 6V4h14v2M12 4v16M9 20h6"/>',el:'<rect x="4" y="4" width="7" height="7" rx="1.5"/><circle cx="16.5" cy="7.5" r="3.5"/><path d="M4 20l3.5-6 3.5 6zM14 14h6v6h-6z"/>',laser:'<path d="m4 20 11-11"/><circle cx="17" cy="7" r="3"/>',undo:'<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',redo:'<path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/>',home:'<path d="M4 11 12 4l8 7v9H4z"/>'};
+const sv=(k,s=1.7)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${s}" stroke-linecap="round" stroke-linejoin="round">${P[k]}</svg>`;
+const ORDER=['pen','hl','er','fill','|','lasso','sel','|','shapes','text','el','laser'];
+const X={};ORDER.forEach((k,i)=>X[k]=i);
+function bar(on,o={}){const ws=o.ws||[1.5,3,5],cs=o.cs||['#18181B','#B42318','#2563EB','#16794C','#A16207','#7C3AED'];
+ return `<div class="tabs"><div>${''}Clase Yordi</div><div class="on">Pizarra sin título</div></div>
+ <div class="tools"><div class="l"><div class="b">${sv('undo')}</div><div class="b">${sv('redo')}</div></div>
+ ${ORDER.map(k=>k==='|'?'<div class="sep"></div>':`<div class="b${k===on?' on':''}">${sv(k)}</div>`).join('')}
+ ${o.noInk?'':`<div class="sep"></div>${ws.map((w,i)=>`<div class="w${i===1?' on':''}"><i style="height:${w}px"></i></div>`).join('')}<div class="sep"></div>${cs.map((c,i)=>`<span class="c${i===0?' on':''}" style="background:${c}"></span>`).join('')}<span class="c" style="background:conic-gradient(#E5484D,#F59E0B,#22A06B,#3B82F6,#8B5CF6,#E5484D)"></span>`}
+ <div class="r">100 %</div></div>`;}
+const x=k=>{/* centro aproximado del botón para alinear el panel */const idx=ORDER.slice(0,X[k]).length;return 270+idx*36;};
+const stroke=(d,c='#18181B',w=2.4,extra='')=>`<svg viewBox="0 0 90 26"><path d="${d}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" ${extra}/></svg>`;
+const wave='M5 16c10-10 18 6 28-2s14-8 22-2 16 6 30-6';
+const sc=(t,d,html,q)=>`<div class="sc"><h2>${t}</h2><div class="d">${d}</div><div class="win">${html}${q?`<div class="q"><b>Para decidir</b>${q}</div>`:''}</div></div>`;
+let h='';
+
+h+=sc('1 · Pluma','Hoy solo cambias grosor y color. Se añade la elección de punta (ya existen 4 en el motor) y opciones de trazo.',
+ bar('pen')+`<div class="pan" style="left:${x('pen')-20}px"><h3>Pluma</h3>
+ <div class="lab">Punta</div><div class="grid" style="grid-template-columns:repeat(4,1fr)">
+ ${[['Pluma',stroke(wave,'#18181B',3)],['Bolígrafo',stroke(wave,'#18181B',1.6)],['Lápiz',stroke(wave,'#52525B',1.8,'stroke-dasharray="1 1.5"')],['Caligrafía',stroke(wave,'#18181B',4,'stroke-linecap="butt"')]].map((o,i)=>`<div class="opt${i===0?' on':''}">${o[1]}${o[0]}</div>`).join('')}</div>
+ <div class="lab">Grosor</div><div class="sl"><b style="width:35%"></b><i style="left:33%"></i></div>
+ <div class="lab">Trazo</div>
+ <div class="rw">Sensible a la presión<span class="sw"></span></div>
+ <div class="rw">Suavizado<div class="seg" style="width:150px"><span>Bajo</span><span class="on">Medio</span><span>Alto</span></div></div>
+ <div class="rw">Mantener quieto = figura perfecta<span class="sw"></span></div></div>`,
+ '¿Las 4 puntas te sirven así? ¿La opción de figura perfecta va aquí o prefieres que sea un botón visible?');
+
+h+=sc('2 · Resaltador','Tiene su propio color y grosor (no comparte con la pluma). Los colores de la barra cambian a tonos de resaltador al activarlo.',
+ bar('hl',{ws:[6,10,16],cs:['#FACC15','#86EFAC','#93C5FD','#F9A8D4','#FDBA74','#C4B5FD']})+`<div class="pan" style="left:${x('hl')-40}px"><h3>Resaltador</h3>
+ <div class="lab">Punta</div><div class="grid" style="grid-template-columns:repeat(3,1fr)">
+ ${[['Recta','butt'],['Biselada','square'],['Redonda','round']].map((o,i)=>`<div class="opt${i===0?' on':''}"><svg viewBox="0 0 90 26"><path d="M10 13h70" stroke="#FACC15" stroke-width="12" stroke-linecap="${o[1]}" opacity=".7"/></svg>${o[0]}</div>`).join('')}</div>
+ <div class="lab">Comportamiento</div>
+ <div class="rw">Enderezar la línea al soltar<span class="sw"></span></div>
+ <div class="rw">Pintar detrás de la escritura<span class="sw"></span></div>
+ <div class="lab">Opacidad</div><div class="sl"><b style="width:45%"></b><i style="left:43%"></i></div></div>`,
+ 'Mira la barra: los colores y grosores ya son los del resaltador. ¿Te gusta que cambien así según la herramienta?');
+
+h+=sc('3 · Borrador','El modo (trazo entero o solo lo que tocas) hoy no se ve. El panel lo deja claro.',
+ bar('er',{noInk:true})+`<div class="pan" style="left:${x('er')-60}px"><h3>Borrador</h3>
+ <div class="lab">Modo</div><div class="grid" style="grid-template-columns:1fr 1fr">
+ <div class="opt on"><svg viewBox="0 0 90 26"><path d="${wave}" stroke="#D4D4D8" stroke-width="2.4" fill="none" stroke-dasharray="3 3"/></svg>Trazo completo</div>
+ <div class="opt"><svg viewBox="0 0 90 26"><path d="${wave}" stroke="#18181B" stroke-width="2.4" fill="none"/><circle cx="45" cy="13" r="9" fill="#fff" stroke="#A1A1AA"/></svg>Solo lo que toco</div></div>
+ <div class="lab">Tamaño</div><div class="seg"><span>S</span><span class="on">M</span><span>L</span></div>
+ <div class="lab">Borra</div><div class="rw">Tinta<span class="sw"></span></div><div class="rw">Resaltador<span class="sw"></span></div><div class="rw">Figuras<span class="sw off"></span></div>
+ <div style="margin-top:10px;color:#B42318;font-weight:600">Borrar toda la página…</div></div>`,
+ '¿Quieres poder elegir qué borra (solo resaltador, solo tinta)? En la barra, sin grosores ni colores porque no aplican.');
+
+const pats=[['Suave','<rect x="8" y="4" width="74" height="18" rx="3" fill="#2563EB" opacity=".18"/>'],['Diagonal','<g stroke="#2563EB" stroke-width="1.2">'+Array.from({length:14},(_,i)=>`<path d="M${i*7} 24 L${i*7+14} 2"/>`).join('')+'</g>'],['Puntos','<g fill="#2563EB">'+Array.from({length:30},(_,i)=>`<circle cx="${10+(i%10)*7.5}" cy="${6+Math.floor(i/10)*7}" r="1.2"/>`).join('')+'</g>'],['Sólido','<rect x="8" y="4" width="74" height="18" rx="3" fill="#2563EB" opacity=".75"/>'],['Cruzado','<g stroke="#2563EB" stroke-width="1">'+Array.from({length:14},(_,i)=>`<path d="M${i*7} 24 L${i*7+14} 2M${i*7} 2 L${i*7+14} 24"/>`).join('')+'</g>'],['Cuadrícula','<g stroke="#2563EB" stroke-width="1">'+Array.from({length:12},(_,i)=>`<path d="M${8+i*7} 4V22"/>`).join('')+'<path d="M8 8H82M8 13H82M8 18H82"/></g>']];
+h+=sc('4 · Relleno (se queda y crece)','Hoy rellena una región cerrada con 6 tramas. Propuesta: además de regiones, que pueda resaltar un tramo, un arco, el área entre dos curvas o un ángulo, con opacidad y borde.',
+ bar('fill')+`<div class="pan" style="left:${x('fill')-80}px;width:340px"><h3>Relleno</h3>
+ <div class="lab">Qué rellenar</div><div class="grid" style="grid-template-columns:repeat(4,1fr)">
+ ${[['Región','<path d="M10 22 L45 4 L80 22Z" fill="#2563EB" fill-opacity=".2" stroke="#18181B" stroke-width="1.4"/>'],['Tramo','<path d="M10 20 L80 20" stroke="#D4D4D8" stroke-width="2"/><path d="M30 20 L62 20" stroke="#2563EB" stroke-width="5" stroke-linecap="round"/>'],['Entre curvas','<path d="M8 8 C30 2 60 2 82 8" stroke="#18181B" fill="none" stroke-width="1.4"/><path d="M8 20 C30 14 60 14 82 20" stroke="#18181B" fill="none" stroke-width="1.4"/><path d="M30 5 C45 3 50 3 60 5 L60 16 C50 14 45 14 30 16Z" fill="#2563EB" fill-opacity=".25"/>'],['Ángulo','<path d="M20 22 L80 22 M20 22 L70 4" stroke="#18181B" stroke-width="1.4" fill="none"/><path d="M20 22 L44 22 A24 24 0 0 0 42 13Z" fill="#2563EB" fill-opacity=".3"/>']].map((o,i)=>`<div class="opt${i===0?' on':''}"><svg viewBox="0 0 90 26">${o[1]}</svg>${o[0]}</div>`).join('')}</div>
+ <div class="lab">Trama</div><div class="grid" style="grid-template-columns:repeat(3,1fr)">${pats.map((o,i)=>`<div class="opt${i===1?' on':''}"><svg viewBox="0 0 90 26"><clipPath id="c${i}"><rect x="8" y="4" width="74" height="18" rx="3"/></clipPath><g clip-path="url(#c${i})">${o[1]}</g></svg>${o[0]}</div>`).join('')}</div>
+ <div class="lab">Opacidad</div><div class="sl"><b style="width:30%"></b><i style="left:28%"></i></div>
+ <div class="rw">Mostrar borde<span class="sw off"></span></div></div>`,
+ '¿Estos 4 tipos (región, tramo, entre curvas, ángulo) son lo que imaginabas con “segmentos y otras cosas”? ¿Falta alguno?');
+
+h+=sc('5 · Lazo','Separado de Seleccionar, como dijiste: el lazo es para agarrar varias cosas a la vez.',
+ bar('lasso',{noInk:true})+`<div class="pan" style="left:${x('lasso')-60}px"><h3>Lazo</h3>
+ <div class="lab">Forma</div><div class="seg"><span class="on">Libre</span><span>Rectángulo</span></div>
+ <div class="lab">Qué agarra</div><div class="rw">Escritura<span class="sw"></span></div><div class="rw">Figuras<span class="sw"></span></div><div class="rw">Texto e imágenes<span class="sw"></span></div><div class="rw">Solo si está entero dentro<span class="sw off"></span></div>
+ <div class="lab">Al seleccionar aparece</div><div style="display:flex;flex-wrap:wrap;gap:5px">${['Color','Ordenar escritura','A fórmula','Duplicar','Borrar','…'].map(t=>`<span class="cat">${t}</span>`).join('')}</div></div>`,
+ '¿Necesitas filtrar qué agarra el lazo, o siempre debe agarrar todo?');
+
+h+=sc('6 · Seleccionar','Un toque = un objeto. No abre panel: aparece una cápsula sobre el objeto con lo que se puede hacer según su tipo.',
+ bar('sel',{noInk:true})+`<svg style="position:absolute;left:330px;top:170px" width="260" height="170"><path d="M20 150 L240 150 L240 30Z" fill="none" stroke="#18181B" stroke-width="2"/><rect x="14" y="24" width="232" height="132" fill="none" stroke="#2563EB" stroke-dasharray="5 4"/>${[[20,150],[240,150],[240,30]].map(p=>`<circle cx="${p[0]}" cy="${p[1]}" r="5" fill="#fff" stroke="#2563EB" stroke-width="2"/>`).join('')}</svg>
+ <div class="pan" style="left:300px;top:118px;width:auto;display:flex;gap:6px;padding:6px 8px;border-radius:12px">${['Borde','Relleno','Medidas','Ángulos','Duplicar','Borrar','…'].map(t=>`<span class="cat">${t}</span>`).join('')}</div>`,
+ '¿Qué opciones quieres ver al tocar una figura? Aquí: borde, relleno, mostrar medidas y ángulos.');
+
+h+=sc('7 · Figuras','16 figuras ordenadas por grupo. Recuerda la última usada para que el botón la dibuje directo.',
+ bar('shapes')+`<div class="pan" style="left:${x('shapes')-120}px;width:380px"><h3>Figuras</h3>
+ <div style="display:flex;gap:5px;margin-bottom:10px">${['Básicas','Matemáticas','Medidas','3D'].map((t,i)=>`<span class="cat${i===0?' on':''}">${t}</span>`).join('')}</div>
+ <div class="grid" style="grid-template-columns:repeat(5,1fr)">${[['Línea','<path d="M10 20 L80 6" stroke="#18181B" stroke-width="2"/>'],['Círculo','<circle cx="45" cy="13" r="10" fill="none" stroke="#18181B" stroke-width="2"/>'],['Elipse','<ellipse cx="45" cy="13" rx="20" ry="9" fill="none" stroke="#18181B" stroke-width="2"/>'],['Triángulo','<path d="M30 22 L45 3 L60 22Z" fill="none" stroke="#18181B" stroke-width="2"/>'],['Rectángulo','<rect x="28" y="5" width="34" height="16" fill="none" stroke="#18181B" stroke-width="2"/>']].map((o,i)=>`<div class="opt${i===3?' on':''}"><svg viewBox="0 0 90 26">${o[1]}</svg>${o[0]}</div>`).join('')}</div>
+ <div class="lab">Otros grupos</div><div style="line-height:1.6;color:#52525B"><b>Matemáticas:</b> ejes, radical, llave, curva, polilínea<br><b>Medidas:</b> ángulo recto, marcador de ángulo, arco, sector, cota<br><b>3D:</b> cubo, cilindro, cono, esfera, prisma</div>
+ <div class="lab">Línea</div><div class="seg"><span class="on">Continua</span><span>Guiones</span><span>Puntos</span><span>Flecha</span><span>Doble</span></div></div>`,
+ '¿Estos grupos tienen sentido para ti? ¿Mover alguna figura de grupo?');
+
+h+=sc('8 · Texto','Caja de texto. El panel aparece mientras escribes.',
+ bar('text')+`<div style="position:absolute;left:360px;top:200px;border:1.5px solid #2563EB;border-radius:4px;padding:6px 10px;font-size:22px;background:#fff">Cinemática|</div>
+ <div class="pan" style="left:${x('text')-90}px;width:auto;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:12px">
+ <span class="cat on">Inter</span><span class="cat">Manuscrita</span><span class="cat">Mono</span><div class="sep"></div><span class="cat">−</span><b>22</b><span class="cat">+</span><div class="sep"></div><b>B</b><i>I</i><u>S</u><div class="sep"></div><span class="cat">≡</span><span class="cat">Fondo</span></div>`,
+ '¿Necesitas listas, fondo resaltado o alineación? ¿O basta con fuente, tamaño y negrita?');
+
+h+=sc('9 · Elementos (antes Stickers y fórmulas)','Como en Canva: un panel grande con buscador y categorías. Se arrastra al lienzo.',
+ bar('el',{noInk:true})+`<div class="pan" style="left:${x('el')-260}px;width:460px;top:92px"><h3>Elementos</h3>
+ <div style="border:1px solid #E4E4E7;border-radius:9px;padding:8px 10px;color:#A1A1AA;margin-bottom:10px">Buscar: «triángulo», «MRUV», «célula»…</div>
+ <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">${['Fórmulas','Geometría','Física','Química','Biología','Mis elementos','Imagen…','Página de PDF…'].map((t,i)=>`<span class="cat${i===0?' on':''}">${t}</span>`).join('')}</div>
+ <div class="grid" style="grid-template-columns:repeat(5,1fr)">${['a²+b²=c²','x = (−b±√Δ)/2a','v = v₀+at','F = m·a','sen²+cos²=1','E = mc²','PV = nRT','Δx = v₀t+½at²','A = πr²','log(ab)'].map(t=>`<div class="tile">${t}</div>`).join('')}</div></div>`,
+ '¿Las categorías por curso te sirven? «Mis elementos» guarda lo que tú agregas.');
+
+h+=sc('10 · Láser','Se queda como botón propio. Su panel elige cómo se ve el puntero.',
+ bar('laser',{noInk:true})+`<div class="pan" style="left:${x('laser')-200}px"><h3>Láser</h3>
+ <div class="lab">Tipo</div><div class="grid" style="grid-template-columns:1fr 1fr">
+ <div class="opt on"><svg viewBox="0 0 90 26"><circle cx="45" cy="13" r="6" fill="#E5484D"/><circle cx="45" cy="13" r="11" fill="#E5484D" opacity=".2"/></svg>Punto</div>
+ <div class="opt"><svg viewBox="0 0 90 26"><path d="${wave}" stroke="#E5484D" stroke-width="3" fill="none" opacity=".6"/></svg>Estela</div></div>
+ <div class="lab">Color</div><div>${['#E5484D','#22A06B','#2563EB','#F59E0B'].map((c,i)=>`<span class="c${i===0?' on':''}" style="background:${c};display:inline-block"></span>`).join('')}</div>
+ <div class="lab">La estela desaparece en</div><div class="seg"><span>1 s</span><span class="on">2 s</span><span>4 s</span></div></div>`,
+ '¿Punto, estela o ambos?');
+
+h+=sc('11 · Colores y grosores (la propuesta que faltaba)','Siempre visibles a la derecha de las herramientas, pero <b>son de la herramienta activa</b>: compara la escena 1 (pluma: negro, rojo, azul… y grosores finos) con la 2 (resaltador: tonos pastel y grosores anchos). El arcoíris abre el selector propio; mantener pulsado un color lo reemplaza por el actual.',
+ bar('pen')+`<div class="pan" style="left:620px;width:300px"><h3>Selector de color</h3>
+ <div style="height:120px;border-radius:10px;background:linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,#2563EB)"></div>
+ <div style="height:12px;border-radius:6px;margin:10px 0;background:linear-gradient(90deg,red,#ff0,lime,cyan,blue,#f0f,red)"></div>
+ <div class="rw">#2563EB<span class="cat">Guardar en la barra</span></div>
+ <div class="lab">Recientes</div><div>${['#0EA5E9','#EC4899','#71717A','#F97316'].map(c=>`<span class="c" style="background:${c};display:inline-block"></span>`).join('')}</div></div>`,
+ '¿6 colores fijos por herramienta está bien, o quieres poder poner más?');
+document.getElementById('out').innerHTML=h;
+</script></body></html>

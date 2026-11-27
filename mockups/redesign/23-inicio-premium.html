@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Inicio premium · propuestas</title>
+<style>
+:root{
+  --bg:#FFFFFF; --sb:#F7F7F5; --line:rgba(15,23,42,.07); --text:#18181B; --muted:#71717A; --faint:#A1A1AA;
+  --soft:rgba(24,24,27,.06); --accent:#18181B; --accent-fg:#fff; --tile:#F6F6F3; --ring:rgba(15,23,42,.10);
+  --shadow:0 14px 26px -14px rgba(15,23,42,.35),0 2px 6px -2px rgba(15,23,42,.12);
+}
+.dark{
+  --bg:#17181D; --sb:#121318; --line:rgba(255,255,255,.07); --text:#F4F4F5; --muted:#A1A1AA; --faint:#71717A;
+  --soft:rgba(255,255,255,.07); --accent:#F4F4F5; --accent-fg:#17181D; --tile:#1E1F26; --ring:rgba(255,255,255,.12);
+  --shadow:0 16px 28px -14px rgba(0,0,0,.8),0 2px 6px -2px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Inter,system-ui,sans-serif;font-size:12px;background:#E6E6E2;color:#18181B;padding:28px 16px 60px;display:flex;flex-direction:column;align-items:center;gap:18px;-webkit-font-smoothing:antialiased}
+h1{font-size:22px;letter-spacing:-.02em}
+.lead{max-width:1180px;color:#52525B;font-size:13px;line-height:1.55}
+.sec{width:1180px;max-width:100%}
+.sec h2{font-size:15px;margin:22px 0 4px}
+.sec p.d{color:#52525B;font-size:12.5px;line-height:1.5;margin-bottom:10px;max-width:900px}
+.pair{display:flex;flex-direction:column;gap:14px}
+.frame{width:1180px;height:700px;border-radius:16px;overflow:hidden;display:flex;background:var(--bg);color:var(--text);box-shadow:0 24px 50px -20px rgba(15,23,42,.35)}
+.side{width:214px;background:var(--sb);border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;gap:2px}
+.brand{font-weight:700;font-size:15px;padding:2px 8px 16px}
+.nav{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:9px;font-size:12.5px;font-weight:500;color:var(--text)}
+.nav.on{background:var(--soft)}
+.nav svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.6;opacity:.8}
+.nav.sub{padding-left:32px;font-size:12px;color:var(--muted)}
+.nav i{width:8px;height:8px;border-radius:3px;display:inline-block}
+.sp{flex:1}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.hdr{height:58px;display:flex;align-items:center;padding:0 26px;gap:12px;border-bottom:1px solid var(--line)}
+.hdr h3{font-size:17px;font-weight:600;letter-spacing:-.01em}
+.hdr .sp{flex:1}
+.ib{width:32px;height:32px;display:grid;place-items:center;border-radius:9px;color:var(--muted)}
+.ib svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7}
+.new{height:34px;padding:0 14px;border-radius:10px;background:var(--accent);color:var(--accent-fg);font-weight:600;display:flex;align-items:center;gap:6px;font-size:12.5px}
+.body{flex:1;overflow:hidden;padding:6px 30px 0}
+.grp{display:flex;align-items:baseline;gap:8px;margin:18px 0 10px}
+.grp b{font-size:12px;font-weight:600}
+.grp span{font-size:11px;color:var(--faint)}
+.grp::after{content:"";flex:1;height:1px;background:var(--line);margin-left:8px;transform:translateY(-3px)}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px 10px}
+.obj{min-width:0;display:flex;flex-direction:column;align-items:center;gap:9px;padding:8px 4px}
+.vis{height:132px;display:flex;align-items:flex-end;justify-content:center;position:relative}
+.name{font-size:12px;font-weight:500;text-align:center;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta{font-size:10.5px;color:var(--faint);margin-top:2px;text-align:center}
+.star{position:absolute;top:6px;right:6px;width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,.9);display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.star svg{width:10px;height:10px;fill:#E0A100;stroke:none}
+/* objetos */
+.book{position:relative;border-radius:4px 9px 9px 4px;box-shadow:var(--shadow);overflow:hidden}
+.book::before{content:"";position:absolute;left:0;top:0;bottom:0;width:9px;background:rgba(0,0,0,.10);box-shadow:1px 0 0 rgba(255,255,255,.25)}
+.book .fmt{position:absolute;left:15px;bottom:8px;font-size:9px;font-weight:700;color:rgba(255,255,255,.85);letter-spacing:.04em}
+.book .lbl{position:absolute;left:18px;right:10px;top:16%;padding:6px 7px;border-radius:4px;background:rgba(255,255,255,.92);color:#27272A;font-size:9.5px;font-weight:600;line-height:1.2;box-shadow:0 1px 0 rgba(0,0,0,.05)}
+.book .lbl small{display:block;font-weight:500;color:#71717A;font-size:8px;margin-top:2px}
+.book .band{position:absolute;top:0;bottom:0;right:16%;width:5px;background:rgba(0,0,0,.16);box-shadow:1px 0 0 rgba(255,255,255,.2)}
+.book .emb{position:absolute;left:18px;right:10px;top:22%;color:rgba(255,255,255,.92);font-size:11px;font-weight:600;letter-spacing:-.01em;line-height:1.2;text-shadow:0 1px 0 rgba(0,0,0,.08)}
+.book .emb small{display:block;font-size:8.5px;font-weight:500;opacity:.75;margin-top:3px}
+.book .tex{position:absolute;inset:0;background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.05) 0 1px,transparent 1px 3px),repeating-linear-gradient(-45deg,rgba(0,0,0,.035) 0 1px,transparent 1px 3px)}
+.book .deb{position:absolute;left:18px;right:12px;top:18%;height:36%;border:1.5px solid rgba(255,255,255,.55);border-radius:5px;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.95);font-size:10px;font-weight:600;padding:4px}
+.board{position:relative;border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
+.board.ring{box-shadow:var(--shadow),0 0 0 1px var(--ring)}
+.board .inf{position:absolute;right:6px;bottom:3px;font-size:11px;opacity:.55}
+.tile{background:var(--tile);border-radius:14px;padding:18px 10px 10px;align-items:center;gap:10px}
+.tile .vis{height:120px}
+/* destacados */
+.feat{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:14px}
+.fcard{border-radius:14px;overflow:hidden;background:var(--tile);box-shadow:0 0 0 1px var(--line)}
+.fcard .pv{height:150px;position:relative}
+.fcard .ft{padding:10px 12px;display:flex;align-items:center;gap:8px}
+.fcard .ft b{font-size:12.5px;font-weight:600;flex:1}
+.fcard .ft span{font-size:10.5px;color:var(--faint)}
+.row{display:flex;align-items:center;gap:12px;padding:7px 8px;border-radius:9px}
+.row:hover{background:var(--soft)}
+.row .mini{width:44px;height:34px;display:flex;align-items:flex-end;justify-content:center}
+.row b{font-size:12px;font-weight:500;flex:1}
+.row span{font-size:11px;color:var(--faint);width:110px}
+.cov{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;background:#fff;border-radius:16px;padding:22px 18px}
+.cov.dark{background:#17181D;color:#F4F4F5}
+.cov .c{display:flex;flex-direction:column;align-items:center;gap:10px}
+.cov .c b{font-size:12px}
+.cov .c small{font-size:11px;color:#71717A;text-align:center;max-width:180px;line-height:1.4}
+.badge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.04em;padding:2px 7px;border-radius:6px;background:#18181B;color:#fff;margin-left:6px;vertical-align:2px}
+</style>
+</head>
+<body>
+<h1>Inicio premium · propuestas</h1>
+<p class="lead">Respuesta a «se siente flojo». Arreglos que valen para cualquier propuesta: <b>fondo sólido</b> (el vidrio solo en menús y tarjetas, nunca detrás de la biblioteca), <b>aro de 1 px</b> en pizarras oscuras, <b>todos los objetos sobre la misma línea base</b>, <b>filas más juntas</b>, <b>estrella pegada al objeto</b> y miniaturas <b>encuadradas en el contenido</b>. Debajo: 1) cómo resolver las tapas y 2) tres maneras de ordenar la biblioteca.</p>
+
+<div class="sec"><h2>1 · Tapas de cuaderno</h2>
+<p class="d">La etiqueta blanca vacía de hoy parece un esqueleto de carga. Cinco salidas, todas con la misma paleta pastel:</p>
+<div id="covers"></div></div>
+
+<div class="sec"><h2>2 · Propuesta A — «Estantería por fecha» <span class="badge">RECOMENDADA</span></h2>
+<p class="d">La misma cuadrícula de hoy, pero agrupada en Hoy / Ayer / Esta semana / Antes. La fecha ya no se repite bajo cada objeto (solo la hora o «2 pág»). Las tapas llevan el título en la etiqueta. Es el cambio más barato y el que más se nota.</p>
+<div class="pair" id="pA"></div></div>
+
+<div class="sec"><h2>3 · Propuesta B — «Galería en baldosas»</h2>
+<p class="d">Cada objeto se apoya en una baldosa suave del mismo tamaño. La cuadrícula queda perfectamente regular aunque mezcles A4, 16:9 y pizarras. Tapas limpias con elástico. Se parece a Apple Freeform o Notability.</p>
+<div class="pair" id="pB"></div></div>
+
+<div class="sec"><h2>4 · Propuesta C — «Continuar + estantería»</h2>
+<p class="d">Arriba, «Continuar» muestra en grande los 3 últimos documentos con su contenido visible. Abajo, todo lo demás en una cuadrícula más pequeña. Se parece a GoodNotes o Figma. Es lo que más ayuda a quien abre la app para seguir con la clase de ayer.</p>
+<div class="pair" id="pC"></div></div>
+
+<script>
+const COL={salvia:'#8DB8A2',rosa:'#E39AAE',arena:'#D9B596',durazno:'#E9A27E',cielo:'#8EAED6',lavanda:'#AC97D3',limon:'#D9CB7A'};
+const IC={doc:'<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',star:'<path d="M12 4l2.4 5 5.4.6-4 3.7 1.1 5.3L12 16l-4.9 2.6 1.1-5.3-4-3.7 5.4-.6z"/>',folder:'<path d="M3 7h6l2 2h10v10H3z"/>',tag:'<path d="M3 12V4h8l10 10-8 8z"/>',trash:'<path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14"/>',search:'<circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/>',filter:'<path d="M4 6h16M7 12h10M10 18h4"/>',moon:'<path d="M20 14A8 8 0 1 1 10 4a6 6 0 0 0 10 10z"/>',gear:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>',side:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14"/>'};
+const svg=k=>`<svg viewBox="0 0 24 24">${IC[k]}</svg>`;
+const starB='<div class="star"><svg viewBox="0 0 24 24">'+IC.star+'</svg></div>';
+
+function book(c,{w=92,fmt='A4',style='label',title='',sub=''}={}){
+  const h=fmt==='A4'?Math.round(w*1.36):Math.round(w*0.72);
+  if(fmt!=='A4') w=Math.round(w*1.45);
+  const col=COL[c];
+  let inner='';
+  if(style==='empty') inner='<div class="lbl" style="height:16px"></div>';
+  if(style==='label') inner=`<div class="lbl">${title}${sub?`<small>${sub}</small>`:''}</div>`;
+  if(style==='clean') inner='<div class="band"></div>';
+  if(style==='cloth') inner=`<div class="tex"></div><div class="emb">${title}${sub?`<small>${sub}</small>`:''}</div>`;
+  if(style==='deboss') inner=`<div class="tex"></div><div class="deb">${title}</div>`;
+  return `<div class="book" style="width:${w}px;height:${h}px;background:linear-gradient(165deg,${col},${col}d9)">${inner}<span class="fmt">${fmt}</span></div>`;
+}
+function board(kind,{w=150,h=108,content=1,ring=true}={}){
+  const dark=kind!=='light', green=kind==='green';
+  const bg=green?'#1C2F27':dark?'#191A20':'#FAF9F5';
+  const grid=dark?'rgba(255,255,255,.07)':'rgba(15,23,42,.07)';
+  const ink=dark?'#E8E8E8':'#27272A';
+  const art=content===0?'':content===1?
+   `<path d="M${w*.18} ${h*.78} L${w*.42} ${h*.3} L${w*.62} ${h*.78}Z" fill="${dark?'rgba(96,165,250,.12)':'rgba(37,99,235,.08)'}" stroke="#60A5FA" stroke-width="1.6"/>
+    <path d="M${w*.66} ${h*.36}h${w*.22}M${w*.66} ${h*.48}h${w*.16}" stroke="${ink}" stroke-width="2" stroke-linecap="round"/>
+    <path d="M${w*.66} ${h*.6}h${w*.2}" stroke="#F59E0B" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="${w*.42}" cy="${h*.3}" r="2.2" fill="#F87171"/>`:
+   `<path d="M${w*.12} ${h*.62}c${w*.1} -${h*.3} ${w*.2} ${h*.3} ${w*.3} 0s${w*.2} -${h*.3} ${w*.3} 0" fill="none" stroke="${ink}" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M${w*.14} ${h*.3}h${w*.3}" stroke="#34D399" stroke-width="2" stroke-linecap="round"/><path d="M${w*.52} ${h*.3}h${w*.2}" stroke="${ink}" stroke-width="2" stroke-linecap="round"/>`;
+  return `<div class="board ${ring?'ring':''}" style="width:${w}px;height:${h}px;background:${bg};color:${ink}">
+   <svg width="${w}" height="${h}" style="position:absolute;inset:0"><defs><pattern id="g${w}${h}${kind}" width="14" height="14" patternUnits="userSpaceOnUse"><path d="M14 0H0V14" fill="none" stroke="${grid}"/></pattern></defs><rect width="100%" height="100%" fill="url(#g${w}${h}${kind})"/>${art}</svg><span class="inf">∞</span></div>`;
+}
+const obj=(vis,name,meta,{fav=false,cls=''}={})=>`<div class="obj ${cls}"><div class="vis">${vis}${fav?starB:''}</div><div style="width:100%;min-width:0;padding:0 4px"><div class="name">${name}</div>${meta?`<div class="meta">${meta}</div>`:''}</div></div>`;
+
+function frame(dark,title,body){
+  return `<div class="frame ${dark?'dark':''}">
+  <div class="side"><div class="brand">Finily</div>
+   <div class="nav on">${svg('doc')}Documentos</div><div class="nav">${svg('star')}Favoritos</div><div class="nav">${svg('folder')}Carpetas</div>
+   <div class="nav sub"><i style="background:#AC97D3"></i>Prueba raras</div><div class="nav">${svg('tag')}Etiquetas</div><div class="nav sub"><i style="background:#8DB8A2;border-radius:50%"></i>Yordi</div>
+   <div class="sp"></div><div class="nav">${svg('trash')}Papelera<span style="margin-left:auto;color:var(--faint)">2</span></div>
+   <div style="display:flex;gap:4px;padding:8px 4px 0;border-top:1px solid var(--line);margin-top:6px"><div class="ib">${svg('moon')}</div><div class="ib">${svg('gear')}</div></div></div>
+  <div class="main"><div class="hdr"><h3>${title}</h3><div class="sp"></div><div class="ib">${svg('search')}</div><div class="ib">${svg('filter')}</div><div class="new">+ Nuevo</div></div>
+  <div class="body">${body}</div></div></div>`;
+}
+
+/* Datos de ejemplo (como la biblioteca real del usuario) */
+const L=(st)=>[
+ ['g','Clase Yordi','09:44',{fav:1,content:1,kind:'dark'}],
+ ['b','Cuaderno sin título (15)','09:12',{content:1,kind:'green'}],
+ ['n','Prueba 1','2 pág','salvia','16:9'],
+ ['n','Yordi','A4','salvia','A4'],
+ ['g','Cuaderno sin título (14)','',{content:2,kind:'green'}],
+ ['n','Física · Dinámica','5 pág','arena','16:9'],
+ ['n','Cuaderno sin título (23)','','salvia','A4'],
+ ['n','Álgebra 2.º','12 pág','rosa','A4'],
+ ['g','Pizarra sin título','',{content:2,kind:'dark'}],
+ ['n','Cuaderno sin título (13)','2 pág','durazno','16:9'],
+ ['n','Geometría','','cielo','16:9'],
+ ['g','Cuaderno sin título (20)','',{content:0,kind:'dark'}],
+];
+function objFrom(r,style,scale=1){
+  const [t,name,meta,a,b]=r;
+  if(t==='n') return obj(book(a,{fmt:b,style,title:name.replace(/ sin título/,' sin título'),sub:meta&&meta!=='A4'?meta:'',w:Math.round(92*scale)}),style==='label'||style==='cloth'?'':name,style==='label'||style==='cloth'?'':meta);
+  return obj(board(a.kind,{content:a.content,w:Math.round(150*scale),h:Math.round(108*scale)}),name,meta,{fav:a.fav});
+}
+// A: grouped, label covers -> names shown under too for consistency
+function propA(dark){
+  const rows=L();
+  const mk=(arr)=>`<div class="grid">${arr.map(r=>{const [t,name,meta,a,b]=r;
+    const vis=t==='n'?book(a,{fmt:b,style:'label',title:name,sub:''}):board(a.kind,{content:a.content});
+    return obj(vis,name,meta==='A4'?'':meta,{fav:t!=='n'&&a.fav});}).join('')}</div>`;
+  return frame(dark,'Documentos',`<div class="grp"><b>Hoy</b><span>2</span></div>${mk(rows.slice(0,2))}
+   <div class="grp"><b>Ayer</b><span>8</span></div>${mk(rows.slice(2,8))}
+   <div class="grp"><b>Esta semana</b><span>14</span></div>${mk(rows.slice(8,12))}`);
+}
+function propB(dark){
+  const rows=L();
+  const mk=(arr)=>`<div class="grid" style="gap:14px">${arr.map(r=>{const [t,name,meta,a,b]=r;
+    const vis=t==='n'?book(a,{fmt:b,style:'clean',w:b==='A4'?76:80}):board(a.kind,{content:a.content,w:132,h:96});
+    return `<div class="obj tile"><div class="vis">${vis}${t!=='n'&&a.fav?starB:''}</div><div><div class="name">${name}</div><div class="meta">${meta==='A4'?'Cuaderno A4':meta||(t==='n'?'Cuaderno':'Pizarra')}</div></div></div>`;}).join('')}</div>`;
+  return frame(dark,'Documentos',`<div class="grp"><b>Hoy</b><span>2</span></div>${mk(rows.slice(0,6))}<div class="grp"><b>Ayer</b><span>8</span></div>${mk(rows.slice(6,12))}`);
+}
+function propC(dark){
+  const rows=L();
+  const feat=[[board('dark',{w:340,h:150,content:1,ring:false}),'Clase Yordi','Hoy 09:44 · Pizarra'],[board('green',{w:340,h:150,content:2,ring:false}),'Cuaderno sin título (15)','Hoy 09:12 · Pizarra'],
+   [`<div style="height:150px;display:flex;align-items:center;justify-content:center;gap:16px;background:linear-gradient(160deg,${COL.arena}33,transparent)">${book('arena',{fmt:'16:9',style:'cloth',title:'Física · Dinámica',w:88})}<div style="width:96px;height:68px;background:#fff;border-radius:4px;box-shadow:var(--shadow);position:relative"><svg width="96" height="68"><path d="M14 54 46 20 70 54Z" fill="none" stroke="#2563EB" stroke-width="1.4"/><path d="M14 14h30" stroke="#18181B" stroke-width="1.6"/></svg></div></div>`,'Física · Dinámica','Ayer · pág. 3 de 5']];
+  return frame(dark,'Documentos',`<div class="grp" style="margin-top:14px"><b>Continuar</b></div>
+   <div class="feat" style="margin-top:0">${feat.map(([pv,n,m])=>`<div class="fcard"><div class="pv">${pv}</div><div class="ft"><b>${n}</b><span>${m}</span></div></div>`).join('')}</div>
+   <div class="grp"><b>Todo</b><span>32 · por fecha</span></div>
+   <div class="grid" style="grid-template-columns:repeat(8,minmax(0,1fr));row-gap:14px">${rows.concat(rows).slice(2,18).map(r=>{const [t,name,meta,a,b]=r;
+     const vis=t==='n'?book(a,{fmt:b,style:'cloth',title:'',w:b==='A4'?62:58}):board(a.kind,{content:a.content,w:100,h:72});
+     return obj(vis,name,'').replace('class="vis"','class="vis" style="height:92px"');}).join('')}</div>`);
+}
+
+/* Tapas */
+const covers=(dark)=>`<div class="cov ${dark?'dark':''}">${[
+ ['Hoy','La etiqueta vacía parece algo que aún no cargó.','empty'],
+ ['1 · Etiqueta con título','Como un cuaderno real: el nombre escrito en la etiqueta.','label'],
+ ['2 · Limpia con elástico','Sin etiqueta, solo el elástico. Muy sobria; el nombre va debajo.','clean'],
+ ['3 · Tela con título','Textura de tela muy sutil y el título impreso en blanco.','cloth'],
+ ['4 · Relieve','Recuadro hundido con el título, como Moleskine.','deboss']].map(([t,d,st])=>
+ `<div class="c">${book(st==='empty'?'salvia':['salvia','rosa','cielo','arena'][['label','clean','cloth','deboss'].indexOf(st)],{style:st,title:'Álgebra 2.º',sub:'12 pág',w:104})}<b>${t}</b><small>${d}</small></div>`).join('')}</div>`;
+document.getElementById('covers').innerHTML=covers(false)+'<div style="height:10px"></div>'+covers(true);
+document.getElementById('pA').innerHTML=propA(false)+propA(true);
+document.getElementById('pB').innerHTML=propB(false)+propB(true);
+document.getElementById('pC').innerHTML=propC(false)+propC(true);
+</script>
+</body>
+</html>

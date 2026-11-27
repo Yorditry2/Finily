@@ -14,7 +14,7 @@ Lee primero `AGENTS.md` y `DESIGN.md`. Los mockups aprobados están en `mockups/
 | 7 | Implementado y verificado | Paridad completa con mockups `00` y `05–11`: Liquid Glass (`1/4` blur + realce chroma + brillo 1 px), `HomeMotion` (revelado circular Claro↔Oscuro, zoom carpeta, vuelo a papelera + FLIP, arrastre interno, dropzone), selector libre `BoardColorPopover`, formatos `A5`/`Carta`, favoritos + etiquetas persistentes (`.finily-library.json`), importación PDF no bloqueante, menú vacío y multiselección, `UpdateBanner` en pie del sidebar, 6 secciones de Ajustes funcionales, y verificación visual por capturas |
 
 ## Pendiente
-- **Editor** (`FloatingToolbar`, popovers, menú radial, reemplazar `QColorDialog` por selector propio).
+- **Editor**: diseño aprobado, ver `HANDOFF-EDITOR.md` (`FloatingToolbar`, popovers, menú radial, reemplazar `QColorDialog` por selector propio).
 - **Logo final** (`branding/`).
 - Al terminar: fusionar `redesign/home` en `main`.
 

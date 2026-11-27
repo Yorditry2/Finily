@@ -1341,8 +1341,8 @@ void drawSelectionOverlay(QPainter& painter,const ShapeItem& shape,const ThemeCo
 }
 
 SnapResult snapShapeVertex(const ShapeItem& shape, int index, const SnapResult& external,
-                          QPointF raw, double zoom) {
-    if (external.contact)
+                          QPointF raw, double zoom, const SmartGuideOptions& guideOpts) {
+    if (!guideOpts.enabled || !guideOpts.alignXY || external.contact)
         return external;
     zoom = std::max(.01, zoom);
     const auto handles = getShapeHandles(shape);
@@ -1772,58 +1772,64 @@ bool updateShapeLinks(QVector<ShapeItem>& shapes, const QVector<ShapeItem>& orig
     return dependentChanged;
 }
 
-SnapResult snapPointWithGuides(const QPointF& raw,const std::optional<QPointF>& anchor,const QVector<ShapeItem>& shapes,const QString& excluded,double zoom,bool align) {
+SnapResult snapPointWithGuides(const QPointF& raw,const std::optional<QPointF>& anchor,const QVector<ShapeItem>& shapes,const QString& excluded,double zoom,bool align,const SmartGuideOptions& guideOpts) {
     zoom=std::max(.01,zoom);SnapResult result{raw,{}};
+    if (!guideOpts.enabled)
+        return result;
     QVector<QPointF> targets;
-    for(const auto& shape:shapes)
-        if((excluded.isEmpty()||shape.id!=excluded) && shape.vertices.size()>=2)targets+=snapTargets(shape);
-    auto joined = [](QPointF point) {
-        SnapResult snap{point, {}, true};
-        snap.guides.append({point, point, QString(), false});
-        return snap;
-    };
-    // Radios precisos y táctiles (8px vértices, 7px contornos) para que el imán
-    // solo se active al acercarse de verdad y nunca "secuestre" el trazo desde lejos.
-    double nearest=8.0/zoom;std::optional<QPointF> vertex;
-    for(auto target:targets){const double d=length(raw-target);if(d<nearest){nearest=d;vertex=target;}}
-    double bestBoundaryDist = 7.0 / zoom;
-    double anchoredDistance = 9.0 / zoom;
-    const QRectF contactArea(raw - QPointF(anchoredDistance, anchoredDistance),
-                             QSizeF(anchoredDistance * 2, anchoredDistance * 2));
-    std::optional<QPointF> boundarySnap;
-    std::optional<QPointF> anchoredBoundary;
-    for (const auto& shape : shapes) {
-        if ((!excluded.isEmpty() && shape.id == excluded) || shape.kind == ShapeKind::ShadedRegion || shape.vertices.size() < 2
-            || !shape.bounds.intersects(contactArea))
-            continue;
-        const auto boundary = closestOutlinePoint(shape, raw);
-        if (!boundary)
-            continue;
-        const double d = length(raw - *boundary);
-        if (d < bestBoundaryDist) {
-            bestBoundaryDist = d;
-            boundarySnap = boundary;
-        }
-        // When drawing outward from a center, favor its own contour over
-        // nearby endpoints from other figures that don't reach that contour.
-        const bool centeredShape = shape.kind == ShapeKind::Circle || shape.kind == ShapeKind::Ellipse
-            || shape.kind == ShapeKind::Rectangle;
-        if (anchor && centeredShape && length(*anchor - ovalBounds(shape).center()) < 1e-6
-            && d < std::min(anchoredDistance, length(*boundary - *anchor) * .55)) {
-            anchoredDistance = d;
-            anchoredBoundary = boundary;
-        }
+    if (guideOpts.snapKeyPoints || (align && guideOpts.alignXY)) {
+        for(const auto& shape:shapes)
+            if((excluded.isEmpty()||shape.id!=excluded) && shape.vertices.size()>=2)targets+=snapTargets(shape);
     }
-    if (anchoredBoundary) return joined(*anchoredBoundary);
-    if (boundarySnap && bestBoundaryDist < contourJoinTolerance && nearest > contourJoinTolerance)
-        return joined(*boundarySnap);
-    if (vertex && nearest <= bestBoundaryDist + 3.0 / zoom) return joined(*vertex);
-    if (boundarySnap) return joined(*boundarySnap);
+    if (guideOpts.snapKeyPoints) {
+        auto joined = [](QPointF point) {
+            SnapResult snap{point, {}, true};
+            snap.guides.append({point, point, QString(), false});
+            return snap;
+        };
+        // Radios precisos y táctiles (8px vértices, 7px contornos) para que el imán
+        // solo se active al acercarse de verdad y nunca "secuestre" el trazo desde lejos.
+        double nearest=8.0/zoom;std::optional<QPointF> vertex;
+        for(auto target:targets){const double d=length(raw-target);if(d<nearest){nearest=d;vertex=target;}}
+        double bestBoundaryDist = 7.0 / zoom;
+        double anchoredDistance = 9.0 / zoom;
+        const QRectF contactArea(raw - QPointF(anchoredDistance, anchoredDistance),
+                                 QSizeF(anchoredDistance * 2, anchoredDistance * 2));
+        std::optional<QPointF> boundarySnap;
+        std::optional<QPointF> anchoredBoundary;
+        for (const auto& shape : shapes) {
+            if ((!excluded.isEmpty() && shape.id == excluded) || shape.kind == ShapeKind::ShadedRegion || shape.vertices.size() < 2
+                || !shape.bounds.intersects(contactArea))
+                continue;
+            const auto boundary = closestOutlinePoint(shape, raw);
+            if (!boundary)
+                continue;
+            const double d = length(raw - *boundary);
+            if (d < bestBoundaryDist) {
+                bestBoundaryDist = d;
+                boundarySnap = boundary;
+            }
+            // When drawing outward from a center, favor its own contour over
+            // nearby endpoints from other figures that don't reach that contour.
+            const bool centeredShape = shape.kind == ShapeKind::Circle || shape.kind == ShapeKind::Ellipse
+                || shape.kind == ShapeKind::Rectangle;
+            if (anchor && centeredShape && length(*anchor - ovalBounds(shape).center()) < 1e-6
+                && d < std::min(anchoredDistance, length(*boundary - *anchor) * .55)) {
+                anchoredDistance = d;
+                anchoredBoundary = boundary;
+            }
+        }
+        if (anchoredBoundary) return joined(*anchoredBoundary);
+        if (boundarySnap && bestBoundaryDist < contourJoinTolerance && nearest > contourJoinTolerance)
+            return joined(*boundarySnap);
+        if (vertex && nearest <= bestBoundaryDist + 3.0 / zoom) return joined(*vertex);
+        if (boundarySnap) return joined(*boundarySnap);
+    }
     if (!align) return result;
 
     // 3. Smooth cardinal angle snap ONLY (0, 90, 180, 270 deg) so free rotation never feels bumpy!
     bool angleSnapped=false;
-    if(anchor&&length(raw-*anchor)>10.0/zoom) {
+    if(guideOpts.orthoPerpGuides&&anchor&&length(raw-*anchor)>10.0/zoom) {
         const auto delta=raw-*anchor;const double heading=std::atan2(delta.y(),delta.x())*180/std::numbers::pi;
         double bestDifference=3.0,bestAngle=0;
         for(double angle : {0.0, 90.0, 180.0, 270.0}) {
@@ -1883,7 +1889,7 @@ SnapResult snapPointWithGuides(const QPointF& raw,const std::optional<QPointF>& 
             }
         }
     }
-    if(!angleSnapped) {
+    if(!angleSnapped && guideOpts.alignXY) {
         double bestX=5.0/zoom,bestY=5.0/zoom;std::optional<QPointF> alignX,alignY;
         for(auto target:targets){const double dx=std::abs(raw.x()-target.x()),dy=std::abs(raw.y()-target.y());if(dx<bestX){bestX=dx;alignX=target;}if(dy<bestY){bestY=dy;alignY=target;}}
         if(alignX){result.point.setX(alignX->x());result.guides.append({*alignX,QPointF(alignX->x(),result.point.y()),QString(),false});}
@@ -1891,7 +1897,7 @@ SnapResult snapPointWithGuides(const QPointF& raw,const std::optional<QPointF>& 
     }
     return result;
 }
-std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke) {
+std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke, const AutoShapeOptions& opts) {
     if(stroke.points.size()<2)return std::nullopt;
     QVector<QPointF> p;double pathLength=0;
     for(const auto& sample:stroke.points){const QPointF point(sample.x,sample.y);if(p.isEmpty()||length(point-p.back())>.1){if(!p.isEmpty())pathLength+=length(point-p.back());p.append(point);}}
@@ -1907,12 +1913,12 @@ std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke) {
 
     // 1. Straight Line
     const double chord=length(p.back()-p.front());double deviation=0;for(auto point:p)deviation=std::max(deviation,segmentDistance(point,p.front(),p.back()));
-    if(chord/pathLength>.91&&deviation<std::max(3.5,chord*.065))return finish(ShapeKind::Line,{p.front(),p.back()});
+    if(opts.line&&chord/pathLength>.91&&deviation<std::max(3.5,chord*.065))return finish(ShapeKind::Line,{p.front(),p.back()});
 
     const QRectF bounds=vertexBounds(p);const double diagonal=std::hypot(bounds.width(),bounds.height());
 
     // 2. Square Root / Radical (down-up hook + horizontal roof)
-    if(bounds.height()>8&&bounds.width()>15)for(qsizetype roof=2;roof+1<p.size();++roof) {
+    if(opts.radical&&bounds.height()>8&&bounds.width()>15)for(qsizetype roof=2;roof+1<p.size();++roof) {
         if(p.back().x()-p[roof].x()<bounds.width()*.30)continue;
         double roofError=0;for(qsizetype j=roof;j<p.size();++j)roofError=std::max(roofError,std::abs(p[j].y()-p[roof].y()));
         if(roofError>std::max(4.0,bounds.height()*.16))continue;
@@ -1939,9 +1945,11 @@ std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke) {
         const double rmsCircle = mean > 1e-4 ? std::sqrt(variance / double(p.size())) / mean : 1.0;
         const double aspect = bounds.height() > 1e-4 ? bounds.width() / bounds.height() : 10.0;
         const bool isVeryRound = (mean > 4 && aspect >= 0.78 && aspect <= 1.28 && rmsCircle < 0.105 && maxError / mean < 0.20);
+        if (isVeryRound && !opts.circle)
+            return std::nullopt;
 
         // Adaptive RDP sweep for Triangles (3 corners) and Rectangles/Quads (4 corners)
-        if (!isVeryRound) {
+        if (!isVeryRound && (opts.triangle || opts.rectangle || opts.quadrilateral || opts.polygon)) {
             auto pruneShallowCorners = [](QVector<QPointF> poly) {
                 bool changed = true;
                 while (changed && poly.size() > 3) {
@@ -1964,7 +1972,7 @@ std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke) {
 
             for (double epsFactor : {0.055, 0.075, 0.095, 0.12, 0.145}) {
                 auto corners = pruneShallowCorners(closedCorners(p, std::max(2.5, diagonal * epsFactor)));
-                if (corners.size() == 3) {
+                if (opts.triangle && corners.size() == 3) {
                     const auto a = corners[1] - corners[0], b = corners[2] - corners[0];
                     if (std::abs(a.x() * b.y() - a.y() * b.x()) > bounds.width() * bounds.height() * 0.12) {
                         // 1. Si una esquina está cerca de 90° (~78°..102°), la deja exacta: triángulo rectángulo limpio.
@@ -2010,7 +2018,7 @@ std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke) {
                         return finish(ShapeKind::Triangle, corners, true);
                     }
                 }
-                if (corners.size() == 4) {
+                if (corners.size() == 4 && (opts.rectangle || opts.quadrilateral)) {
                     bool rightAngles = true;
                     for (int i = 0; i < 4; ++i) {
                         const auto a = corners[(i + 3) % 4] - corners[i];
@@ -2025,20 +2033,23 @@ std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke) {
                             aligned = false;
                     }
                     if (rightAngles && aligned) {
-                        // Casi cuadrado (±10%) -> cuadrado exacto.
-                        const double ratio = bounds.height() > 1e-4 ? bounds.width() / bounds.height() : 0.0;
-                        if (ratio > 0.90 && ratio < 1.10) {
-                            const double side = (bounds.width() + bounds.height()) * 0.5;
-                            const QPointF tl = bounds.center() - QPointF(side, side) * 0.5;
-                            return finish(ShapeKind::Rectangle, {tl, tl + QPointF(side, side)}, true);
+                        if (opts.rectangle) {
+                            // Casi cuadrado (±10%) -> cuadrado exacto.
+                            const double ratio = bounds.height() > 1e-4 ? bounds.width() / bounds.height() : 0.0;
+                            if (ratio > 0.90 && ratio < 1.10) {
+                                const double side = (bounds.width() + bounds.height()) * 0.5;
+                                const QPointF tl = bounds.center() - QPointF(side, side) * 0.5;
+                                return finish(ShapeKind::Rectangle, {tl, tl + QPointF(side, side)}, true);
+                            }
+                            return finish(ShapeKind::Rectangle, {bounds.topLeft(), bounds.bottomRight()}, true);
                         }
-                        return finish(ShapeKind::Rectangle, {bounds.topLeft(), bounds.bottomRight()}, true);
+                    } else if (opts.quadrilateral) {
+                        // Tilted quad / trapezoid / diamond -> clean closed 4-vertex editable polygon!
+                        return finish(ShapeKind::Polyline, corners, true);
                     }
-                    // Tilted quad / trapezoid / diamond -> clean closed 4-vertex editable polygon!
-                    return finish(ShapeKind::Polyline, corners, true);
                 }
                 // 5-8 esquinas casi iguales (lados y giros parejos) -> polígono regular exacto.
-                if (corners.size() >= 5 && corners.size() <= 8) {
+                if (opts.polygon && corners.size() >= 5 && corners.size() <= 8) {
                     const int n = int(corners.size());
                     QPointF centroid;
                     for (const QPointF& c : corners) centroid += c;
@@ -2071,13 +2082,13 @@ std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke) {
         }
 
         // Circle fallback
-        if (mean > 3 && aspect >= 0.70 && aspect <= 1.42 && rmsCircle < 0.16 && maxError / mean < 0.30) {
+        if (opts.circle && mean > 3 && aspect >= 0.70 && aspect <= 1.42 && rmsCircle < 0.16 && maxError / mean < 0.30) {
             return finish(ShapeKind::Circle, {center, center + QPointF(mean, 0)}, true);
         }
     }
 
     // 4. Ángulo recto abierto (trazo en "L" a ~90° antes del fallback de curva)
-    if (!isClosed && pathLength > 28.0 && chord > 14.0) {
+    if (opts.rightAngleL && !isClosed && pathLength > 28.0 && chord > 14.0) {
         qsizetype cornerIdx = -1;
         double maxCornerDist = 0.0;
         for (qsizetype i = 1; i + 1 < p.size(); ++i) {
@@ -2110,7 +2121,7 @@ std::optional<ShapeItem> recognizeFreehandShape(const Stroke& stroke) {
     }
 
     // 5. Smooth Open Curve / Arc (e.g. curved arrows, angle arcs, smooth curved lines!)
-    if (!isClosed && chord > 14.0 && deviation >= std::max(6.0, chord * 0.06)) {
+    if (opts.curve && !isClosed && chord > 14.0 && deviation >= std::max(6.0, chord * 0.06)) {
         // Pick the point at 50% arc length as the on-curve midpoint handle
         double halfLen = pathLength * 0.5, acc = 0.0;
         QPointF midPt = p[p.size() / 2];

@@ -551,6 +551,30 @@ private slots:
         QVERIFY(topDrawn);
         QVERIFY(bottomDrawn);
     }
+
+    void highlighterTipStyle1RendersWithRoundCaps() {
+        auto renderHl = [](int tipStyle) {
+            Stroke hl = test::makeLineStroke(
+                QPointF(20.0, 30.0), QPointF(80.0, 30.0), 4, 16.0, ToolType::Highlighter, Qt::yellow);
+            hl.tipStyle = tipStyle;
+            hl.opacity = 1.0;
+
+            QImage img(100, 60, QImage::Format_ARGB32_Premultiplied);
+            img.fill(Qt::transparent);
+            QPainter p(&img);
+            drawStroke(p, hl, false);
+            return img;
+        };
+
+        const QImage flatImg = renderHl(0);  // Biselado (FlatCap)
+        const QImage roundImg = renderHl(1); // Redondo (RoundCap)
+
+        // FlatCap stops at x=20, whereas RoundCap extends semicircularly to x=12..20.
+        QCOMPARE(qAlpha(flatImg.pixel(14, 30)), 0);
+        QVERIFY(qAlpha(roundImg.pixel(14, 30)) > 0);
+        // Outside circle of radius 8 around (20, 30): dist((13, 23), (20, 30)) = sqrt(98) > 8.
+        QCOMPARE(qAlpha(roundImg.pixel(13, 23)), 0);
+    }
 };
 
 QTEST_MAIN(TestInkAndLive)

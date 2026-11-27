@@ -148,6 +148,55 @@ private slots:
         QVERIFY(std::abs(strokes[0].bounds.center().y() - firstStemBounds.center().y()) < 6.0);
         QVERIFY(std::abs(strokes[1].bounds.center().x() - firstDotBounds.center().x()) < 6.0);
     }
+
+    void selectByLassoRespectsTargetFilter() {
+        const QPolygonF poly({QPointF(0, 0), QPointF(100, 0), QPointF(100, 100), QPointF(0, 100)});
+
+        Stroke st = makeLineStroke(QPointF(15, 20), QPointF(80, 20));
+        st.id = QStringLiteral("st_in");
+        Stroke stOut = makeLineStroke(QPointF(150, 20), QPointF(200, 20));
+        stOut.id = QStringLiteral("st_out");
+
+        ShapeItem sh = makeShape(ShapeKind::Line, {QPointF(20, 60), QPointF(75, 60)});
+        sh.id = QStringLiteral("sh_in");
+        ShapeItem shOut = makeShape(ShapeKind::Line, {QPointF(150, 60), QPointF(210, 60)});
+        shOut.id = QStringLiteral("sh_out");
+
+        const QVector<Stroke> strokes{st, stOut};
+        const QVector<ShapeItem> shapes{sh, shOut};
+
+        QSet<QString> strokeIds;
+        QSet<QString> shapeIds;
+
+        // Backward-compatible 5-arg call selects both ink and shapes.
+        selectByLasso(poly, strokes, shapes, strokeIds, shapeIds);
+        QCOMPARE(strokeIds, QSet<QString>{QStringLiteral("st_in")});
+        QCOMPARE(shapeIds, QSet<QString>{QStringLiteral("sh_in")});
+
+        // ink=true, shapes=false skips shapes and clears previous shapeIds.
+        LassoTargetFilter onlyInk;
+        onlyInk.ink = true;
+        onlyInk.shapes = false;
+        selectByLasso(poly, strokes, shapes, strokeIds, shapeIds, onlyInk);
+        QCOMPARE(strokeIds, QSet<QString>{QStringLiteral("st_in")});
+        QVERIFY(shapeIds.isEmpty());
+
+        // ink=false, shapes=true skips strokes and clears previous strokeIds.
+        LassoTargetFilter onlyShapes;
+        onlyShapes.ink = false;
+        onlyShapes.shapes = true;
+        selectByLasso(poly, strokes, shapes, strokeIds, shapeIds, onlyShapes);
+        QVERIFY(strokeIds.isEmpty());
+        QCOMPARE(shapeIds, QSet<QString>{QStringLiteral("sh_in")});
+
+        // Both false selects neither.
+        LassoTargetFilter none;
+        none.ink = false;
+        none.shapes = false;
+        selectByLasso(poly, strokes, shapes, strokeIds, shapeIds, none);
+        QVERIFY(strokeIds.isEmpty());
+        QVERIFY(shapeIds.isEmpty());
+    }
 };
 
 QTEST_MAIN(TestLasso)
