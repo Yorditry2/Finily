@@ -81,6 +81,7 @@ add_executable(finily
     src/ui/popovers/StrokePopover.cpp
     src/ui/popovers/ThumbnailPanel.h
     src/ui/popovers/ThumbnailPanel.cpp
+    src/ui/DesignTokens.h
     src/ui/home/HomeTheme.h
     src/ui/home/HomeTheme.cpp
     src/ui/home/HomeIcons.cpp
@@ -109,6 +110,11 @@ add_executable(finily
     src/ui/HomeScreenActions.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
+)
+
+qt_add_resources(finily "finily_fonts"
+    PREFIX "/"
+    FILES resources/fonts/InterVariable.ttf
 )
 
 target_compile_definitions(finily PRIVATE FINILY_VERSION="${PROJECT_VERSION}")

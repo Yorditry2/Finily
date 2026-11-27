@@ -241,7 +241,8 @@ HomeSidebar::HomeSidebar(QWidget* parent)
     auto* brandRow = new QHBoxLayout();
     brandRow->setContentsMargins(6, 0, 6, 0);
     brandRow->setSpacing(10);
-    brandRow->addWidget(new FinilyBadge(this), 0, Qt::AlignVCenter);
+    m_badge = new FinilyBadge(this);
+    brandRow->addWidget(m_badge, 0, Qt::AlignVCenter);
     auto* brandLabel = new QLabel(QStringLiteral("Finily"), this);
     brandLabel->setObjectName(QStringLiteral("finilyBrandTitle"));
     brandRow->addWidget(brandLabel, 1, Qt::AlignVCenter);
@@ -391,6 +392,8 @@ void HomeSidebar::setDraftVisible(bool visible) {
 void HomeSidebar::applyTheme(const HomePalette& pal, bool dark) {
     m_pal = pal;
     m_dark = dark;
+    if (m_badge)
+        m_badge->setDark(dark);
     for (auto* btn : {m_allBtn, m_recentBtn, m_draftBtn, m_openBtn, m_themeBtn}) {
         if (btn)
             btn->setPalette(pal);

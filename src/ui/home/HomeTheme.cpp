@@ -57,19 +57,13 @@ void boxBlurPass(QImage& src, QImage& dst, int radius, bool horizontal) {
 } // namespace
 
 HomePalette homePaletteFor(bool dark) {
-    if (dark) {
-        return {
-            QColor("#17181e"), QColor("#121318"), QColor(255, 255, 255, 18), QColor("#20222b"),
-            QColor("#272a36"), QColor(255, 255, 255, 24), QColor("#f4f4f6"), QColor("#8e93a2"),
-            QColor("#818cf8"), QColor("#99a3fb"), QColor(129, 140, 248, 38),
-            QColor(255, 255, 255, 14), QColor(32, 34, 43, 242), QColor("#f87171"),
-        };
-    }
+    const tokens::Palette t = tokens::paletteFor(dark);
     return {
-        QColor("#faf9f6"), QColor("#f2f1ed"), QColor(20, 22, 30, 20), QColor("#ffffff"),
-        QColor("#f5f4f0"), QColor(20, 22, 30, 22), QColor("#18181b"), QColor("#71717a"),
-        QColor("#4f46e5"), QColor("#4338ca"), QColor(79, 70, 229, 24),
-        QColor(20, 22, 30, 10), QColor(255, 255, 255, 244), QColor("#dc2626"),
+        t.bg,      t.sidebar, t.border, t.surface,  t.field,
+        t.borderPop, t.text,  t.muted,  t.accent,
+        dark ? QColor("#FFFFFF") : QColor("#27272A"), // accentHover
+        t.soft,    t.hover,   t.glass,  t.danger,   t.accentFg,
+        t.icon,    t.faint,
     };
 }
 
@@ -84,7 +78,7 @@ QLabel#finilySidebarGroup { color: %1; font-size: 10.5px; font-weight: 700; lett
 QLineEdit#finilySearch {
     background: %6; border: 1px solid %5; border-radius: 18px;
     color: %2; padding: 0px 12px 0px 4px; font-size: 13px;
-    selection-background-color: %3; selection-color: #ffffff;
+    selection-background-color: %3; selection-color: %9;
 }
 QLineEdit#finilySearch:focus { border: 1px solid %3; }
 QToolButton { background: transparent; border: none; color: %2; font-size: 13px; }
@@ -100,7 +94,7 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: trans
 QWidget#finilyUpdateBanner { background: %4; border: 1px solid %5; border-radius: 12px; }
 QLabel#finilyUpdateText { color: %2; font-size: 13px; font-weight: 600; }
 QToolButton#finilyUpdatePrimary {
-    background: %3; color: #ffffff; border: none; border-radius: 11px;
+    background: %3; color: %9; border: none; border-radius: 11px;
     padding: 0px 14px; font-size: 12px; font-weight: 600;
 }
 QToolButton#finilyUpdatePrimary:disabled { background: %5; color: %1; }
@@ -122,7 +116,8 @@ QToolButton#finilyUpdateClose:hover { color: %2; }
         .arg(pal.border.name(QColor::HexArgb))
         .arg(pal.surface.name(QColor::HexArgb))
         .arg(pal.cardActionBg.name(QColor::HexArgb))
-        .arg(pal.hover.name(QColor::HexArgb));
+        .arg(pal.hover.name(QColor::HexArgb))
+        .arg(pal.accentFg.name(QColor::HexArgb));
 }
 
 const QVector<QColor>& coverColors() {
@@ -314,21 +309,27 @@ void FinilyBadge::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
     const QRectF frame = QRectF(rect()).adjusted(1.0, 1.0, -1.0, -1.0);
-    QLinearGradient gradient(frame.topLeft(), frame.bottomRight());
-    gradient.setColorAt(0.0, QColor("#6366f1"));
-    gradient.setColorAt(1.0, QColor("#4338ca"));
+    // Marcador neutro «Tinta» hasta elegir el logo definitivo (DESIGN.md).
+    const tokens::Palette t = tokens::paletteFor(m_dark);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(gradient);
+    painter.setBrush(t.accent);
     painter.drawRoundedRect(frame, 9.0, 9.0);
 
     QPainterPath f;
     f.moveTo(20.2, 9.0);
     f.cubicTo(17.4, 7.2, 14.2, 8.2, 14.2, 12.4);
     f.lineTo(14.2, 23.8);
-    painter.setPen(QPen(QColor(255, 255, 255, 242), 2.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setPen(QPen(t.accentFg, 2.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(Qt::NoBrush);
     painter.drawPath(f);
     painter.drawLine(QPointF(10.8, 14.8), QPointF(18.8, 14.8));
+}
+
+void FinilyBadge::setDark(bool dark) {
+    if (m_dark == dark)
+        return;
+    m_dark = dark;
+    update();
 }
 
 } // namespace finily

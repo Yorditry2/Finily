@@ -65,7 +65,7 @@ void CreateTileCard::paintEvent(QPaintEvent*) {
     painter.setBrush(m_pal.accent);
     painter.drawEllipse(c, r, r);
 
-    painter.setPen(QPen(Qt::white, 2.5, Qt::SolidLine, Qt::RoundCap));
+    painter.setPen(QPen(m_pal.accentFg, 2.5, Qt::SolidLine, Qt::RoundCap));
     painter.drawLine(c + QPointF(-7.5, 0.0), c + QPointF(7.5, 0.0));
     painter.drawLine(c + QPointF(0.0, -7.5), c + QPointF(0.0, 7.5));
 

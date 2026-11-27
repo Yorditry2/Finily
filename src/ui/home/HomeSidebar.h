@@ -15,6 +15,7 @@ namespace finily {
 
 class SidebarItemButton;
 class SidebarFolderButton;
+class FinilyBadge;
 
 class HomeSidebar : public QWidget {
     Q_OBJECT
@@ -58,6 +59,7 @@ private:
     QWidget* m_folderContainer = nullptr;
     QVBoxLayout* m_folderLayout = nullptr;
     QVector<SidebarFolderButton*> m_folderBtns;
+    FinilyBadge* m_badge = nullptr;
 
     SidebarItemButton* m_draftBtn = nullptr;
     SidebarItemButton* m_openBtn = nullptr;

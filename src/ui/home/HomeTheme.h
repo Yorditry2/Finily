@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Types.h"
+#include "ui/DesignTokens.h"
 
 #include <QColor>
 #include <QDateTime>
@@ -31,6 +32,9 @@ struct HomePalette {
     QColor hover;
     QColor cardActionBg;
     QColor danger;
+    QColor accentFg;
+    QColor icon;
+    QColor faint;
 };
 
 HomePalette homePaletteFor(bool dark);
@@ -56,9 +60,13 @@ void paintSoftShadow(QPainter& painter, const QRectF& rect, qreal radius, qreal 
 class FinilyBadge : public QWidget {
 public:
     explicit FinilyBadge(QWidget* parent = nullptr);
+    void setDark(bool dark);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
+
+private:
+    bool m_dark = false;
 };
 
 } // namespace finily

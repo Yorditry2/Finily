@@ -1,6 +1,8 @@
 #include "ui/MainWindow.h"
 
 #include <QApplication>
+#include <QFontDatabase>
+#include <QTimer>
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QFont>
@@ -23,12 +25,17 @@ int main(int argc, char* argv[]) {
     QApplication::setOrganizationDomain("finily.app");
     QApplication::setApplicationVersion(QStringLiteral(FINILY_VERSION));
 
-    // Inter si está instalada, con respaldo de la tipografía del sistema.
+    // Inter va embebida (resources/fonts, licencia OFL) para que se vea igual
+    // en Linux y Windows; si no cargara, se usa la del sistema.
+    QString interFamily = QStringLiteral("Inter");
+    const int interId = QFontDatabase::addApplicationFont(QStringLiteral(":/resources/fonts/InterVariable.ttf"));
+    if (interId >= 0 && !QFontDatabase::applicationFontFamilies(interId).isEmpty())
+        interFamily = QFontDatabase::applicationFontFamilies(interId).constFirst();
     QFont uiFont = QApplication::font();
 #ifdef Q_OS_WIN
-    uiFont.setFamilies({QStringLiteral("Inter"), QStringLiteral("Segoe UI"), uiFont.family()});
+    uiFont.setFamilies({interFamily, QStringLiteral("Segoe UI"), uiFont.family()});
 #else
-    uiFont.setFamilies({QStringLiteral("Inter"), QStringLiteral("SF Pro Text"),
+    uiFont.setFamilies({interFamily, QStringLiteral("SF Pro Text"),
                         QStringLiteral("Noto Sans"), QStringLiteral("sans-serif")});
     uiFont.setHintingPreference(QFont::PreferNoHinting);
 #endif
@@ -44,6 +51,17 @@ int main(int argc, char* argv[]) {
         const QString path = arguments.value(1);
         if (!path.isEmpty() && QFileInfo::exists(path))
             window.openInitialFile(path);
+    }
+
+    // Solo desarrollo: FINILY_SNAPSHOT=archivo.png guarda una captura de la
+    // ventana (sirve también con QT_QPA_PLATFORM=offscreen) y sale.
+    const QString snapshotPath = qEnvironmentVariable("FINILY_SNAPSHOT");
+    if (!snapshotPath.isEmpty()) {
+        window.resize(1280, 800);
+        QTimer::singleShot(1200, &window, [&window, snapshotPath] {
+            window.grab().save(snapshotPath);
+            QApplication::quit();
+        });
     }
 
     return QApplication::exec();

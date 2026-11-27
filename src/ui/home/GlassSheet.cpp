@@ -207,7 +207,7 @@ QLabel#finilySheetTitle { color: %2; font-size: 15px; font-weight: 700; letter-s
 QLineEdit#finilySheetInput {
     background: %4; border: 1.3px solid %5; border-radius: 14px;
     color: %2; padding: 8px 14px; font-size: 14px; font-weight: 500;
-    selection-background-color: %3; selection-color: #ffffff;
+    selection-background-color: %3; selection-color: %8;
 }
 QLineEdit#finilySheetInput:focus { border: 1.5px solid %3; }
 QToolButton#finilySheetCancel {
@@ -217,7 +217,7 @@ QToolButton#finilySheetCancel {
 QToolButton#finilySheetCancel:hover { border: 1px solid %3; }
 QToolButton#finilySheetConfirm {
     background: %3; border: 1px solid %3; border-radius: 16px;
-    color: #ffffff; padding: 0px 16px; font-size: 12.5px; font-weight: 700;
+    color: %8; padding: 0px 16px; font-size: 12.5px; font-weight: 700;
 }
 QToolButton#finilySheetConfirm:hover { background: %7; }
 QToolButton#finilySheetPill {
@@ -240,7 +240,8 @@ QToolButton#finilySheetSwatch { background: transparent; border: none; border-ra
         .arg(m_dark ? QStringLiteral("rgba(255,255,255,14)") : QStringLiteral("rgba(255,255,255,165)"))
         .arg(m_pal.border.name(QColor::HexArgb))
         .arg(m_pal.tint.name(QColor::HexArgb))
-        .arg(m_pal.accentHover.name(QColor::HexArgb));
+        .arg(m_pal.accentHover.name(QColor::HexArgb))
+        .arg(m_pal.accentFg.name(QColor::HexArgb));
 }
 
 QLabel* GlassSheet::makeSectionLabel(const QString& text) {
