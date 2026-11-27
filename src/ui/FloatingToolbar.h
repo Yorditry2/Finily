@@ -144,7 +144,7 @@ private:
     void applyThemeToAll(bool dark);
     void openToolPanel(ToolType tool, const QRect& anchorRect);
     void openPaperPanel(const QRect& anchorRect);
-    void openColorPopover(ToolType tool, const QRect& anchorRect, bool isShapeFill = false);
+    void openColorPopover(ToolType tool, const QRect& anchorRect, bool isShapeFill = false, bool isSheetBg = false);
     void openFineWidthPopover(ToolType tool, const QRect& anchorRect);
     void openDropdown(QWidget* anchor, const QVector<EditorDropdownItem>& items, std::function<void(int)> cb);
     void showExportMenu(const QRect& anchorRect);
@@ -168,6 +168,7 @@ private:
     bool m_cleanUi = false;
     bool m_elementsRight = false;
     bool m_shapeFillMode = false;
+    bool m_sheetColorMode = false;
     ToolType m_colorTargetTool = ToolType::Pen;
     ToolType m_widthTargetTool = ToolType::Pen;
     QRect m_lastColorAnchor;

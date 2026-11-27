@@ -288,7 +288,9 @@ private:
     EditorSegControl* m_modeSeg = nullptr;
 };
 
-// 8. Panel de Hoja y fondo (296 px): Pizarra | Cuaderno + A4↕/A4↔/Carta/16:9 + colores + plantillas fijas + trama.
+// 8. Panel de Hoja y fondo (312 px):
+// - Pizarra infinita: Color de fondo (+ más colores) + Plantillas (3x2).
+// - Cuaderno con hojas: Tamaño (A4↕/A4↔/Carta/16:9) + Color de hoja (+ más colores) + Plantillas (4x2) + Trama.
 class EditorPaperPanel : public EditorGlassCard {
     Q_OBJECT
 
@@ -298,6 +300,7 @@ public:
     void applyEditorTheme(bool dark) override;
 
 signals:
+    void customSheetColorRequested(const QRect& anchorRect);
     void panelResized();
 
 protected:
@@ -307,12 +310,17 @@ protected:
     void mouseReleaseEvent(QMouseEvent* e) override;
 
 private:
+    struct TplDef {
+        BackgroundTemplate tpl;
+        const char* label;
+    };
+    int templateCount() const;
+    TplDef templateAt(int i) const;
     QRectF colorRect(int i) const;
     QRectF templateRect(int i) const;
     void relayout();
 
     QPointer<CanvasWidget> m_canvas;
-    EditorSegControl* m_docModeSeg = nullptr;
     EditorSegControl* m_formatSeg = nullptr;
     EditorSegControl* m_scaleSeg = nullptr;
     QVector<QColor> m_sheetColors;

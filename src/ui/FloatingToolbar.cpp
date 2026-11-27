@@ -220,12 +220,17 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     m_colorPopover = new EditorColorPopover(this);
     connect(m_colorPopover, &EditorColorPopover::colorPicked, this, [this](const QColor& c) {
         if (!m_canvas) return;
-        if (!m_shapeFillMode)
+        if (m_sheetColorMode) {
+            m_canvas->setCustomBackground(c);
+        } else if (!m_shapeFillMode) {
             m_canvas->setCustomSwatchColor(m_colorTargetTool, c);
+        }
     });
     connect(m_colorPopover, &EditorColorPopover::colorCommitted, this, [this](const QColor& c) {
         if (!m_canvas) return;
-        if (m_shapeFillMode)
+        if (m_sheetColorMode)
+            m_canvas->setCustomBackground(c);
+        else if (m_shapeFillMode)
             m_canvas->setSelectedShapeFillColor(c);
     });
 
@@ -274,6 +279,9 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
 
     m_laserPanel = new EditorLaserPanel(m_canvas, this);
     m_paperPanel = new EditorPaperPanel(m_canvas, this);
+    connect(m_paperPanel, &EditorPaperPanel::customSheetColorRequested, this, [this](const QRect& r) {
+        openColorPopover(ToolType::Pen, r, false, true);
+    });
     connect(m_paperPanel, &EditorPaperPanel::panelResized, this, [this, onPanelResized] { onPanelResized(m_paperPanel); });
 
     m_elementsPanel = new EditorElementsPanel(m_canvas, this);
@@ -841,25 +849,33 @@ void FloatingToolbar::openPaperPanel(const QRect& anchorRect) {
     updateOverlayMask();
 }
 
-void FloatingToolbar::openColorPopover(ToolType tool, const QRect& anchorRect, bool isShapeFill) {
-    if (m_openPopover == m_colorPopover && m_colorPopover->isVisible() && m_shapeFillMode == isShapeFill) {
+void FloatingToolbar::openColorPopover(ToolType tool, const QRect& anchorRect, bool isShapeFill, bool isSheetBg) {
+    if (m_openPopover == m_colorPopover && m_colorPopover->isVisible()
+        && m_shapeFillMode == isShapeFill && m_sheetColorMode == isSheetBg) {
         closeTransientPopovers();
         return;
     }
     closeTransientPopovers();
     m_shapeFillMode = isShapeFill;
+    m_sheetColorMode = isSheetBg;
     m_colorTargetTool = tool;
     m_lastColorAnchor = anchorRect;
     m_openPopover = m_colorPopover;
     m_openPopoverAnchor = anchorRect;
 
     if (m_canvas) {
-        if (isShapeFill)
+        if (isSheetBg) {
+            const QColor cur = m_canvas->customBackground().isValid()
+                ? m_canvas->customBackground()
+                : effectiveThemeConfig(m_canvas->themeId(), {}).background;
+            m_colorPopover->setColor(cur);
+        } else if (isShapeFill) {
             m_colorPopover->setColor(m_canvas->selectionStyle().fillColor.value_or(m_canvas->inkColor()));
-        else
+        } else {
             m_colorPopover->setColor(tool == ToolType::Laser ? m_canvas->laserColor() : m_canvas->inkColor());
+        }
     }
-    positionFloatingCard(m_colorPopover, anchorRect);
+    positionFloatingCard(m_colorPopover, anchorRect, isSheetBg);
     m_colorPopover->show();
     m_colorPopover->raise();
     updateOverlayMask();
@@ -917,17 +933,28 @@ void FloatingToolbar::showEdgeMarkCapsule(const QPointF& screenPos, const QPoint
 }
 
 void FloatingToolbar::closeTransientPopovers() {
+    QRegion closedDirty;
     const QList<QWidget*> pops = {
         m_penPanel, m_hlPanel, m_eraserPanel, m_fillPanel,
         m_lassoPanel, m_shapesPanel, m_laserPanel, m_paperPanel,
         m_colorPopover, m_fineWidthPopover, m_edgeMarkCapsule, m_dropdownMenu
     };
     for (QWidget* w : pops) {
-        if (w && w->isVisible())
+        if (w && w->isVisible()) {
+            closedDirty += w->geometry().adjusted(-20, -16, 20, 26);
             w->hide();
+        }
     }
     m_openPopover = nullptr;
     updateOverlayMask();
+    if (!closedDirty.isEmpty()) {
+        const QRect r = closedDirty.boundingRect();
+        update(r);
+        if (m_canvas)
+            m_canvas->update(r);
+        if (parentWidget())
+            parentWidget()->update(r);
+    }
 }
 
 void FloatingToolbar::positionFloatingCard(QWidget* card, const QRect& anchorRect, bool preferLeft) {
@@ -1058,32 +1085,40 @@ void FloatingToolbar::positionAll() {
 }
 
 void FloatingToolbar::updateOverlayMask() {
-    if (m_settingsModal->isVisible() || m_libraryModal->isVisible() ||
+    const bool fullCover = m_settingsModal->isVisible() || m_libraryModal->isVisible() ||
         (m_libraryPickerModal && m_libraryPickerModal->isVisible()) ||
         m_confirmCard->isVisible() || m_dropdownMenu->isVisible() ||
         (m_boardSheet && m_boardSheet->isVisible()) ||
-        (m_notebookSheet && m_notebookSheet->isVisible())) {
-        if (m_lastOverlayMask != QRegion(rect())) {
-            m_lastOverlayMask = QRegion(rect());
-            setMask(m_lastOverlayMask);
-        }
-        return;
-    }
+        (m_notebookSheet && m_notebookSheet->isVisible());
 
     QRegion region;
-    const QList<QWidget*> surfaces = {
-        m_topBar, m_detachedDock, m_pageCapsule, m_restoreBtn,
-        m_elementsPanel, m_pagesPanel, m_contextCapsule, m_edgeMarkCapsule, m_inlineTextBar,
-        m_colorPopover, m_fineWidthPopover, m_penPanel, m_hlPanel, m_eraserPanel,
-        m_fillPanel, m_lassoPanel, m_shapesPanel, m_laserPanel, m_paperPanel, m_toast
-    };
-    for (QWidget* w : surfaces) {
-        if (w && w->isVisible())
-            region += w->geometry().adjusted(-14, -10, 14, 18);
+    if (fullCover) {
+        region = QRegion(rect());
+    } else {
+        const QList<QWidget*> surfaces = {
+            m_topBar, m_detachedDock, m_pageCapsule, m_restoreBtn,
+            m_elementsPanel, m_pagesPanel, m_contextCapsule, m_edgeMarkCapsule, m_inlineTextBar,
+            m_colorPopover, m_fineWidthPopover, m_penPanel, m_hlPanel, m_eraserPanel,
+            m_fillPanel, m_lassoPanel, m_shapesPanel, m_laserPanel, m_paperPanel, m_toast
+        };
+        for (QWidget* w : surfaces) {
+            if (w && w->isVisible())
+                region += w->geometry().adjusted(-18, -14, 18, 24);
+        }
     }
+
     if (region != m_lastOverlayMask) {
+        const QRegion removed = m_lastOverlayMask - region;
         m_lastOverlayMask = region;
         setMask(region);
+        update();
+        if (!removed.isEmpty()) {
+            const QRect exposed = removed.boundingRect().adjusted(-6, -6, 6, 6);
+            if (m_canvas)
+                m_canvas->update(exposed);
+            if (parentWidget())
+                parentWidget()->update(exposed);
+        }
     }
 }
 

@@ -12,6 +12,7 @@
 #include <QWidget>
 
 class QLabel;
+class QGridLayout;
 class QNetworkAccessManager;
 class QScrollArea;
 class QVBoxLayout;
@@ -183,7 +184,7 @@ private:
     EditorSegControl* m_filterSeg = nullptr;
     QScrollArea* m_scroll = nullptr;
     QWidget* m_listHost = nullptr;
-    QVBoxLayout* m_listLayout = nullptr;
+    QGridLayout* m_listLayout = nullptr;
 };
 
 } // namespace finily

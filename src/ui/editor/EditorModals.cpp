@@ -1186,6 +1186,148 @@ void EditorLibraryModal::tabletEvent(QTabletEvent* event) {
 
 // ---------------- EditorLibraryPickerModal ----------------
 
+class PickerDocCard final : public QWidget {
+public:
+    PickerDocCard(const NotebookMeta& meta, bool alreadyOpen, bool dark, QWidget* parent)
+        : QWidget(parent),
+          m_meta(meta),
+          m_open(alreadyOpen),
+          m_dark(dark),
+          m_pal(editorPaletteFor(dark)) {
+        setFixedHeight(74);
+        setCursor(Qt::PointingHandCursor);
+        setMouseTracking(true);
+        setFocusPolicy(Qt::NoFocus);
+        setAttribute(Qt::WA_StyledBackground, false);
+    }
+
+    std::function<void()> onClicked;
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+
+        const QRectF card = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        p.setPen(QPen(m_hover ? m_pal.accent : m_pal.borderSoft, m_hover ? 1.3 : 1.0));
+        p.setBrush(m_hover ? m_pal.hover : m_pal.subtle);
+        p.drawRoundedRect(card, 12.0, 12.0);
+
+        const bool isBoard = (!m_meta.hasPdf && m_meta.pageFormat == PageFormat::Infinite);
+
+        // Mini-vista previa izquierda (cuaderno / pizarra / PDF)
+        const QRectF slot(10.0, 9.0, 44.0, 56.0);
+        if (!m_meta.preview.isNull()) {
+            const QRectF thumb = isBoard ? QRectF(10.0, 17.0, 44.0, 38.0) : slot;
+            QPainterPath clip;
+            clip.addRoundedRect(thumb, 6.0, 6.0);
+            p.save();
+            p.setClipPath(clip);
+            p.drawImage(thumb, m_meta.preview);
+            p.restore();
+            p.setPen(QPen(m_pal.border, 1.0));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(thumb, 6.0, 6.0);
+            if (m_meta.hasPdf) {
+                const QRectF tag(thumb.left() + 4.0, thumb.bottom() - 15.0, 26.0, 12.0);
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(220, 38, 38, 220));
+                p.drawRoundedRect(tag, 3.0, 3.0);
+                p.setFont(editorFont(8.0, QFont::Bold));
+                p.setPen(Qt::white);
+                p.drawText(tag, Qt::AlignCenter, QStringLiteral("PDF"));
+            }
+        } else if (isBoard) {
+            const QRectF board(10.0, 17.0, 44.0, 38.0);
+            const ThemeConfig tc = effectiveThemeConfig(m_meta.theme, m_meta.customBackground);
+            p.save();
+            QPainterPath clip;
+            clip.addRoundedRect(board, 7.0, 7.0);
+            p.setClipPath(clip);
+            p.fillRect(board, tc.background);
+            paintMiniTemplate(p, board, tc, m_meta.tpl, m_meta.templateScale * 0.7);
+            p.restore();
+            p.setPen(QPen(tc.isDark ? QColor(255, 255, 255, 45) : QColor(15, 23, 42, 35), 1.0));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(board, 7.0, 7.0);
+            p.setFont(editorFont(9.5, QFont::Bold));
+            p.setPen(tc.isDark ? QColor(255, 255, 255, 165) : QColor(15, 23, 42, 130));
+            p.drawText(board.adjusted(0, 0, -4, -2), Qt::AlignRight | Qt::AlignBottom, QStringLiteral("∞"));
+        } else {
+            const auto& cols = coverColors();
+            const QColor base = cols.at(std::clamp(m_meta.coverColorIndex, 0, int(cols.size()) - 1));
+            const QRectF book(13.0, 10.0, 38.0, 54.0);
+            p.setPen(Qt::NoPen);
+            p.setBrush(base);
+            p.drawRoundedRect(book, 6.0, 6.0);
+            // Lomo sutil izquierdo
+            p.setBrush(QColor(0, 0, 0, 34));
+            p.drawRoundedRect(QRectF(book.left(), book.top(), 6.0, book.height()), 4.0, 4.0);
+            if (m_meta.coverIconIndex > 0) {
+                symbolGlyph(m_meta.coverIconIndex, QColor(255, 255, 255, 235))
+                    .paint(&p, QRectF(book.center().x() - 6.0, book.center().y() - 8.0, 16.0, 16.0).toRect());
+            }
+            p.setPen(QPen(QColor(255, 255, 255, 45), 1.0));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(book.adjusted(0.5, 0.5, -0.5, -0.5), 6.0, 6.0);
+        }
+
+        const QString title = m_meta.title.isEmpty()
+            ? QFileInfo(m_meta.path).completeBaseName()
+            : m_meta.title;
+        const QString folder = m_meta.folderRelativePath.isEmpty()
+            ? QStringLiteral("Biblioteca")
+            : m_meta.folderRelativePath;
+        QString sub = folder;
+        if (!isBoard)
+            sub += QStringLiteral(" · %1 pág.").arg(std::max(1, m_meta.pages));
+        const QString dateTxt = relativeDateLabel(m_meta.modified);
+        if (!dateTxt.isEmpty())
+            sub += QStringLiteral(" · ") + dateTxt;
+
+        const qreal badgeW = m_open ? 60.0 : 0.0;
+        const qreal textLeft = 64.0;
+        const qreal textW = std::max(40.0, width() - textLeft - 12.0 - badgeW);
+
+        p.setFont(editorFont(12.5, QFont::DemiBold));
+        p.setPen(m_pal.text);
+        const QString elidedTitle = QFontMetricsF(p.font()).elidedText(title, Qt::ElideRight, textW);
+        p.drawText(QRectF(textLeft, 15.0, textW, 20.0), Qt::AlignLeft | Qt::AlignVCenter, elidedTitle);
+
+        p.setFont(editorFont(10.5, QFont::Normal));
+        p.setPen(m_pal.muted);
+        const QString elidedSub = QFontMetricsF(p.font()).elidedText(sub, Qt::ElideRight, textW);
+        p.drawText(QRectF(textLeft, 38.0, textW, 18.0), Qt::AlignLeft | Qt::AlignVCenter, elidedSub);
+
+        if (m_open) {
+            const QRectF pill(width() - 62.0, 26.0, 52.0, 22.0);
+            QColor pillBg = m_pal.accent;
+            pillBg.setAlpha(26);
+            p.setPen(QPen(m_pal.accent, 1.0));
+            p.setBrush(pillBg);
+            p.drawRoundedRect(pill, 11.0, 11.0);
+            p.setFont(editorFont(10.0, QFont::DemiBold));
+            p.setPen(m_pal.accent);
+            p.drawText(pill, Qt::AlignCenter, QStringLiteral("Abierto"));
+        }
+    }
+
+    void enterEvent(QEnterEvent*) override { m_hover = true; update(); }
+    void leaveEvent(QEvent*) override { m_hover = false; update(); }
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        if (e->button() == Qt::LeftButton && rect().contains(e->pos()) && onClicked)
+            onClicked();
+    }
+    void tabletEvent(QTabletEvent* e) override { e->ignore(); }
+
+private:
+    NotebookMeta m_meta;
+    bool m_open = false;
+    bool m_dark = false;
+    bool m_hover = false;
+    EditorPalette m_pal;
+};
+
 EditorLibraryPickerModal::EditorLibraryPickerModal(QWidget* parent)
     : QWidget(parent) {
     setMouseTracking(true);
@@ -1196,7 +1338,7 @@ EditorLibraryPickerModal::EditorLibraryPickerModal(QWidget* parent)
     m_card = new EditorGlassCard(this);
     m_card->setRole(EditorGlassCard::Role::ModalCard);
     m_card->setCornerRadius(18.0);
-    m_card->setFixedSize(540, 460);
+    m_card->setFixedSize(640, 500);
 
     m_titleLbl = new QLabel(QStringLiteral("Abrir cuaderno o pizarra"), m_card);
     m_titleLbl->setFont(editorFont(15.0, QFont::Bold));
@@ -1205,7 +1347,7 @@ EditorLibraryPickerModal::EditorLibraryPickerModal(QWidget* parent)
     m_closeBtn = new EditorIconButton(QStringLiteral("x"), QStringLiteral("ui"), m_card);
     m_closeBtn->setFixedSize(28, 28);
     m_closeBtn->setIconSizePx(14.0);
-    m_closeBtn->move(540 - 40, 12);
+    m_closeBtn->move(640 - 40, 12);
     connect(m_closeBtn, &EditorIconButton::clicked, this, [this] {
         hide();
         emit closed();
@@ -1213,30 +1355,31 @@ EditorLibraryPickerModal::EditorLibraryPickerModal(QWidget* parent)
 
     m_searchEdit = new EditorLineEdit(m_card);
     m_searchEdit->setPlaceholderText(QStringLiteral("Buscar por nombre o carpeta…"));
-    m_searchEdit->setGeometry(20, 48, 500, 32);
+    m_searchEdit->setGeometry(20, 48, 600, 32);
     connect(m_searchEdit, &QLineEdit::textChanged, this, [this] { rebuildList(); });
 
     m_filterSeg = new EditorSegControl(m_card);
     m_filterSeg->setOptions({QStringLiteral("Todos"), QStringLiteral("Cuadernos"),
                              QStringLiteral("Pizarras"), QStringLiteral("PDFs")});
-    m_filterSeg->setGeometry(20, 88, 500, 30);
+    m_filterSeg->setGeometry(20, 88, 600, 30);
     connect(m_filterSeg, &EditorSegControl::currentIndexChanged, this, [this](int idx) {
         m_filter = idx;
         rebuildList();
     });
 
     m_scroll = new QScrollArea(m_card);
-    m_scroll->setGeometry(14, 126, 512, 460 - 140);
+    m_scroll->setGeometry(14, 128, 612, 500 - 142);
     m_scroll->setWidgetResizable(true);
     m_scroll->setFrameShape(QFrame::NoFrame);
     m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_scroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; border: none; }"));
+    m_scroll->setStyleSheet(editorScrollAreaStyle(m_dark));
 
     m_listHost = new QWidget();
     m_listHost->setStyleSheet(QStringLiteral("background: transparent;"));
-    m_listLayout = new QVBoxLayout(m_listHost);
+    m_listLayout = new QGridLayout(m_listHost);
     m_listLayout->setContentsMargins(6, 4, 10, 10);
-    m_listLayout->setSpacing(6);
+    m_listLayout->setHorizontalSpacing(10);
+    m_listLayout->setVerticalSpacing(10);
     m_scroll->setWidget(m_listHost);
 
     applyEditorTheme(false);
@@ -1249,6 +1392,7 @@ void EditorLibraryPickerModal::applyEditorTheme(bool dark) {
     if (m_closeBtn) m_closeBtn->applyEditorTheme(dark);
     if (m_searchEdit) m_searchEdit->applyEditorTheme(dark);
     if (m_filterSeg) m_filterSeg->applyEditorTheme(dark);
+    if (m_scroll) m_scroll->setStyleSheet(editorScrollAreaStyle(dark));
     if (m_titleLbl)
         m_titleLbl->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(m_pal.text.name()));
     if (isVisible())
@@ -1311,28 +1455,14 @@ void EditorLibraryPickerModal::rebuildList() {
 
         const QString canon = QFileInfo(doc.path).canonicalFilePath();
         const bool alreadyOpen = m_openPaths.contains(canon.isEmpty() ? doc.path : canon);
-        const QString icon = doc.hasPdf ? QStringLiteral("pdf")
-                                        : (isBoard ? QStringLiteral("board") : QStringLiteral("book"));
-        QString detail = folder;
-        if (!isBoard)
-            detail += QStringLiteral(" · %1 pág.").arg(std::max(1, doc.pages));
-        if (doc.modified.isValid())
-            detail += QStringLiteral(" · ") + doc.modified.toString(QStringLiteral("dd/MM/yy"));
-        if (alreadyOpen)
-            detail += QStringLiteral(" · Abierto");
-
-        auto* rowBtn = new EditorChipButton(title + QStringLiteral("  —  ") + detail, m_listHost);
-        rowBtn->setIcon(icon, QStringLiteral("ui"));
-        rowBtn->setChecked(alreadyOpen);
-        rowBtn->setFixedHeight(36);
-        rowBtn->applyEditorTheme(m_dark);
+        auto* card = new PickerDocCard(doc, alreadyOpen, m_dark, m_listHost);
         const QString path = doc.path;
-        connect(rowBtn, &EditorChipButton::clicked, this, [this, path] {
+        card->onClicked = [this, path] {
             hide();
             emit closed();
             emit notebookSelected(path);
-        });
-        m_listLayout->addWidget(rowBtn);
+        };
+        m_listLayout->addWidget(card, shown / 2, shown % 2);
         ++shown;
     }
 
@@ -1344,11 +1474,13 @@ void EditorLibraryPickerModal::rebuildList() {
         empty->setFont(editorFont(12.0, QFont::Medium));
         empty->setWordWrap(true);
         empty->setAlignment(Qt::AlignCenter);
-        empty->setStyleSheet(QStringLiteral("color: %1; padding: 28px; background: transparent;").arg(m_pal.muted.name()));
-        m_listLayout->addWidget(empty);
+        empty->setStyleSheet(QStringLiteral("color: %1; padding: 36px; background: transparent;").arg(m_pal.muted.name()));
+        m_listLayout->addWidget(empty, 0, 0, 1, 2);
     }
 
-    m_listLayout->addStretch(1);
+    m_listLayout->setRowStretch((shown + 1) / 2 + 1, 1);
+    m_listLayout->setColumnStretch(0, 1);
+    m_listLayout->setColumnStretch(1, 1);
 }
 
 void EditorLibraryPickerModal::paintEvent(QPaintEvent*) {

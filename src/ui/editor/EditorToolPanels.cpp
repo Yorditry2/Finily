@@ -1222,18 +1222,9 @@ EditorPaperPanel::EditorPaperPanel(CanvasWidget* canvas, QWidget* parent)
       m_canvas(canvas) {
     setRole(Role::PopoverSolid);
     setCornerRadius(16.0);
-    setFixedWidth(296);
+    setFixedWidth(312);
     setMouseTracking(true);
     hide();
-
-    m_docModeSeg = new EditorSegControl(this);
-    m_docModeSeg->setOptions({QStringLiteral("Pizarra infinita"), QStringLiteral("Cuaderno con hojas")});
-    connect(m_docModeSeg, &EditorSegControl::currentIndexChanged, this, [this](int idx) {
-        if (!m_canvas)
-            return;
-        m_canvas->setPageFormat(idx == 0 ? PageFormat::Infinite : PageFormat::A4);
-        syncFromCanvas();
-    });
 
     m_formatSeg = new EditorSegControl(this);
     m_formatSeg->setOptions({QStringLiteral("A4 ↕"), QStringLiteral("A4 ↔"), QStringLiteral("Carta"), QStringLiteral("16:9")});
@@ -1257,28 +1248,58 @@ EditorPaperPanel::EditorPaperPanel(CanvasWidget* canvas, QWidget* parent)
     syncFromCanvas();
 }
 
+int EditorPaperPanel::templateCount() const {
+    return m_infinite ? 6 : 8;
+}
+
+EditorPaperPanel::TplDef EditorPaperPanel::templateAt(int i) const {
+    static const TplDef kDefs[8] = {
+        {BackgroundTemplate::Blank, "Lisa"},
+        {BackgroundTemplate::Grid, "Cuadríc."},
+        {BackgroundTemplate::Dots, "Puntos"},
+        {BackgroundTemplate::Ruled, "Rayado"},
+        {BackgroundTemplate::Engineering, "Milim."},
+        {BackgroundTemplate::Isometric, "Isomét."},
+        {BackgroundTemplate::Cornell, "Cornell"},
+        {BackgroundTemplate::School, "Escolar"},
+    };
+    return kDefs[std::clamp(i, 0, 7)];
+}
+
 void EditorPaperPanel::applyEditorTheme(bool dark) {
     EditorGlassCard::applyEditorTheme(dark);
-    m_docModeSeg->applyEditorTheme(dark);
     m_formatSeg->applyEditorTheme(dark);
     m_scaleSeg->applyEditorTheme(dark);
     syncFromCanvas();
 }
 
 void EditorPaperPanel::relayout() {
-    m_docModeSeg->setGeometry(14, 42, width() - 28, 30);
-    int y = 82;
+    int y = 42;
     if (!m_infinite) {
         m_formatSeg->setGeometry(14, y, width() - 28, 30);
         m_formatSeg->show();
-        y += 42;
+        y += 40;
     } else {
         m_formatSeg->hide();
     }
-    // Colors (16 + 24), Templates (16 + 44), Trama (16 + 32)
-    y += 18 + 28 + 18 + 48 + 20;
-    m_scaleSeg->setGeometry(14, y, width() - 28, 30);
-    setFixedSize(296, y + 30 + 14);
+    // Bloque de color: cabecera (16) + círculos (28) + gap (10)
+    y += 54;
+    // Bloque de plantillas: cabecera (16) + 2 filas de tarjetas con etiqueta (56 px cada fila + 8 gap)
+    const int tplRows = 2;
+    const int tplH = tplRows * 56 + (tplRows - 1) * 8;
+    y += 18 + tplH;
+
+    if (!m_infinite) {
+        y += 28;
+        m_scaleSeg->setGeometry(14, y, width() - 28, 30);
+        m_scaleSeg->setEnabled(m_tpl != BackgroundTemplate::Blank);
+        m_scaleSeg->show();
+        y += 30 + 14;
+    } else {
+        m_scaleSeg->hide();
+        y += 14;
+    }
+    setFixedSize(312, y);
     emit panelResized();
     update();
 }
@@ -1287,7 +1308,6 @@ void EditorPaperPanel::syncFromCanvas() {
     if (!m_canvas)
         return;
     m_infinite = (m_canvas->pageFormat() == PageFormat::Infinite);
-    m_docModeSeg->setCurrentIndex(m_infinite ? 0 : 1);
 
     int fIdx = -1;
     switch (m_canvas->pageFormat()) {
@@ -1321,14 +1341,19 @@ void EditorPaperPanel::syncFromCanvas() {
 }
 
 QRectF EditorPaperPanel::colorRect(int i) const {
-    const int baseY = m_infinite ? 100 : 142;
-    return QRectF(14.0 + i * 32.0, baseY, 22.0, 22.0);
+    const int baseY = (m_infinite ? 42 : 82) + 20;
+    const qreal step = (width() - 28.0 - 22.0) / 6.0;
+    return QRectF(14.0 + i * step, baseY, 22.0, 22.0);
 }
 
 QRectF EditorPaperPanel::templateRect(int i) const {
-    const int baseY = m_infinite ? 148 : 190;
-    const qreal w = (width() - 28.0 - 24.0) / 4.0;
-    return QRectF(14.0 + i * (w + 8.0), baseY, w, 40.0);
+    const int baseY = (m_infinite ? 42 : 82) + 54 + 18;
+    const int cols = m_infinite ? 3 : 4;
+    const qreal gap = 8.0;
+    const qreal w = (width() - 28.0 - gap * (cols - 1)) / cols;
+    const int col = i % cols;
+    const int row = i / cols;
+    return QRectF(14.0 + col * (w + gap), baseY + row * (56.0 + gap), w, 56.0);
 }
 
 void EditorPaperPanel::paintEvent(QPaintEvent* event) {
@@ -1338,7 +1363,8 @@ void EditorPaperPanel::paintEvent(QPaintEvent* event) {
 
     p.setFont(editorFont(13.0, QFont::Bold));
     p.setPen(m_pal.text);
-    p.drawText(QRectF(14, 12, 130, 22), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("Hoja y fondo"));
+    p.drawText(QRectF(14, 12, 130, 22), Qt::AlignLeft | Qt::AlignVCenter,
+               m_infinite ? QStringLiteral("Fondo") : QStringLiteral("Hoja y fondo"));
 
     QString fmtStr = QStringLiteral("Pizarra ∞");
     if (!m_infinite && m_canvas) {
@@ -1353,63 +1379,130 @@ void EditorPaperPanel::paintEvent(QPaintEvent* event) {
     p.setPen(m_pal.muted);
     p.drawText(QRectF(145, 12, width() - 159, 22), Qt::AlignRight | Qt::AlignVCenter, fmtStr);
 
-    const int cy = m_infinite ? 82 : 124;
+    const int cy = m_infinite ? 42 : 82;
     p.setFont(editorFont(10.0, QFont::Bold));
-    p.drawText(QRectF(14, cy, width() - 28, 16), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("COLOR DE HOJA"));
+    p.drawText(QRectF(14, cy, width() - 28, 16), Qt::AlignLeft | Qt::AlignVCenter,
+               m_infinite ? QStringLiteral("COLOR DE FONDO") : QStringLiteral("COLOR DE HOJA"));
 
+    bool matchedPreset = false;
     for (int i = 0; i < m_sheetColors.size(); ++i) {
-        const bool active = (m_sheetColors.at(i).name() == m_currentBg.name());
+        const bool active = (m_sheetColors.at(i).name().toLower() == m_currentBg.name().toLower());
+        matchedPreset = matchedPreset || active;
         paintEditorSwatch(p, colorRect(i), m_sheetColors.at(i), active, m_pal);
     }
+    paintEditorRainbowSwatch(p, colorRect(m_sheetColors.size()), !matchedPreset, m_pal);
 
     p.setFont(editorFont(10.0, QFont::Bold));
     p.setPen(m_pal.muted);
-    p.drawText(QRectF(14, cy + 48, width() - 28, 16), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("PLANTILLA"));
+    p.drawText(QRectF(14, cy + 54, width() - 28, 16), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("PLANTILLA"));
 
-    // Plantillas puramente visuales en tono neutro fijo (sin teñir y sin texto)
-    const BackgroundTemplate tpls[4] = {
-        BackgroundTemplate::Blank, BackgroundTemplate::Grid,
-        BackgroundTemplate::Dots, BackgroundTemplate::Ruled
-    };
-    for (int i = 0; i < 4; ++i) {
-        const QRectF tr = templateRect(i);
-        const bool active = (m_tpl == tpls[i]);
-        p.setPen(QPen(active ? m_pal.accent : m_pal.border, active ? 1.6 : 1.0));
-        p.setBrush(m_dark ? QColor("#242632") : QColor("#F6F6F4"));
-        p.drawRoundedRect(tr, 9.0, 9.0);
+    const ThemeConfig sheetTheme = effectiveThemeConfig(
+        m_canvas ? m_canvas->themeId() : ThemeId::PaperLight, m_currentBg);
+    const int count = templateCount();
+    for (int i = 0; i < count; ++i) {
+        const TplDef def = templateAt(i);
+        const QRectF card = templateRect(i);
+        const QRectF previewRect(card.left(), card.top(), card.width(), card.height() - 16.0);
+        const bool active = (m_tpl == def.tpl);
+        const bool hover = (m_hoverTpl == i);
 
-        const QColor lineCol = m_dark ? QColor(255, 255, 255, 42) : QColor(15, 23, 42, 34);
-        if (tpls[i] == BackgroundTemplate::Grid) {
-            p.setPen(QPen(lineCol, 1.0));
-            for (qreal x = tr.left() + 10; x < tr.right() - 4; x += 10.0)
-                p.drawLine(QPointF(x, tr.top() + 5), QPointF(x, tr.bottom() - 5));
-            for (qreal y = tr.top() + 10; y < tr.bottom() - 4; y += 10.0)
-                p.drawLine(QPointF(tr.left() + 5, y), QPointF(tr.right() - 5, y));
-        } else if (tpls[i] == BackgroundTemplate::Dots) {
+        p.save();
+        p.setPen(QPen(active ? m_pal.accent : (hover ? m_pal.text : m_pal.border), active ? 1.8 : 1.0));
+        p.setBrush(sheetTheme.background);
+        p.drawRoundedRect(previewRect, 8.0, 8.0);
+
+        QPainterPath clip;
+        clip.addRoundedRect(previewRect.adjusted(1.0, 1.0, -1.0, -1.0), 7.0, 7.0);
+        p.setClipPath(clip);
+
+        QColor lineCol = sheetTheme.patternColor;
+        lineCol.setAlpha(std::max(lineCol.alpha(), sheetTheme.isDark ? 95 : 85));
+        if (def.tpl == BackgroundTemplate::Grid) {
+            p.setPen(QPen(lineCol, 0.9));
+            for (qreal x = previewRect.left() + 10; x < previewRect.right() - 2; x += 10.0)
+                p.drawLine(QPointF(x, previewRect.top() + 2), QPointF(x, previewRect.bottom() - 2));
+            for (qreal y = previewRect.top() + 10; y < previewRect.bottom() - 2; y += 10.0)
+                p.drawLine(QPointF(previewRect.left() + 2, y), QPointF(previewRect.right() - 2, y));
+        } else if (def.tpl == BackgroundTemplate::Dots) {
             p.setPen(Qt::NoPen);
             p.setBrush(lineCol);
-            for (qreal x = tr.left() + 9; x < tr.right() - 4; x += 9.0)
-                for (qreal y = tr.top() + 9; y < tr.bottom() - 4; y += 9.0)
+            for (qreal x = previewRect.left() + 9; x < previewRect.right() - 3; x += 9.0)
+                for (qreal y = previewRect.top() + 9; y < previewRect.bottom() - 3; y += 9.0)
                     p.drawEllipse(QPointF(x, y), 1.1, 1.1);
-        } else if (tpls[i] == BackgroundTemplate::Ruled) {
+        } else if (def.tpl == BackgroundTemplate::Ruled) {
+            QColor ruleCol = sheetTheme.isDark ? lineCol : QColor(90, 150, 220, 145);
+            p.setPen(QPen(ruleCol, 0.9));
+            for (qreal y = previewRect.top() + 9; y < previewRect.bottom() - 3; y += 7.5)
+                p.drawLine(QPointF(previewRect.left() + 4, y), QPointF(previewRect.right() - 4, y));
+        } else if (def.tpl == BackgroundTemplate::Engineering) {
+            QColor minorCol = lineCol;
+            minorCol.setAlpha(lineCol.alpha() / 2);
+            p.setPen(QPen(minorCol, 0.6));
+            for (qreal x = previewRect.left() + 5; x < previewRect.right() - 2; x += 5.0)
+                p.drawLine(QPointF(x, previewRect.top() + 2), QPointF(x, previewRect.bottom() - 2));
+            for (qreal y = previewRect.top() + 5; y < previewRect.bottom() - 2; y += 5.0)
+                p.drawLine(QPointF(previewRect.left() + 2, y), QPointF(previewRect.right() - 2, y));
             p.setPen(QPen(lineCol, 1.0));
-            for (qreal y = tr.top() + 10; y < tr.bottom() - 4; y += 8.0)
-                p.drawLine(QPointF(tr.left() + 6, y), QPointF(tr.right() - 6, y));
+            for (qreal x = previewRect.left() + 15; x < previewRect.right() - 2; x += 15.0)
+                p.drawLine(QPointF(x, previewRect.top() + 2), QPointF(x, previewRect.bottom() - 2));
+            for (qreal y = previewRect.top() + 15; y < previewRect.bottom() - 2; y += 15.0)
+                p.drawLine(QPointF(previewRect.left() + 2, y), QPointF(previewRect.right() - 2, y));
+        } else if (def.tpl == BackgroundTemplate::Isometric) {
+            p.setPen(QPen(lineCol, 0.8));
+            for (qreal offset = -48.0; offset < previewRect.width() + 48.0; offset += 12.0) {
+                p.drawLine(QPointF(previewRect.left() + offset, previewRect.bottom()),
+                           QPointF(previewRect.left() + offset + previewRect.height() * 1.4, previewRect.top()));
+                p.drawLine(QPointF(previewRect.left() + offset, previewRect.top()),
+                           QPointF(previewRect.left() + offset + previewRect.height() * 1.4, previewRect.bottom()));
+            }
+            for (qreal x = previewRect.left() + 12; x < previewRect.right() - 2; x += 12.0)
+                p.drawLine(QPointF(x, previewRect.top()), QPointF(x, previewRect.bottom()));
+        } else if (def.tpl == BackgroundTemplate::Cornell) {
+            QColor ruleCol = sheetTheme.isDark ? lineCol : QColor(90, 150, 220, 130);
+            p.setPen(QPen(ruleCol, 0.8));
+            for (qreal y = previewRect.top() + 12; y < previewRect.bottom() - 9; y += 6.5)
+                p.drawLine(QPointF(previewRect.left() + 4, y), QPointF(previewRect.right() - 4, y));
+            QColor accentRule(220, 90, 100, 165);
+            p.setPen(QPen(accentRule, 1.0));
+            p.drawLine(QPointF(previewRect.left() + 18, previewRect.top() + 3),
+                       QPointF(previewRect.left() + 18, previewRect.bottom() - 9));
+            p.drawLine(QPointF(previewRect.left() + 4, previewRect.bottom() - 9),
+                       QPointF(previewRect.right() - 4, previewRect.bottom() - 9));
+        } else if (def.tpl == BackgroundTemplate::School) {
+            QColor ruleCol = sheetTheme.isDark ? lineCol : QColor(90, 150, 220, 130);
+            p.setPen(QPen(ruleCol, 0.8));
+            for (qreal y = previewRect.top() + 12; y < previewRect.bottom() - 3; y += 6.5)
+                p.drawLine(QPointF(previewRect.left() + 4, y), QPointF(previewRect.right() - 4, y));
+            QColor accentRule(220, 90, 100, 170);
+            p.setPen(QPen(accentRule, 1.0));
+            p.drawLine(QPointF(previewRect.left() + 14, previewRect.top() + 3),
+                       QPointF(previewRect.left() + 14, previewRect.bottom() - 3));
+            p.drawLine(QPointF(previewRect.left() + 4, previewRect.top() + 9),
+                       QPointF(previewRect.right() - 4, previewRect.top() + 9));
         }
+        p.restore();
+
+        p.setFont(editorFont(10.0, active ? QFont::DemiBold : QFont::Normal));
+        p.setPen(active ? m_pal.text : m_pal.muted);
+        p.drawText(QRectF(card.left(), previewRect.bottom() + 1, card.width(), 15.0),
+                   Qt::AlignCenter, QString::fromUtf8(def.label));
     }
 
-    p.setFont(editorFont(10.0, QFont::Bold));
-    p.setPen(m_pal.muted);
-    p.drawText(QRectF(14, m_scaleSeg->y() - 18, width() - 28, 16),
-               Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("TRAMA"));
+    if (!m_infinite) {
+        p.setFont(editorFont(10.0, QFont::Bold));
+        p.setPen(m_pal.muted);
+        p.drawText(QRectF(14, m_scaleSeg->y() - 18, width() - 28, 16),
+                   Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("TRAMA"));
+    }
 }
 
 void EditorPaperPanel::mouseMoveEvent(QMouseEvent* e) {
     int ht = -1;
-    for (int i = 0; i < 4; ++i)
+    const int count = templateCount();
+    for (int i = 0; i < count; ++i)
         if (templateRect(i).contains(e->position())) { ht = i; break; }
     bool overColor = false;
-    for (int i = 0; !overColor && i < m_sheetColors.size(); ++i)
+    for (int i = 0; !overColor && i <= m_sheetColors.size(); ++i)
         overColor = colorRect(i).adjusted(-3, -3, 3, 3).contains(e->position());
     if (ht != m_hoverTpl) {
         m_hoverTpl = ht;
@@ -1436,13 +1529,16 @@ void EditorPaperPanel::mouseReleaseEvent(QMouseEvent* e) {
             return;
         }
     }
-    const BackgroundTemplate tpls[4] = {
-        BackgroundTemplate::Blank, BackgroundTemplate::Grid,
-        BackgroundTemplate::Dots, BackgroundTemplate::Ruled
-    };
-    for (int i = 0; i < 4; ++i) {
+    const QRectF rainbowRect = colorRect(m_sheetColors.size());
+    if (rainbowRect.adjusted(-4, -4, 4, 4).contains(e->position())) {
+        const QPoint topLeft = mapTo(parentWidget(), rainbowRect.topLeft().toPoint());
+        emit customSheetColorRequested(QRect(topLeft, rainbowRect.size().toSize()));
+        return;
+    }
+    const int count = templateCount();
+    for (int i = 0; i < count; ++i) {
         if (templateRect(i).contains(e->position())) {
-            m_canvas->setBackgroundTemplate(tpls[i]);
+            m_canvas->setBackgroundTemplate(templateAt(i).tpl);
             syncFromCanvas();
             return;
         }
