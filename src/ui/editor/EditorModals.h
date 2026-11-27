@@ -1,14 +1,17 @@
 #pragma once
 
 #include "core/Types.h"
+#include "engine/LibraryStore.h"
 #include "engine/StickerLibrary.h"
 #include "ui/editor/EditorTheme.h"
 
 #include <QPointer>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QWidget>
 
+class QLabel;
 class QNetworkAccessManager;
 class QScrollArea;
 class QVBoxLayout;
@@ -140,6 +143,47 @@ private:
     QScrollArea* m_scroll = nullptr;
     QWidget* m_bodyHost = nullptr;
     QVBoxLayout* m_bodyLayout = nullptr;
+};
+
+// Selector rápido de cuadernos y pizarras existentes desde el botón (+) del editor.
+class EditorLibraryPickerModal : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit EditorLibraryPickerModal(QWidget* parent = nullptr);
+
+    void openPicker(const QStringList& openPaths);
+    void applyEditorTheme(bool dark);
+
+signals:
+    void notebookSelected(const QString& filePath);
+    void closed();
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void tabletEvent(QTabletEvent* event) override;
+
+private:
+    void rebuildList();
+    void centerCard();
+
+    bool m_dark = false;
+    EditorPalette m_pal;
+    int m_filter = 0; // 0=Todos, 1=Cuadernos, 2=Pizarras, 3=PDFs
+    QStringList m_openPaths;
+    QVector<NotebookMeta> m_docs;
+
+    EditorGlassCard* m_card = nullptr;
+    QLabel* m_titleLbl = nullptr;
+    EditorIconButton* m_closeBtn = nullptr;
+    EditorLineEdit* m_searchEdit = nullptr;
+    EditorSegControl* m_filterSeg = nullptr;
+    QScrollArea* m_scroll = nullptr;
+    QWidget* m_listHost = nullptr;
+    QVBoxLayout* m_listLayout = nullptr;
 };
 
 } // namespace finily

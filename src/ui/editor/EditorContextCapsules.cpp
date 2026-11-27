@@ -329,12 +329,14 @@ void EditorContextCapsule::syncFromCanvas() {
                 m_layout->addWidget(seg);
             }
 
-            auto* angBtn = new EditorChipButton(QStringLiteral("Ángulos"), this);
-            angBtn->applyEditorTheme(m_dark);
-            connect(angBtn, &EditorChipButton::clicked, this, [this] {
-                if (m_canvas) m_canvas->toggleSelectedShapeAngles();
-            });
-            m_layout->addWidget(angBtn);
+            if (fam == ShapeFamily::Triangle || fam == ShapeFamily::Quad || fam == ShapeFamily::Polygon) {
+                auto* angBtn = new EditorChipButton(QStringLiteral("Ángulos"), this);
+                angBtn->applyEditorTheme(m_dark);
+                connect(angBtn, &EditorChipButton::clicked, this, [this] {
+                    if (m_canvas) m_canvas->toggleSelectedShapeAngles();
+                });
+                m_layout->addWidget(angBtn);
+            }
         } else {
             const LineEnding curEnd = st.ending.value_or(LineEnding::None);
             auto addEndBtn = [this, curEnd, curPat](const QString& icon, LineEnding end, bool dim) {

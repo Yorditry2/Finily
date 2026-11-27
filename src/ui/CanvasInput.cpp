@@ -305,6 +305,9 @@ void CanvasWidget::cancelInteraction() {
     const bool wasRadial = m_radialOpen;
     m_holdTimer->stop();
     m_radialOpen = false;
+    m_holdEraseUpper = false;
+    m_holdEraseLower = false;
+    clearEraserCursor();
     m_liveInk.reset(m_liveInkLayer);
     m_lastLiveDirtyRect = {};
     m_hasActiveStroke = false;
@@ -1052,6 +1055,21 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
         finishActivePolyline();
         return;
     }
+    const QPointF world = screenToWorld(screenPos);
+    if ((isEraserTip || m_tool == ToolType::Eraser) && button == Qt::LeftButton) {
+        if (m_polylineActive) {
+            cancelActivePolyline();
+        }
+        m_activeGuides.clear();
+        m_mode = InteractionMode::Erase;
+        m_snapshotBeforeErase = currentSnapshot();
+        m_erasedAnything = false;
+        m_eraserWorldPos = world;
+        m_showEraserCursor = true;
+        applyEraseAt(world, mods.testFlag(Qt::ShiftModifier));
+        updateCursorShape();
+        return;
+    }
     if (button == Qt::RightButton && !m_spaceHeld && hasSelection()) {
         m_rightClickOnSelection =
             selectionScreenRect().adjusted(-8.0, -8.0, 8.0, 8.0).contains(screenPos);
@@ -1068,21 +1086,7 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
         return;
     }
 
-    const QPointF world = screenToWorld(screenPos);
     m_activeGuides.clear();
-    if (isEraserTip || m_tool == ToolType::Eraser) {
-        if (m_polylineActive) {
-            cancelActivePolyline();
-        }
-        m_mode = InteractionMode::Erase;
-        m_snapshotBeforeErase = currentSnapshot();
-        m_erasedAnything = false;
-        m_eraserWorldPos = world;
-        m_showEraserCursor = true;
-        applyEraseAt(world, mods.testFlag(Qt::ShiftModifier));
-        updateCursorShape();
-        return;
-    }
     if (m_tool == ToolType::Laser) {
         m_mode = InteractionMode::LaserTrail;
         m_laserDotFading = false;
@@ -1984,6 +1988,7 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
         }
         m_snapshotBeforeErase = {};
         m_erasedAnything = false;
+        clearEraserCursor();
         break;
     case InteractionMode::Draw:
         if (!m_hasActiveStroke) {

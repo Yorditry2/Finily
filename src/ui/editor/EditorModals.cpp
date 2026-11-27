@@ -1,10 +1,13 @@
 #include "ui/editor/EditorModals.h"
+#include "ui/home/HomeTheme.h"
 
 #include "core/Utils.h"
+#include "engine/LibraryStore.h"
 #include "engine/VisionExtractor.h"
 #include "ui/CanvasWidget.h"
 #include "ui/UiIcons.h"
 
+#include <QFileInfo>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -19,6 +22,7 @@
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QTabletEvent>
 #include <QVBoxLayout>
 
@@ -58,7 +62,7 @@ QVector<EditorDropdownItem> stylusActionOptions(TabletAction current) {
     const QVector<TabletAction> list = {
         TabletAction::RightClickMenu, TabletAction::HoldEraser, TabletAction::LastWriteTool,
         TabletAction::Eraser, TabletAction::Undo, TabletAction::Redo,
-        TabletAction::RadialMenu, TabletAction::Lasso, TabletAction::Hand, TabletAction::None
+        TabletAction::RadialMenu, TabletAction::Select, TabletAction::Lasso, TabletAction::Hand, TabletAction::None
     };
     QVector<EditorDropdownItem> out;
     for (TabletAction a : list)
@@ -226,17 +230,19 @@ void WacomStylusDiagram::paintEvent(QPaintEvent*) {
     p.setFont(editorFont(10.5, QFont::Medium));
     p.setPen(m_pal.muted);
 
-    // Etiquetas + líneas guía
-    p.drawText(QRectF(12, sy - 16, sx - 32, 32), Qt::AlignRight | Qt::AlignVCenter,
+    // Etiquetas + líneas guía centradas sobre cada botón dentro de los márgenes seguros
+    p.drawText(QRectF(10, sy - 16, std::max(40.0, sx - 30.0), 32), Qt::AlignRight | Qt::AlignVCenter,
                m_rearEraser ? QStringLiteral("Goma trasera") : QStringLiteral("Goma desactivada"));
 
-    p.drawText(QRectF(sx + 6, 8, 170, 22), Qt::AlignRight | Qt::AlignVCenter,
+    const qreal supLeft = std::clamp(btnBack.center().x() - 120.0, 10.0, std::max(10.0, width() - 250.0));
+    p.drawText(QRectF(supLeft, 6, 240, 22), Qt::AlignHCenter | Qt::AlignVCenter,
                QStringLiteral("Sup: ") + tabletActionName(upperAct));
     p.setPen(QPen(m_pal.border, 1.0));
-    p.drawLine(QPointF(btnBack.center().x(), btnBack.top()), QPointF(btnBack.center().x(), 29));
+    p.drawLine(QPointF(btnBack.center().x(), btnBack.top()), QPointF(btnBack.center().x(), 27));
 
     p.setPen(m_pal.muted);
-    p.drawText(QRectF(btnFront.left() - 10, sy + 18, 220, 22), Qt::AlignLeft | Qt::AlignVCenter,
+    const qreal infLeft = std::clamp(btnFront.center().x() - 120.0, 10.0, std::max(10.0, width() - 250.0));
+    p.drawText(QRectF(infLeft, sy + 18, 240, 22), Qt::AlignHCenter | Qt::AlignVCenter,
                QStringLiteral("Inf: ") + tabletActionName(lowerAct));
     p.setPen(QPen(m_pal.border, 1.0));
     p.drawLine(QPointF(btnFront.center().x(), sy + sh * 0.5), QPointF(btnFront.center().x(), sy + 20));
@@ -310,7 +316,7 @@ EditorSettingsModal::EditorSettingsModal(QWidget* parent)
     m_scroll->setWidgetResizable(true);
     m_scroll->setFrameShape(QFrame::NoFrame);
     m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_scroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; border: none; }"));
+    m_scroll->setStyleSheet(editorScrollAreaStyle(m_dark));
 
     m_bodyHost = new QWidget();
     m_bodyHost->setStyleSheet(QStringLiteral("background: transparent;"));
@@ -329,6 +335,8 @@ void EditorSettingsModal::applyEditorTheme(bool dark) {
     m_pal = editorPaletteFor(dark);
     m_card->applyEditorTheme(dark);
     m_closeBtn->applyEditorTheme(dark);
+    if (m_scroll)
+        m_scroll->setStyleSheet(editorScrollAreaStyle(dark));
     m_navHost->setStyleSheet(QStringLiteral("background: %1; border-right: 1px solid %2; border-top-left-radius: 18px; border-bottom-left-radius: 18px;")
                                  .arg(m_pal.subtle.name(), m_pal.borderSoft.name(QColor::HexArgb)));
     for (auto* b : m_navBtns)
@@ -400,7 +408,17 @@ void EditorSettingsModal::buildSectionContent() {
         m_bodyLayout->addWidget(makeSectionHeading(QStringLiteral("Escritura"), m_pal, m_bodyHost));
         const double sens = m_canvas ? m_canvas->pressureSensitivity() : 0.5;
         addSwitchRow(QStringLiteral("Sensible a la presión"), sens > 0.01, [this](bool on) {
-            if (m_canvas) m_canvas->setPressureSensitivity(on ? 0.5 : 0.0);
+            if (!m_canvas) return;
+            if (on) {
+                const double restored = std::clamp(
+                    readAppSetting(QStringLiteral("ink/pressureSensitivitySaved"), 0.5).toDouble(), 0.05, 1.0);
+                m_canvas->setPressureSensitivity(restored);
+            } else {
+                const double cur = m_canvas->pressureSensitivity();
+                if (cur > 0.01)
+                    writeAppSetting(QStringLiteral("ink/pressureSensitivitySaved"), cur);
+                m_canvas->setPressureSensitivity(0.0);
+            }
         });
 
         auto* profSeg = new EditorSegControl(m_bodyHost);
@@ -428,8 +446,12 @@ void EditorSettingsModal::buildSectionContent() {
             stabSlider->setValue(lv);
             if (m_canvas) m_canvas->setStabilizer(lv / 9.0);
         });
-        connect(stabSlider, &EditorSlider::valueChanged, this, [this](double v) {
+        connect(stabSlider, &EditorSlider::valueChanged, this, [this, stabSeg](double v) {
             if (m_canvas) m_canvas->setStabilizer(v / 9.0);
+            const int lv = qRound(v);
+            const int seg = (lv == 2) ? 0 : (lv == 4 ? 1 : (lv == 7 ? 2 : 3));
+            QSignalBlocker blocker(stabSeg);
+            stabSeg->setCurrentIndex(seg);
         });
         m_bodyLayout->addWidget(stabSlider);
 
@@ -729,7 +751,7 @@ void EditorSettingsModal::buildSectionContent() {
         addSwitchRow(QStringLiteral("Rueda radial de colores"),
                      m_canvas ? m_canvas->radialMenuEnabled() : true,
                      [this](bool on) { if (m_canvas) m_canvas->setRadialMenuEnabled(on); });
-        addSwitchRow(QStringLiteral("Gestos con dos dedos (Tablets)"),
+        addSwitchRow(QStringLiteral("Ignorar la palma (rechazo táctil)"),
                      m_canvas ? m_canvas->palmRejectionEnabled() : true,
                      [this](bool on) { if (m_canvas) m_canvas->setPalmRejectionEnabled(on); });
     } else if (key == QStringLiteral("ia")) {
@@ -805,14 +827,15 @@ void EditorSettingsModal::buildSectionContent() {
         const ShortcutRow rows[] = {
             {"Línea recta cada 15°", "Mayús al escribir"},
             {"Trazo auxiliar en guiones", "D"},
-            {"Rueda de colores", "Doble P / doble clic lápiz"},
+            {"Rueda de colores", "Doble P / botón del lápiz"},
             {"Recortar entre cruces", "Mayús + borrador"},
             {"Auto-embellecer al pausar", "M"},
             {"Interfaz limpia · Pantalla completa", "Tab · F11"},
             {"Pinceles favoritos", "1 – 5"},
             {"Puntero · Mano", "V · Espacio"},
-            {"Pluma · Resaltador · Borrador · Relleno", "P · H · E · G"},
-            {"Lazo · Figuras · Texto · Láser", "L · S · T · K"},
+            {"Pluma · Resaltador · Borrador · Relleno", "P · H · E · F / G"},
+            {"Lazo · Trazado · Figuras · Texto · Láser", "L · Shift+L · S · T · K"},
+            {"Copiar · Cortar · Pegar · Duplicar", "Ctrl+C · X · V · D"},
         };
         for (const auto& sr : rows) {
             auto* kbd = new EditorChipButton(QString::fromUtf8(sr.key), m_bodyHost);
@@ -827,6 +850,9 @@ void EditorSettingsModal::buildSectionContent() {
 void EditorSettingsModal::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), m_pal.veil);
+    if (m_card && m_card->isVisible())
+        paintSoftShadow(p, QRectF(m_card->geometry()).adjusted(0.5, 0.5, -0.5, -0.5),
+                        m_card->cornerRadius(), 6.0, m_dark);
 }
 
 void EditorSettingsModal::mouseReleaseEvent(QMouseEvent* event) {
@@ -903,7 +929,7 @@ EditorLibraryModal::EditorLibraryModal(QWidget* parent)
     m_scroll->setWidgetResizable(true);
     m_scroll->setFrameShape(QFrame::NoFrame);
     m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_scroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; border: none; }"));
+    m_scroll->setStyleSheet(editorScrollAreaStyle(m_dark));
 
     m_bodyHost = new QWidget();
     m_bodyHost->setStyleSheet(QStringLiteral("background: transparent;"));
@@ -918,6 +944,8 @@ void EditorLibraryModal::applyEditorTheme(bool dark) {
     m_pal = editorPaletteFor(dark);
     m_card->applyEditorTheme(dark);
     m_closeBtn->applyEditorTheme(dark);
+    if (m_scroll)
+        m_scroll->setStyleSheet(editorScrollAreaStyle(dark));
     m_navHost->setStyleSheet(QStringLiteral("background: %1; border-right: 1px solid %2; border-top-left-radius: 18px; border-bottom-left-radius: 18px;")
                                  .arg(m_pal.subtle.name(), m_pal.borderSoft.name(QColor::HexArgb)));
     for (auto* b : m_navBtns)
@@ -1130,6 +1158,9 @@ void EditorLibraryModal::buildSectionContent() {
 void EditorLibraryModal::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), m_pal.veil);
+    if (m_card && m_card->isVisible())
+        paintSoftShadow(p, QRectF(m_card->geometry()).adjusted(0.5, 0.5, -0.5, -0.5),
+                        m_card->cornerRadius(), 6.0, m_dark);
 }
 
 void EditorLibraryModal::mouseReleaseEvent(QMouseEvent* event) {
@@ -1150,6 +1181,202 @@ void EditorLibraryModal::keyPressEvent(QKeyEvent* event) {
 }
 
 void EditorLibraryModal::tabletEvent(QTabletEvent* event) {
+    event->ignore();
+}
+
+// ---------------- EditorLibraryPickerModal ----------------
+
+EditorLibraryPickerModal::EditorLibraryPickerModal(QWidget* parent)
+    : QWidget(parent) {
+    setMouseTracking(true);
+    setFocusPolicy(Qt::StrongFocus);
+    m_pal = editorPaletteFor(false);
+    hide();
+
+    m_card = new EditorGlassCard(this);
+    m_card->setRole(EditorGlassCard::Role::ModalCard);
+    m_card->setCornerRadius(18.0);
+    m_card->setFixedSize(540, 460);
+
+    m_titleLbl = new QLabel(QStringLiteral("Abrir cuaderno o pizarra"), m_card);
+    m_titleLbl->setFont(editorFont(15.0, QFont::Bold));
+    m_titleLbl->move(20, 14);
+
+    m_closeBtn = new EditorIconButton(QStringLiteral("x"), QStringLiteral("ui"), m_card);
+    m_closeBtn->setFixedSize(28, 28);
+    m_closeBtn->setIconSizePx(14.0);
+    m_closeBtn->move(540 - 40, 12);
+    connect(m_closeBtn, &EditorIconButton::clicked, this, [this] {
+        hide();
+        emit closed();
+    });
+
+    m_searchEdit = new EditorLineEdit(m_card);
+    m_searchEdit->setPlaceholderText(QStringLiteral("Buscar por nombre o carpeta…"));
+    m_searchEdit->setGeometry(20, 48, 500, 32);
+    connect(m_searchEdit, &QLineEdit::textChanged, this, [this] { rebuildList(); });
+
+    m_filterSeg = new EditorSegControl(m_card);
+    m_filterSeg->setOptions({QStringLiteral("Todos"), QStringLiteral("Cuadernos"),
+                             QStringLiteral("Pizarras"), QStringLiteral("PDFs")});
+    m_filterSeg->setGeometry(20, 88, 500, 30);
+    connect(m_filterSeg, &EditorSegControl::currentIndexChanged, this, [this](int idx) {
+        m_filter = idx;
+        rebuildList();
+    });
+
+    m_scroll = new QScrollArea(m_card);
+    m_scroll->setGeometry(14, 126, 512, 460 - 140);
+    m_scroll->setWidgetResizable(true);
+    m_scroll->setFrameShape(QFrame::NoFrame);
+    m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_scroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; border: none; }"));
+
+    m_listHost = new QWidget();
+    m_listHost->setStyleSheet(QStringLiteral("background: transparent;"));
+    m_listLayout = new QVBoxLayout(m_listHost);
+    m_listLayout->setContentsMargins(6, 4, 10, 10);
+    m_listLayout->setSpacing(6);
+    m_scroll->setWidget(m_listHost);
+
+    applyEditorTheme(false);
+}
+
+void EditorLibraryPickerModal::applyEditorTheme(bool dark) {
+    m_dark = dark;
+    m_pal = editorPaletteFor(dark);
+    if (m_card) m_card->applyEditorTheme(dark);
+    if (m_closeBtn) m_closeBtn->applyEditorTheme(dark);
+    if (m_searchEdit) m_searchEdit->applyEditorTheme(dark);
+    if (m_filterSeg) m_filterSeg->applyEditorTheme(dark);
+    if (m_titleLbl)
+        m_titleLbl->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(m_pal.text.name()));
+    if (isVisible())
+        rebuildList();
+    update();
+}
+
+void EditorLibraryPickerModal::centerCard() {
+    if (m_card)
+        m_card->move(std::max(0, (width() - m_card->width()) / 2),
+                     std::max(0, (height() - m_card->height()) / 2));
+}
+
+void EditorLibraryPickerModal::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    centerCard();
+}
+
+void EditorLibraryPickerModal::openPicker(const QStringList& openPaths) {
+    m_openPaths = openPaths;
+    m_docs = LibraryStore::listAllNotebooksRecursive();
+    std::sort(m_docs.begin(), m_docs.end(), [](const NotebookMeta& a, const NotebookMeta& b) {
+        return a.modified > b.modified;
+    });
+    if (m_searchEdit) {
+        QSignalBlocker blk(m_searchEdit);
+        m_searchEdit->clear();
+    }
+    m_filter = 0;
+    if (m_filterSeg) {
+        QSignalBlocker blk(m_filterSeg);
+        m_filterSeg->setCurrentIndex(0);
+    }
+    rebuildList();
+    centerCard();
+    show();
+    raise();
+    if (m_searchEdit)
+        m_searchEdit->setFocus();
+}
+
+void EditorLibraryPickerModal::rebuildList() {
+    if (!m_listLayout || !m_listHost)
+        return;
+    clearLayout(m_listLayout);
+
+    const QString query = m_searchEdit ? m_searchEdit->text().trimmed().toLower() : QString();
+    int shown = 0;
+    for (const NotebookMeta& doc : m_docs) {
+        const bool isBoard = (!doc.hasPdf && doc.pageFormat == PageFormat::Infinite);
+        const bool isBook = (!doc.hasPdf && doc.pageFormat != PageFormat::Infinite);
+        if (m_filter == 1 && !isBook) continue;
+        if (m_filter == 2 && !isBoard) continue;
+        if (m_filter == 3 && !doc.hasPdf) continue;
+
+        const QString title = doc.title.isEmpty() ? QFileInfo(doc.path).completeBaseName() : doc.title;
+        const QString folder = doc.folderRelativePath.isEmpty() ? QStringLiteral("Biblioteca") : doc.folderRelativePath;
+        if (!query.isEmpty() && !title.toLower().contains(query) && !folder.toLower().contains(query))
+            continue;
+
+        const QString canon = QFileInfo(doc.path).canonicalFilePath();
+        const bool alreadyOpen = m_openPaths.contains(canon.isEmpty() ? doc.path : canon);
+        const QString icon = doc.hasPdf ? QStringLiteral("pdf")
+                                        : (isBoard ? QStringLiteral("board") : QStringLiteral("book"));
+        QString detail = folder;
+        if (!isBoard)
+            detail += QStringLiteral(" · %1 pág.").arg(std::max(1, doc.pages));
+        if (doc.modified.isValid())
+            detail += QStringLiteral(" · ") + doc.modified.toString(QStringLiteral("dd/MM/yy"));
+        if (alreadyOpen)
+            detail += QStringLiteral(" · Abierto");
+
+        auto* rowBtn = new EditorChipButton(title + QStringLiteral("  —  ") + detail, m_listHost);
+        rowBtn->setIcon(icon, QStringLiteral("ui"));
+        rowBtn->setChecked(alreadyOpen);
+        rowBtn->setFixedHeight(36);
+        rowBtn->applyEditorTheme(m_dark);
+        const QString path = doc.path;
+        connect(rowBtn, &EditorChipButton::clicked, this, [this, path] {
+            hide();
+            emit closed();
+            emit notebookSelected(path);
+        });
+        m_listLayout->addWidget(rowBtn);
+        ++shown;
+    }
+
+    if (shown == 0) {
+        auto* empty = new QLabel(
+            m_docs.isEmpty() ? QStringLiteral("Aún no hay cuadernos guardados en tu biblioteca.")
+                             : QStringLiteral("Ningún documento coincide con el filtro."),
+            m_listHost);
+        empty->setFont(editorFont(12.0, QFont::Medium));
+        empty->setWordWrap(true);
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setStyleSheet(QStringLiteral("color: %1; padding: 28px; background: transparent;").arg(m_pal.muted.name()));
+        m_listLayout->addWidget(empty);
+    }
+
+    m_listLayout->addStretch(1);
+}
+
+void EditorLibraryPickerModal::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.fillRect(rect(), m_pal.veil);
+    if (m_card && m_card->isVisible())
+        paintSoftShadow(p, QRectF(m_card->geometry()).adjusted(0.5, 0.5, -0.5, -0.5),
+                        m_card->cornerRadius(), 6.0, m_dark);
+}
+
+void EditorLibraryPickerModal::mouseReleaseEvent(QMouseEvent* event) {
+    if (m_card && !m_card->geometry().contains(event->pos())) {
+        hide();
+        emit closed();
+    }
+}
+
+void EditorLibraryPickerModal::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Escape) {
+        hide();
+        emit closed();
+        event->accept();
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
+void EditorLibraryPickerModal::tabletEvent(QTabletEvent* event) {
     event->ignore();
 }
 

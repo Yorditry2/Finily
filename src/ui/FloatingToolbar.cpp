@@ -59,8 +59,35 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
         connect(m_canvas, &CanvasWidget::toastRequested, this, [this](const QString& msg) {
             showToast(msg, false);
         });
-        connect(m_canvas, &CanvasWidget::selectionMenuRequested, this, [this](const QPoint&) {
-            refreshFromCanvas();
+        connect(m_canvas, &CanvasWidget::selectionMenuRequested, this, [this](const QPoint& globalPos) {
+            if (!m_canvas || !m_canvas->hasSelection() || !m_dropdownMenu)
+                return;
+            const QPoint local = mapFromGlobal(globalPos);
+            QVector<EditorDropdownItem> items;
+            items.append({1, tr("Duplicar"), QStringLiteral("Ctrl+D"), QStringLiteral("copy"), QStringLiteral("ui"), false, false, false});
+            items.append({2, tr("Copiar"), QStringLiteral("Ctrl+C"), QStringLiteral("copy"), QStringLiteral("ui"), false, false, false});
+            items.append({3, tr("Agrupar"), {}, QStringLiteral("shapes"), QStringLiteral("ui"), false, false, false});
+            items.append({4, tr("Desagrupar"), {}, QStringLiteral("shapes"), QStringLiteral("ui"), false, false, false});
+            items.append({5, tr("Traer al frente"), {}, QStringLiteral("move-up"), QStringLiteral("editor"), false, false, false});
+            items.append({6, tr("Enviar atrás"), {}, QStringLiteral("move-down"), QStringLiteral("editor"), false, false, false});
+            items.append({7, tr("Eliminar"), QStringLiteral("Supr"), QStringLiteral("trash"), QStringLiteral("ui"), false, true, false});
+            m_dropdownMenu->openMenu(items, local + QPoint(4, 4), size(), [this](int id) {
+                updateOverlayMask();
+                if (!m_canvas)
+                    return;
+                switch (id) {
+                case 1: m_canvas->duplicateSelection(); break;
+                case 2: m_canvas->copySelection(); break;
+                case 3: m_canvas->groupSelection(); break;
+                case 4: m_canvas->ungroupSelection(); break;
+                case 5: m_canvas->bringSelectionToFront(); break;
+                case 6: m_canvas->sendSelectionToBack(); break;
+                case 7: m_canvas->deleteSelection(); break;
+                default: break;
+                }
+                refreshFromCanvas();
+            });
+            updateOverlayMask();
         });
         connect(m_canvas, &CanvasWidget::edgeMarkMenuRequested, this, &FloatingToolbar::showEdgeMarkCapsule);
         connect(m_canvas, &CanvasWidget::inlineTextEditorChanged, this, [this](bool active, const QRect& screenRect) {
@@ -347,6 +374,13 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
         updateOverlayMask();
     });
 
+    m_libraryPickerModal = new EditorLibraryPickerModal(this);
+    connect(m_libraryPickerModal, &EditorLibraryPickerModal::notebookSelected,
+            this, &FloatingToolbar::openNotebookInNewTabRequested);
+    connect(m_libraryPickerModal, &EditorLibraryPickerModal::closed, this, [this] {
+        updateOverlayMask();
+    });
+
     m_boardSheet = new NewBoardSheet(this);
     connect(m_boardSheet, &NewBoardSheet::boardSubmitted, this, &FloatingToolbar::createDocumentRequested);
     connect(m_boardSheet, &NewBoardSheet::tagCreateRequested, this, [this](const QString& name) {
@@ -555,6 +589,7 @@ void FloatingToolbar::openSettingsModal(const QString& section) {
     if (!m_settingsModal)
         return;
     closeTransientPopovers();
+    if (m_libraryPickerModal && m_libraryPickerModal->isVisible()) m_libraryPickerModal->hide();
     if (m_boardSheet && m_boardSheet->isVisible()) m_boardSheet->closeSheet(false);
     if (m_notebookSheet && m_notebookSheet->isVisible()) m_notebookSheet->closeSheet(false);
     m_settingsModal->setGeometry(rect());
@@ -567,6 +602,7 @@ void FloatingToolbar::openLibraryModal(const QString& section) {
     if (!m_libraryModal)
         return;
     closeTransientPopovers();
+    if (m_libraryPickerModal && m_libraryPickerModal->isVisible()) m_libraryPickerModal->hide();
     if (m_boardSheet && m_boardSheet->isVisible()) m_boardSheet->closeSheet(false);
     if (m_notebookSheet && m_notebookSheet->isVisible()) m_notebookSheet->closeSheet(false);
     m_libraryModal->setGeometry(rect());
@@ -576,9 +612,22 @@ void FloatingToolbar::openLibraryModal(const QString& section) {
     updateOverlayMask();
 }
 
+void FloatingToolbar::openLibraryPickerModal() {
+    if (!m_libraryPickerModal)
+        return;
+    closeTransientPopovers();
+    if (m_boardSheet && m_boardSheet->isVisible()) m_boardSheet->closeSheet(false);
+    if (m_notebookSheet && m_notebookSheet->isVisible()) m_notebookSheet->closeSheet(false);
+    m_libraryPickerModal->setGeometry(rect());
+    m_libraryPickerModal->openPicker(m_openTabPaths);
+    m_libraryPickerModal->raise();
+    updateOverlayMask();
+}
+
 bool FloatingToolbar::hasModalOpen() const {
     return (m_settingsModal && m_settingsModal->isVisible())
         || (m_libraryModal && m_libraryModal->isVisible())
+        || (m_libraryPickerModal && m_libraryPickerModal->isVisible())
         || (m_confirmCard && m_confirmCard->isVisible())
         || (m_boardSheet && m_boardSheet->isVisible())
         || (m_notebookSheet && m_notebookSheet->isVisible());
@@ -601,6 +650,11 @@ void FloatingToolbar::closeOpenModal() {
     }
     if (m_notebookSheet && m_notebookSheet->isVisible()) {
         m_notebookSheet->closeSheet(false);
+        return;
+    }
+    if (m_libraryPickerModal && m_libraryPickerModal->isVisible()) {
+        m_libraryPickerModal->hide();
+        updateOverlayMask();
         return;
     }
     if (m_settingsModal && m_settingsModal->isVisible()) {
@@ -634,8 +688,14 @@ bool FloatingToolbar::handleEscape() {
 void FloatingToolbar::openRadialColorPicker(const QPointF& nearScreenPos) {
     if (!m_canvas)
         return;
-    const QPoint pt = nearScreenPos.isNull() ? rect().center() : nearScreenPos.toPoint();
-    openColorPopover(m_canvas->tool(), QRect(pt, QSize(24, 24)), false);
+    if (m_canvas->isRadialMenuOpen()) {
+        m_canvas->closeRadialMenu();
+        return;
+    }
+    if (m_canvas->radialMenuEnabled()) {
+        const QPointF target = nearScreenPos.isNull() ? m_canvas->lastHoverScreenPos() : nearScreenPos;
+        m_canvas->openRadialMenu(target);
+    }
 }
 
 void FloatingToolbar::setNotebookTabs(const QVector<TabEntry>& tabs) {
@@ -687,6 +747,8 @@ void FloatingToolbar::applyThemeToAll(bool dark) {
     m_confirmCard->applyEditorTheme(dark);
     m_settingsModal->applyEditorTheme(dark);
     m_libraryModal->applyEditorTheme(dark);
+    if (m_libraryPickerModal)
+        m_libraryPickerModal->applyEditorTheme(dark);
 }
 
 void FloatingToolbar::refreshFromCanvas() {
@@ -709,6 +771,7 @@ void FloatingToolbar::refreshFromCanvas() {
         m_pagesPanel->hide();
 
     m_pageCapsule->setPageInfo(m_canvas->currentPageIndex() + 1, std::max(1, m_canvas->pageCount()));
+    m_pageCapsule->setPagesPanelOpen(m_pagesPanel && m_pagesPanel->isVisible());
     if (m_openPopover == m_penPanel) m_penPanel->syncFromCanvas();
     else if (m_openPopover == m_hlPanel) m_hlPanel->syncFromCanvas();
     else if (m_openPopover == m_eraserPanel) m_eraserPanel->syncFromCanvas();
@@ -952,14 +1015,18 @@ void FloatingToolbar::positionAll() {
             m_pagesPanel->setGeometry(W - m_pagesPanel->width() - 12, sideTop, m_pagesPanel->width(), sideH);
         }
 
-        const bool showPgCap = m_canvas && m_canvas->pageFormat() != PageFormat::Infinite;
+        const bool showPgCap = m_canvas && m_canvas->pageFormat() != PageFormat::Infinite
+            && !m_pagesPanel->isVisible();
         if (showPgCap) {
-            const int px = m_pagesPanel->isVisible()
-                ? m_pagesPanel->geometry().left() - m_pageCapsule->width() - 12
-                : W - m_pageCapsule->width() - 16;
+            const int px = W - m_pageCapsule->width() - 16;
             const int py = H - m_pageCapsule->height() - 16;
             m_pageCapsule->move(std::max(12, px), py);
             m_pageCapsule->show();
+            if (m_dockMode == ToolbarDockMode::Float && m_detachedDock->isVisible()
+                && m_detachedDock->geometry().right() + 12 > m_pageCapsule->x()) {
+                m_detachedDock->move(std::max(12, m_pageCapsule->x() - m_detachedDock->width() - 12),
+                                     m_detachedDock->y());
+            }
         } else {
             m_pageCapsule->hide();
         }
@@ -980,6 +1047,8 @@ void FloatingToolbar::positionAll() {
         m_settingsModal->setGeometry(rect());
     if (m_libraryModal->isVisible())
         m_libraryModal->setGeometry(rect());
+    if (m_libraryPickerModal && m_libraryPickerModal->isVisible())
+        m_libraryPickerModal->setGeometry(rect());
     if (m_boardSheet && m_boardSheet->isVisible())
         m_boardSheet->repositionOnResize();
     if (m_notebookSheet && m_notebookSheet->isVisible())
@@ -990,6 +1059,7 @@ void FloatingToolbar::positionAll() {
 
 void FloatingToolbar::updateOverlayMask() {
     if (m_settingsModal->isVisible() || m_libraryModal->isVisible() ||
+        (m_libraryPickerModal && m_libraryPickerModal->isVisible()) ||
         m_confirmCard->isVisible() || m_dropdownMenu->isVisible() ||
         (m_boardSheet && m_boardSheet->isVisible()) ||
         (m_notebookSheet && m_notebookSheet->isVisible())) {
@@ -1017,11 +1087,38 @@ void FloatingToolbar::updateOverlayMask() {
     }
 }
 
+QRect FloatingToolbar::activeToolAnchorRect(ToolType tool) const {
+    if (m_dockMode == ToolbarDockMode::Top && m_topBar)
+        return m_topBar->anchorRectForTool(tool);
+    if (m_detachedDock)
+        return m_detachedDock->anchorRectForTool(tool);
+    return QRect(120, 44, 34, 34);
+}
+
 void FloatingToolbar::paintEvent(QPaintEvent* event) {
     QWidget::paintEvent(event);
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    const QList<EditorGlassCard*> cards = {
+        m_detachedDock, m_pageCapsule, m_elementsPanel, m_pagesPanel,
+        m_contextCapsule, m_edgeMarkCapsule, m_inlineTextBar,
+        m_colorPopover, m_fineWidthPopover, m_penPanel, m_hlPanel, m_eraserPanel,
+        m_fillPanel, m_lassoPanel, m_shapesPanel, m_laserPanel, m_paperPanel,
+        m_toast, m_dropdownMenu
+    };
+    for (EditorGlassCard* card : cards) {
+        if (!card || !card->isVisible() || card->cornerRadius() <= 0.5)
+            continue;
+        const qreal lift = (card == m_contextCapsule || card == m_pageCapsule || card == m_toast) ? 3.0 : 5.0;
+        paintSoftShadow(p, QRectF(card->geometry()).adjusted(0.5, 0.5, -0.5, -0.5),
+                        card->cornerRadius(), lift, m_darkUi);
+    }
+
     if (m_confirmCard && m_confirmCard->isVisible()) {
-        QPainter p(this);
         p.fillRect(rect(), editorPaletteFor(m_darkUi).veil);
+        paintSoftShadow(p, QRectF(m_confirmCard->geometry()).adjusted(0.5, 0.5, -0.5, -0.5),
+                        m_confirmCard->cornerRadius(), 6.0, m_darkUi);
     }
 }
 
@@ -1093,16 +1190,16 @@ void FloatingToolbar::applySnapshotScene(const QString& scene) {
         setDockMode(ToolbarDockMode::Float);
     } else if (scene == QLatin1String("pen")) {
         selectTool(ToolType::Pen);
-        openToolPanel(ToolType::Pen, m_topBar->anchorRectForTool(ToolType::Pen));
+        openToolPanel(ToolType::Pen, activeToolAnchorRect(ToolType::Pen));
     } else if (scene == QLatin1String("eraser")) {
         selectTool(ToolType::Eraser);
-        openToolPanel(ToolType::Eraser, m_topBar->anchorRectForTool(ToolType::Eraser));
+        openToolPanel(ToolType::Eraser, activeToolAnchorRect(ToolType::Eraser));
     } else if (scene == QLatin1String("fill")) {
         selectTool(ToolType::Fill);
-        openToolPanel(ToolType::Fill, m_topBar->anchorRectForTool(ToolType::Fill));
+        openToolPanel(ToolType::Fill, activeToolAnchorRect(ToolType::Fill));
     } else if (scene == QLatin1String("shapes")) {
         selectTool(ToolType::Shape);
-        openToolPanel(ToolType::Shape, m_topBar->anchorRectForTool(ToolType::Shape));
+        openToolPanel(ToolType::Shape, activeToolAnchorRect(ToolType::Shape));
     } else if (scene == QLatin1String("paper")) {
         openPaperPanel(m_topBar->paperButtonRect());
     } else if (scene == QLatin1String("elements")) {

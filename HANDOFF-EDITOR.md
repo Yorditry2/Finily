@@ -3,7 +3,24 @@
 Lee primero `AGENTS.md`, `DESIGN.md` y `HANDOFF-REDISENO.md` (Inicio ya está hecho en la rama `redesign/home`).
 
 ## Estado
-El **diseño** del Editor está aprobado por el usuario, pero **no hay nada implementado en C++**. El usuario dijo que lo que no le guste lo ajustará después.
+El **Editor rediseñado** está **implementado en C++20/Qt6** en la rama `redesign/home` con paridad respecto a `mockups/redesign/22-editor-arreglos.html` y `EDITOR-FUNCIONES.md`, incluyendo el logo definitivo **B1 · Facetada 45°** (`branding/finily-logo-b1.svg`, `resources/icons/app/finily-app.svg`, `resources/icons/ui/brand-mark.svg`, `windows/finily.ico` e iconos Linux hicolor).
+
+### Qué quedó implementado
+- **Motor y lienzo (`src/core/`, `src/engine/`, `src/ui/Canvas*`):**
+  - Filtro «Qué agarra» del Lazo (`LassoTargetFilter`: escritura, figuras, texto/imágenes).
+  - Láser con modo Punto / Estela, color configurable y duración (1 / 2 / 4 s).
+  - 9 interruptores de auto-forma (`AutoShapeOptions`), gestos geométricos (`GeometryGestureOptions`) y guías inteligentes (`SmartGuideOptions`).
+  - Borrador con 3 objetivos combinables (`EraserTargets`: tinta, resaltador, figuras) y borrado inmediato con aviso + Deshacer.
+  - Bancos de grosores (3 presets) y colores (6 + arcoíris) independientes por herramienta, con tinta adaptable claro/oscuro.
+  - Cambio de variante de figura tras dibujarla (`classifyShapeFamily` / `morphShapeToVariant`), opacidad y recorte de imagen, barra de texto inline y exportación de página a PNG.
+  - Mapeo configurable de los 2 botones del lápiz, goma trasera y los 4 botones del pad Wacom (`tablet/padButton0..3`).
+- **Interfaz del Editor (`src/ui/editor/*`, `FloatingToolbar.{h,cpp}`, `ToolbarPopovers.cpp`, `MainWindow.{h,cpp}`):**
+  - `EditorTheme` (`EditorGlassCard` con sombras exteriores suaves sin artefactos, `EditorLineEdit`, controles propios y scrollbars translúcidos), `EditorColorPopover`, `EditorChrome` (`EditorTopBar` 2 filas/1 fila, `EditorDetachedDock` Izquierda/Flotante, `EditorPageCapsule`, menús/toasts/confirmación propios), `EditorToolPanels` (los 8 paneles), `EditorSidePanels` (`Elementos` izquierda y `Páginas` derecha), `EditorContextCapsules` (cápsula contextual adaptativa, marcas de arista y barra de texto inline) y `EditorModals` (`Ajustes` con 9 secciones + diagrama Wacom, y `Biblioteca` con 6 secciones incluyendo atajos 1–5).
+  - Cero ventanas/diálogos/menús nativos del sistema (`QMessageBox`, `QComboBox`, `QMenu`, `QColorDialog`, `QInputDialog`, `QProgressDialog`, `Qt::Popup`) y cero emojis en el editor, manteniendo `CanvasWidget` y `FloatingToolbar` como hermanos en `MainWindow::m_container` (Wayland + Wacom).
+  - Verificado con 7/7 suites `ctest` y capturas offscreen `1280×800` en claro y oscuro.
+
+## Pendiente (fuera de alcance del rediseño actual)
+- Diseñar e implementar un modo presentación dedicado y una vista de páginas a pantalla completa si el usuario los pide más adelante (se mantienen `Tab` UI limpia, `F11` pantalla completa y el panel lateral `Páginas`).
 
 ## Fuentes de verdad, por prioridad
 1. `mockups/redesign/22-editor-arreglos.html` es el **mockup definitivo** y es interactivo. Los botones de arriba recorren las escenas:
@@ -40,7 +57,4 @@ El **diseño** del Editor está aprobado por el usuario, pero **no hay nada impl
 6. Atajos 1–5 que guarden la combinación completa de herramienta, punta, color y grosor.
 7. Cambiar el tipo de una figura después de dibujarla (variantes desde la cápsula).
 
-## Pendiente
-- Diseñar el modo presentación y la vista de páginas a pantalla completa.
-- Elegir el logo final (`branding/`), al terminar.
-- Implementar el Editor por fases, siguiendo el estilo de `HANDOFF-REDISENO.md`: una fase por commit en `redesign/home`, verificada con capturas y con el binario copiado a `~/.local/bin/finily`.
+## Referencia de diseño aprobada

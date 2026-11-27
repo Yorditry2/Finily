@@ -257,7 +257,7 @@ EditorElementsPanel::EditorElementsPanel(CanvasWidget* canvas, QWidget* parent)
     m_scroll->setWidgetResizable(true);
     m_scroll->setFrameShape(QFrame::NoFrame);
     m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_scroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; border: none; }"));
+    m_scroll->setStyleSheet(editorScrollAreaStyle(m_dark));
     m_gridHost = new QWidget();
     m_gridHost->setAttribute(Qt::WA_StyledBackground, false);
     m_gridHost->setStyleSheet(QStringLiteral("background: transparent;"));
@@ -297,6 +297,7 @@ void EditorElementsPanel::applyEditorTheme(bool dark) {
     m_searchEdit->applyEditorTheme(dark);
     for (auto* c : m_catChips)
         c->applyEditorTheme(dark);
+    m_scroll->setStyleSheet(editorScrollAreaStyle(dark));
     m_exploreBtn->applyEditorTheme(dark);
     rebuildGrid();
 }
@@ -519,7 +520,7 @@ EditorPagesPanel::EditorPagesPanel(CanvasWidget* canvas, QWidget* parent)
     m_scroll->setWidgetResizable(true);
     m_scroll->setFrameShape(QFrame::NoFrame);
     m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_scroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; border: none; }"));
+    m_scroll->setStyleSheet(editorScrollAreaStyle(m_dark));
     m_listHost = new QWidget();
     m_listHost->setStyleSheet(QStringLiteral("background: transparent;"));
     m_scroll->setWidget(m_listHost);
@@ -538,6 +539,7 @@ void EditorPagesPanel::setDropdownOpener(DropdownRequestFn fn) {
 void EditorPagesPanel::applyEditorTheme(bool dark) {
     EditorGlassCard::applyEditorTheme(dark);
     m_closeBtn->applyEditorTheme(dark);
+    m_scroll->setStyleSheet(editorScrollAreaStyle(dark));
     m_addPageBtn->applyEditorTheme(dark);
     rebuildThumbnails();
 }

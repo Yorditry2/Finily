@@ -185,8 +185,11 @@ void MainWindow::setupHomeConnections() {
         }
     });
 
-    connect(m_homeScreen, &HomeScreen::palmRejectionChanged, this, [](bool enabled) {
-        writeAppSetting(QStringLiteral("ink/palmRejection"), enabled);
+    connect(m_homeScreen, &HomeScreen::palmRejectionChanged, this, [this](bool enabled) {
+        if (m_canvas)
+            m_canvas->setPalmRejectionEnabled(enabled);
+        else
+            writeAppSetting(QStringLiteral("tablet/palmRejection"), enabled);
     });
 
     connect(m_homeScreen, &HomeScreen::continueDraftRequested, this, [this] {
@@ -1109,8 +1112,9 @@ void MainWindow::onWacomPadReadable() {
         // Solo actúa en la página del editor (la biblioteca ignora el pad).
         if (!m_stack || m_stack->currentWidget() != m_container)
             continue;
-        // Solo actuar cuando la ventana de Finily está enfocada
-        if ((!isActiveWindow() && !(m_canvas && m_canvas->hasFocus())) || !m_canvas || !m_toolbar)
+        // Solo actuar cuando la ventana de Finily está enfocada y no hay ningún modal abierto
+        if ((!isActiveWindow() && !(m_canvas && m_canvas->hasFocus()))
+            || !m_canvas || !m_toolbar || m_toolbar->hasModalOpen())
             continue;
 
         if (ev.number < m_padActions.size())
@@ -1157,11 +1161,28 @@ void MainWindow::executeTabletAction(TabletAction action, const QPointF& screenP
         m_toolbar->selectTool(ToolType::Eraser);
         return;
     case TabletAction::LastWriteTool:
-        m_toolbar->selectTool(ToolType::Pen);
+        m_toolbar->selectTool(m_canvas->lastWriteTool() == ToolType::Ballpoint
+                                  ? ToolType::Ballpoint
+                                  : ToolType::Pen);
         return;
     case TabletAction::RightClickMenu:
+        if (m_canvas->hasSelection()) {
+            const QPointF target = screenPos.isNull() ? m_canvas->lastHoverScreenPos() : screenPos;
+            emit m_canvas->selectionMenuRequested(m_canvas->mapToGlobal(target.toPoint()));
+        } else if (m_canvas->isRadialMenuOpen()) {
+            m_canvas->closeRadialMenu();
+        } else if (m_canvas->radialMenuEnabled()) {
+            const QPointF target = screenPos.isNull() ? m_canvas->lastHoverScreenPos() : screenPos;
+            m_canvas->openRadialMenu(target);
+        }
+        return;
     case TabletAction::RadialMenu:
-        m_toolbar->openRadialColorPicker(screenPos);
+        if (m_canvas->isRadialMenuOpen()) {
+            m_canvas->closeRadialMenu();
+        } else if (m_canvas->radialMenuEnabled()) {
+            const QPointF target = screenPos.isNull() ? m_canvas->lastHoverScreenPos() : screenPos;
+            m_canvas->openRadialMenu(target);
+        }
         return;
     case TabletAction::Lasso:
         m_toolbar->selectTool(ToolType::Lasso);
@@ -1291,7 +1312,18 @@ void MainWindow::installShortcuts() {
             m_presetShortcuts[i]->setKey(QKeySequence(m_toolbar->presetShortcut(i)));
     });
 
-    // 'P' lo maneja CanvasWidget directamente (toque rápido = Lápiz, mantener = Menú radial).
+    // 'P' activa Pluma/Lápiz al primer toque y abre la rueda radial al doble toque rápido.
+    auto* penSc = new QShortcut(QKeySequence(QStringLiteral("P")), m_container);
+    penSc->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(penSc, &QShortcut::activated, this, [this] {
+        if (!m_canvas || (m_toolbar && m_toolbar->hasModalOpen()))
+            return;
+        if (m_canvas->isInlineTextEditing() || qobject_cast<QLineEdit*>(QApplication::focusWidget()))
+            return;
+        m_canvas->triggerPenOrRadialShortcut();
+        if (m_toolbar)
+            m_toolbar->refreshFromCanvas();
+    });
     addShortcut(QKeySequence("B"), [this] { m_toolbar->selectTool(ToolType::Ballpoint); });
     addShortcut(QKeySequence("H"), [this] { m_toolbar->selectTool(ToolType::Highlighter); });
     addShortcut(QKeySequence("T"), [this] { m_toolbar->selectTool(ToolType::Text); });

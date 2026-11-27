@@ -60,7 +60,7 @@ void FloatingToolbar::showNewTabMenu(const QRect& anchorRect) {
     std::sort(docs.begin(), docs.end(), [](const NotebookMeta& a, const NotebookMeta& b) {
         return a.modified > b.modified;
     });
-    const int recentCount = std::min(5, int(docs.size()));
+    const int recentCount = std::min(4, int(docs.size()));
     const QFontMetricsF fm(editorFont(12.0, QFont::Medium));
     QStringList recentPaths;
     recentPaths.reserve(recentCount);
@@ -76,9 +76,8 @@ void FloatingToolbar::showNewTabMenu(const QRect& anchorRect) {
         items.append({100 + i, label, {}, icon, QStringLiteral("ui"), i == 0, false, alreadyOpen});
     }
 
-    items.append({10, QStringLiteral("Abrir archivo .finily…"), QStringLiteral("Ctrl+Shift+O"), QStringLiteral("open"), QStringLiteral("ui"), true});
+    items.append({13, QStringLiteral("Explorar cuadernos y pizarras…"), {}, QStringLiteral("folder"), QStringLiteral("ui"), true});
     items.append({11, QStringLiteral("Importar PDF…"), QStringLiteral("Ctrl+O"), QStringLiteral("pdf"), QStringLiteral("ui")});
-    items.append({12, QStringLiteral("Ir a la biblioteca"), {}, QStringLiteral("home"), QStringLiteral("ui"), true});
 
     const QPoint pos(anchorRect.left(), anchorRect.bottom() + 6);
     m_dropdownMenu->openMenu(items, pos, size(), [this, recentPaths](int id) {
@@ -97,12 +96,10 @@ void FloatingToolbar::showNewTabMenu(const QRect& anchorRect) {
             updateOverlayMask();
         } else if (id >= 100 && id - 100 < recentPaths.size()) {
             emit openNotebookInNewTabRequested(recentPaths.at(id - 100));
-        } else if (id == 10) {
-            openNotebookInNewTabDialog();
+        } else if (id == 13) {
+            openLibraryPickerModal();
         } else if (id == 11) {
             importPdfInNewTabDialog();
-        } else if (id == 12) {
-            emit homeRequested();
         }
     }, 268);
     updateOverlayMask();

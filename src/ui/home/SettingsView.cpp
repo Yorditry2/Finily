@@ -909,7 +909,7 @@ SettingsView::SettingsView(QWidget* parent)
 
     m_palmRejection = new ToggleSwitch(g);
     m_palmRejection->toggled = [this](bool on) {
-        writeAppSetting(QStringLiteral("ink/palmRejection"), on);
+        writeAppSetting(QStringLiteral("tablet/palmRejection"), on);
         emit palmRejectionChanged(on);
     };
     addRow(g, QStringLiteral("Ignorar la palma"),
@@ -1162,7 +1162,9 @@ void SettingsView::reload() {
     m_curvePreview->update();
     m_penTest->sensitivity = kPressureValues[best];
     m_penTest->update();
-    m_palmRejection->checked = readAppSetting(QStringLiteral("ink/palmRejection"), true).toBool();
+    m_palmRejection->checked = readAppSetting(
+        QStringLiteral("tablet/palmRejection"),
+        readAppSetting(QStringLiteral("ink/palmRejection"), true)).toBool();
     m_palmRejection->update();
 
     refreshStorageInfo();

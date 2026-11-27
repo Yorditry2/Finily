@@ -195,6 +195,21 @@ void paintEditorGripDots(QPainter& p, const QRectF& rect, const QColor& color, q
     p.restore();
 }
 
+QString editorScrollAreaStyle(bool dark) {
+    const QString thumb = dark ? QStringLiteral("rgba(255, 255, 255, 56)")
+                               : QStringLiteral("rgba(24, 24, 27, 48)");
+    const QString thumbHover = dark ? QStringLiteral("rgba(255, 255, 255, 102)")
+                                    : QStringLiteral("rgba(24, 24, 27, 92)");
+    return QStringLiteral(
+               "QScrollArea { background: transparent; border: none; }"
+               "QScrollBar:vertical { background: transparent; width: 6px; margin: 4px 1px 4px 1px; }"
+               "QScrollBar::handle:vertical { background: %1; min-height: 28px; border-radius: 3px; }"
+               "QScrollBar::handle:vertical:hover { background: %2; }"
+               "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,"
+               "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; height: 0px; }")
+        .arg(thumb, thumbHover);
+}
+
 // ---------------- EditorGlassCard ----------------
 
 EditorGlassCard::EditorGlassCard(QWidget* parent)
@@ -259,8 +274,6 @@ void EditorGlassCard::paintEvent(QPaintEvent*) {
         return;
 
     const bool useGlass = (m_role == Role::BarGlass || m_role == Role::SidePanel || m_role == Role::ContextCapsule);
-    const qreal lift = (m_role == Role::ContextCapsule) ? 3.0 : 5.0;
-    paintSoftShadow(p, frame, m_radius, lift, m_dark);
 
     QPainterPath clip;
     clip.addRoundedRect(frame, m_radius, m_radius);

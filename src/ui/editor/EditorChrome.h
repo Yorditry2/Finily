@@ -283,6 +283,7 @@ private:
     QVector<HitItem> m_hits;
     int m_hoverHit = -1;
     bool m_draggingGrip = false;
+    QPoint m_dragStartGlobal;
 
     ToolType m_activeTool = ToolType::Pen;
     bool m_elementsOpen = false;
@@ -305,6 +306,7 @@ public:
     explicit EditorPageCapsule(QWidget* parent = nullptr);
 
     void setPageInfo(int current, int count);
+    void setPagesPanelOpen(bool open);
 
 signals:
     void prevPageRequested();
@@ -321,6 +323,7 @@ protected:
 private:
     int m_current = 1;
     int m_count = 1;
+    bool m_panelOpen = false;
     int m_hoverPart = -1; // 0=prev, 1=label, 2=next, 3=add
 };
 

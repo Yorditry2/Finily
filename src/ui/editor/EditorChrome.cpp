@@ -516,9 +516,20 @@ void EditorTopBar::setDockMode(ToolbarDockMode mode) {
 }
 
 void EditorTopBar::setTabs(const QVector<EditorTabItem>& tabs) {
-    finishInlineRename(false);
+    const bool keepRename = m_renameEdit && m_renameEdit->isVisible()
+        && m_renamingTab >= 0 && m_renamingTab < tabs.size();
+    if (!keepRename)
+        finishInlineRename(false);
     m_tabs = tabs;
     rebuildHits();
+    if (keepRename) {
+        for (const auto& h : m_hits) {
+            if (h.kind == HitKind::Tab && h.index == m_renamingTab) {
+                m_renameEdit->setGeometry(h.rect.adjusted(26, 4, -24, -4).toRect());
+                break;
+            }
+        }
+    }
     update();
 }
 
@@ -585,16 +596,14 @@ void EditorTopBar::rebuildHits() {
     int rightUsed = 40; // fullscreen button on right
     if (m_dockMode != ToolbarDockMode::Top) {
         rightUsed += 28 + 28 + 12; // undo + redo + div
-        if (!m_infinitePage)
-            rightUsed += 58; // pages pill
         rightUsed += 28 + 6 + 26 + 46 + 26 + 6 + 30 + 28 + 12; // paper + zoom(-,%,+) + export + gear + gap
     }
 
     const int tabStartX = 44;
     const int tabMaxEnd = std::max(tabStartX + 120, W - rightUsed - 38);
     const int nTabs = std::max(1, int(m_tabs.size()));
-    const int availForTabs = std::max(80, tabMaxEnd - tabStartX);
-    const int tabW = std::clamp((availForTabs - (nTabs - 1) * 3) / nTabs, 92, 188);
+    const int availForTabs = std::max(60, tabMaxEnd - tabStartX);
+    const int tabW = std::clamp((availForTabs - (nTabs - 1) * 3) / nTabs, 56, 188);
 
     int tx = tabStartX;
     for (int i = 0; i < m_tabs.size(); ++i) {
@@ -619,11 +628,6 @@ void EditorTopBar::rebuildHits() {
         rx -= 26; m_hits.append({QRectF(rx, 5, 26, 28), HitKind::ZoomOut, 0, ToolType::Pen, false, QStringLiteral("minus"), {}});
         rx -= 6;
         rx -= 28; m_hits.append({QRectF(rx, 5, 28, 28), HitKind::Paper, 0, ToolType::Pen, false, QStringLiteral("paper"), {}});
-        if (!m_infinitePage) {
-            rx -= 58;
-            m_hits.append({QRectF(rx, 5, 56, 28), HitKind::Pages, 0, ToolType::Pen, false, QStringLiteral("pages"),
-                           QStringLiteral("%1/%2").arg(m_pageCurrent).arg(m_pageCount)});
-        }
         rx -= 10;
         rx -= 28; m_hits.append({QRectF(rx, 5, 28, 28), HitKind::Redo, 0, ToolType::Pen, false, QStringLiteral("redo"), {}});
         rx -= 30; m_hits.append({QRectF(rx, 5, 28, 28), HitKind::Undo, 0, ToolType::Pen, false, QStringLiteral("undo"), {}});
@@ -649,26 +653,33 @@ void EditorTopBar::rebuildHits() {
     m_row2Dividers.append(r2x - 4.5);
     r2x -= 9; // vdiv
     r2x -= 34; m_hits.append({QRectF(r2x, y2, 34, 34), HitKind::Paper, 0, ToolType::Pen, false, QStringLiteral("paper"), {}});
-    if (!m_infinitePage) {
-        r2x -= 64;
-        m_hits.append({QRectF(r2x, y2 + 3, 60, 28), HitKind::Pages, 0, ToolType::Pen, false, QStringLiteral("pages"),
-                       QStringLiteral("%1 / %2").arg(m_pageCurrent).arg(m_pageCount)});
-    }
 
     // Reservar ancho fijo (herramientas + grosores + colores) para que los iconos
     // de herramientas no salten horizontalmente al cambiar entre herramientas.
     const auto& tools = canonicalTools();
+    const int leftBound = 92;
+    const int rightBound = r2x - 8;
+    const int availCenter = std::max(320, rightBound - leftBound);
+
+    const bool compact = (availCenter < 710);
+    const qreal sepGap = compact ? 5.0 : 9.0;
+    const qreal toolBtnW = compact ? 30.0 : 34.0;
+    const qreal toolStep = compact ? 31.0 : 36.0;
+    const qreal wSlotW = compact ? 25.0 : 30.0;
+    const qreal wSlotStep = compact ? 26.0 : 31.0;
+    const qreal swatchSz = compact ? 17.0 : 20.0;
+    const qreal colorStep = compact ? 20.0 : 24.0;
+
     int toolsW = 14; // grip
     for (const auto& t : tools) {
         if (t.sepBefore)
-            toolsW += 9;
-        toolsW += 36;
+            toolsW += int(sepGap);
+        toolsW += int(toolStep);
     }
     const int colorSlots = std::max(6, int(m_colors.size()));
-    const int reservedCenterW = toolsW + (9 + 3 * 31) + (9 + colorSlots * 24 + 24);
+    const int reservedCenterW = toolsW + (int(sepGap) + 3 * int(wSlotStep))
+        + (int(sepGap) + colorSlots * int(colorStep) + int(swatchSz) + 4);
 
-    const int leftBound = 94;
-    const int rightBound = r2x - 10;
     const int cx = std::clamp((W - reservedCenterW) / 2, leftBound, std::max(leftBound, rightBound - reservedCenterW));
 
     qreal x = cx;
@@ -677,43 +688,51 @@ void EditorTopBar::rebuildHits() {
 
     for (const auto& t : tools) {
         if (t.sepBefore) {
-            m_row2Dividers.append(x + 4.5);
-            x += 9;
+            m_row2Dividers.append(x + sepGap * 0.5);
+            x += sepGap;
         }
-        m_hits.append({QRectF(x, y2, 34, 34),
+        m_hits.append({QRectF(x, y2 + (34.0 - toolBtnW) * 0.5, toolBtnW, toolBtnW),
                        t.isElements ? HitKind::Elements : HitKind::Tool,
                        0, t.tool, t.hasSub, QString::fromLatin1(t.icon), {}});
-        x += 36;
+        x += toolStep;
     }
 
     if (m_showWidths) {
-        m_row2Dividers.append(x + 4.5);
-        x += 9;
+        m_row2Dividers.append(x + sepGap * 0.5);
+        x += sepGap;
         for (int i = 0; i < 3; ++i) {
-            m_hits.append({QRectF(x, y2 + 3, 30, 28), HitKind::WidthSlot, i, m_activeTool, false, {}, {}});
-            x += 31;
+            m_hits.append({QRectF(x, y2 + 3, wSlotW, 28), HitKind::WidthSlot, i, m_activeTool, false, {}, {}});
+            x += wSlotStep;
         }
     }
 
     if (m_showColors) {
-        m_row2Dividers.append(x + 4.5);
-        x += 9;
+        m_row2Dividers.append(x + sepGap * 0.5);
+        x += sepGap;
+        const qreal sy = y2 + (34.0 - swatchSz) * 0.5;
         for (int i = 0; i < m_colors.size(); ++i) {
-            m_hits.append({QRectF(x, y2 + 7, 20, 20), HitKind::ColorSwatch, i, m_activeTool, false, {}, {}});
-            x += 24;
+            m_hits.append({QRectF(x, sy, swatchSz, swatchSz), HitKind::ColorSwatch, i, m_activeTool, false, {}, {}});
+            x += colorStep;
         }
-        m_hits.append({QRectF(x, y2 + 7, 20, 20), HitKind::ColorWheel, 0, m_activeTool, false, {}, {}});
+        m_hits.append({QRectF(x, sy, swatchSz, swatchSz), HitKind::ColorWheel, 0, m_activeTool, false, {}, {}});
     }
 }
 
 int EditorTopBar::hitIndexAt(const QPointF& pos) const {
-    // Check TabClose before Tab so the close cross wins inside active/hovered tab
+    // El botón × de cierre solo intercepta clics en la pestaña activa o cuando la pestaña ya tiene hover.
     for (int i = 0; i < m_hits.size(); ++i) {
-        if (m_hits.at(i).kind == HitKind::TabClose && m_hits.at(i).rect.contains(pos))
-            return i;
+        const auto& h = m_hits.at(i);
+        if (h.kind == HitKind::TabClose && h.rect.contains(pos) && h.index < m_tabs.size()) {
+            const bool activeTab = m_tabs.at(h.index).active;
+            const bool parentOrCloseHovered = (m_hoverHit >= 0)
+                && (m_hits.at(m_hoverHit).kind == HitKind::Tab || m_hits.at(m_hoverHit).kind == HitKind::TabClose)
+                && (m_hits.at(m_hoverHit).index == h.index);
+            if (activeTab || parentOrCloseHovered)
+                return i;
+        }
     }
     for (int i = 0; i < m_hits.size(); ++i) {
-        if (m_hits.at(i).rect.contains(pos))
+        if (m_hits.at(i).kind != HitKind::TabClose && m_hits.at(i).rect.contains(pos))
             return i;
     }
     return -1;
@@ -989,9 +1008,12 @@ void EditorTopBar::mouseReleaseEvent(QMouseEvent* event) {
     if (m_draggingGrip) {
         m_draggingGrip = false;
         setCursor(Qt::ArrowCursor);
-        const auto nextMode = dockModeFromGlobalDrag(parentWidget(), event->globalPosition().toPoint());
-        if (nextMode != m_dockMode)
-            emit dockModeDragFinished(nextMode);
+        const QPoint gpos = event->globalPosition().toPoint();
+        if ((gpos - m_dragStartGlobal).manhattanLength() >= 10) {
+            const auto nextMode = dockModeFromGlobalDrag(parentWidget(), gpos);
+            if (nextMode != m_dockMode)
+                emit dockModeDragFinished(nextMode);
+        }
         return;
     }
 
@@ -1330,6 +1352,7 @@ void EditorDetachedDock::mousePressEvent(QMouseEvent* event) {
     }
     if (event->button() == Qt::LeftButton && h.kind == HitKind::Grip) {
         m_draggingGrip = true;
+        m_dragStartGlobal = event->globalPosition().toPoint();
         setCursor(Qt::ClosedHandCursor);
     }
 }
@@ -1338,9 +1361,12 @@ void EditorDetachedDock::mouseReleaseEvent(QMouseEvent* event) {
     if (m_draggingGrip) {
         m_draggingGrip = false;
         setCursor(Qt::ArrowCursor);
-        const auto nextMode = dockModeFromGlobalDrag(parentWidget(), event->globalPosition().toPoint());
-        if (nextMode != m_dockMode)
-            emit dockModeDragFinished(nextMode);
+        const QPoint gpos = event->globalPosition().toPoint();
+        if ((gpos - m_dragStartGlobal).manhattanLength() >= 10) {
+            const auto nextMode = dockModeFromGlobalDrag(parentWidget(), gpos);
+            if (nextMode != m_dockMode)
+                emit dockModeDragFinished(nextMode);
+        }
         return;
     }
     if (event->button() != Qt::LeftButton)
@@ -1416,6 +1442,13 @@ void EditorPageCapsule::setPageInfo(int current, int count) {
     update();
 }
 
+void EditorPageCapsule::setPagesPanelOpen(bool open) {
+    if (m_panelOpen == open)
+        return;
+    m_panelOpen = open;
+    update();
+}
+
 void EditorPageCapsule::paintEvent(QPaintEvent* event) {
     EditorGlassCard::paintEvent(event);
     QPainter p(this);
@@ -1426,9 +1459,14 @@ void EditorPageCapsule::paintEvent(QPaintEvent* event) {
     const QRectF rNext(84, 4, 26, 26);
     const QRectF rAdd(112, 4, 26, 26);
     const QRectF zones[4] = {rPrev, rLbl, rNext, rAdd};
+    const bool enabledZone[4] = {m_current > 1, true, m_current < m_count, true};
 
     for (int i = 0; i < 4; ++i) {
-        if (m_hoverPart == i) {
+        if (i == 1 && m_panelOpen) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(m_pal.accent);
+            p.drawRoundedRect(zones[i], 7.0, 7.0);
+        } else if (m_hoverPart == i && enabledZone[i]) {
             p.setPen(Qt::NoPen);
             p.setBrush(m_pal.hover);
             p.drawRoundedRect(zones[i], 7.0, 7.0);
@@ -1441,7 +1479,7 @@ void EditorPageCapsule::paintEvent(QPaintEvent* event) {
     paintUiIcon(&p, rPrev.adjusted(6, 6, -6, -6), QStringLiteral("chevL"), prevCol);
 
     p.setFont(editorFont(11.5, QFont::DemiBold));
-    p.setPen(m_pal.text);
+    p.setPen(m_panelOpen ? m_pal.accentFg : m_pal.text);
     p.drawText(rLbl, Qt::AlignCenter, QStringLiteral("%1 / %2").arg(m_current).arg(m_count));
 
     QColor nextCol = m_pal.icon;
@@ -1455,9 +1493,12 @@ void EditorPageCapsule::paintEvent(QPaintEvent* event) {
 void EditorPageCapsule::mouseMoveEvent(QMouseEvent* event) {
     const qreal x = event->position().x();
     int part = (x < 31) ? 0 : (x < 83 ? 1 : (x < 111 ? 2 : 3));
+    const bool enabled = (part == 0) ? (m_current > 1) : ((part == 2) ? (m_current < m_count) : true);
+    if (!enabled)
+        part = -1;
     if (part != m_hoverPart) {
         m_hoverPart = part;
-        setCursor(Qt::PointingHandCursor);
+        setCursor(part >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
         update();
     }
 }

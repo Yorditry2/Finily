@@ -241,6 +241,9 @@ CanvasWidget::CanvasWidget(QWidget* parent)
     }
     loadToolBanksAndSettings();
 
+    if (qApp)
+        qApp->installEventFilter(this);
+
     loadAutosave();
     refreshActiveColorFromTheme();
     updateCursorShape();
@@ -269,7 +272,7 @@ void CanvasWidget::setTool(ToolType tool) {
         clearSelection();
     if (tool == ToolType::Select && m_tool == ToolType::Lasso && hasLassoSelection())
         clearSelection();
-    if (tool == ToolType::Pen || tool == ToolType::Ballpoint || tool == ToolType::Highlighter)
+    if (tool == ToolType::Pen || tool == ToolType::Ballpoint)
         m_lastWriteTool = tool;
     m_tool = tool;
     syncActiveToolFromBank();
@@ -384,8 +387,10 @@ void CanvasWidget::setHighlighterTip(int tip) {
 }
 
 void CanvasWidget::setSwapPenButtons(bool swapped) {
+    if (m_swapPenButtons == swapped)
+        return;
     m_swapPenButtons = swapped;
-    saveAutosave();
+    writeAppSetting(QStringLiteral("tablet/swapPenButtons"), swapped);
     emit stateChanged();
 }
 
@@ -761,8 +766,12 @@ void CanvasWidget::loadToolBanksAndSettings() {
     m_stylusLowerAction = readTabletAction(QStringLiteral("tablet/lowerAction"), TabletAction::RightClickMenu);
     m_stylusUpperAction = readTabletAction(QStringLiteral("tablet/upperAction"), TabletAction::HoldEraser);
     m_stylusEraserTipEnabled = settings->value(QStringLiteral("tablet/eraserTipEnabled"), true).toBool();
+    m_swapPenButtons = settings->value(QStringLiteral("tablet/swapPenButtons"), false).toBool();
     m_radialMenuEnabled = settings->value(QStringLiteral("tablet/radialMenuEnabled"), true).toBool();
-    m_palmRejectionEnabled = settings->value(QStringLiteral("tablet/palmRejection"), true).toBool();
+    const bool palmDef = settings->contains(QStringLiteral("tablet/palmRejection"))
+        ? settings->value(QStringLiteral("tablet/palmRejection"), true).toBool()
+        : settings->value(QStringLiteral("ink/palmRejection"), true).toBool();
+    m_palmRejectionEnabled = palmDef;
 
     m_holdTimer->setInterval(m_holdToShapeDelayMs);
     m_beautifyTimer->setInterval(m_beautifyPauseMs);
@@ -1296,6 +1305,7 @@ void CanvasWidget::resizeEvent(QResizeEvent* event) {
 
 void CanvasWidget::openRadialMenu(const QPointF& centerScreen) {
     clearPenCursor();
+    clearEraserCursor();
     m_radialOpen = true;
     m_radialHoveredColor = -1;
     QPointF c = centerScreen;
@@ -1307,8 +1317,73 @@ void CanvasWidget::openRadialMenu(const QPointF& centerScreen) {
     update(radialMenuRect());
 }
 
+void CanvasWidget::closeRadialMenu() {
+    if (!m_radialOpen)
+        return;
+    const QRect dirty = radialMenuRect();
+    m_radialOpen = false;
+    m_radialHoveredColor = -1;
+    m_radialHoveredTool = -1;
+    updateCursorShape();
+    if (!dirty.isEmpty())
+        update(dirty);
+}
+
+void CanvasWidget::triggerPenOrRadialShortcut() {
+    if (m_radialOpen) {
+        closeRadialMenu();
+        return;
+    }
+    const qint64 now = nowMs();
+    const qint64 dt = now - m_lastPenTriggerMs;
+    if (m_radialMenuEnabled && m_mode == InteractionMode::None
+        && m_lastPenTriggerMs > 0 && dt >= 70 && dt <= 420) {
+        m_lastPenTriggerMs = 0;
+        QPointF c;
+        if (m_hasHoverScreenPos && rect().contains(m_lastHoverScreenPos.toPoint())) {
+            c = m_lastHoverScreenPos;
+        } else {
+            c = QPointF(mapFromGlobal(QCursor::pos()));
+            if (!rect().contains(c.toPoint()))
+                c = QPointF(width() / 2.0, height() / 2.0);
+        }
+        openRadialMenu(c);
+    } else {
+        m_lastPenTriggerMs = now;
+        const ToolType targetPen = (m_lastWriteTool == ToolType::Ballpoint) ? ToolType::Ballpoint : ToolType::Pen;
+        setTool(targetPen);
+    }
+}
+
+bool CanvasWidget::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == qApp && event) {
+        if (event->type() == QEvent::TabletEnterProximity) {
+            m_inTabletProximity = true;
+        } else if (event->type() == QEvent::TabletLeaveProximity) {
+            m_inTabletProximity = false;
+            if (m_tabletTipDown && m_mode != InteractionMode::None) {
+                endInput(m_hasHoverScreenPos ? m_lastHoverScreenPos : QPointF(rect().center()),
+                         Qt::NoModifier);
+            }
+            m_tabletTipDown = false;
+            m_tabletActive = false;
+            m_holdEraseUpper = false;
+            m_holdEraseLower = false;
+            m_lastTabletButtons = Qt::NoButton;
+            clearPenCursor();
+            clearEraserCursor();
+            updateCursorShape();
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void CanvasWidget::tabletEvent(QTabletEvent* event) {
     event->accept();
+    m_inTabletProximity = true;
+    m_lastHoverScreenPos = event->position();
+    m_hasHoverScreenPos = true;
+
     const bool eraserTip = m_stylusEraserTipEnabled
         && (event->pointerType() == QPointingDevice::PointerType::Eraser);
     const Qt::MouseButtons btns = event->buttons();
@@ -1319,29 +1394,38 @@ void CanvasWidget::tabletEvent(QTabletEvent* event) {
     const Qt::MouseButton lowerBtn = m_swapPenButtons ? Qt::RightButton : Qt::MiddleButton;
     const Qt::MouseButton upperBtn = m_swapPenButtons ? Qt::MiddleButton : Qt::RightButton;
 
-    const bool newlyPressedUpper = ((btns & upperBtn) && !(m_lastTabletButtons & upperBtn));
-    const bool newlyPressedLower = ((btns & lowerBtn) && !(m_lastTabletButtons & lowerBtn));
-    m_lastTabletButtons = btns;
+    Qt::MouseButtons effectiveBtns = btns;
+    if (event->type() == QEvent::TabletPress && btn != Qt::NoButton)
+        effectiveBtns |= btn;
+    else if (event->type() == QEvent::TabletRelease && btn != Qt::NoButton)
+        effectiveBtns &= ~btn;
+
+    const bool wasUpperDown = m_lastTabletButtons.testFlag(upperBtn);
+    const bool wasLowerDown = m_lastTabletButtons.testFlag(lowerBtn);
+    const bool isUpperDown = effectiveBtns.testFlag(upperBtn);
+    const bool isLowerDown = effectiveBtns.testFlag(lowerBtn);
+    const bool newlyPressedUpper = isUpperDown && !wasUpperDown;
+    const bool newlyPressedLower = isLowerDown && !wasLowerDown;
+    m_lastTabletButtons = effectiveBtns;
+
+    const bool prevTip = m_tabletTipDown;
+    const bool curTip = (event->type() != QEvent::TabletRelease)
+        && (effectiveBtns.testFlag(Qt::LeftButton) || event->pressure() > 0.01);
 
     auto handleButtonTrigger = [&](TabletAction action) -> bool {
         if (action == TabletAction::None || action == TabletAction::HoldEraser)
             return false;
         if (action == TabletAction::RadialMenu) {
-            if (m_radialOpen) {
-                m_radialOpen = false;
-                updateCursorShape();
-                update(radialMenuRect());
-            } else if (m_radialMenuEnabled) {
+            if (m_radialOpen)
+                closeRadialMenu();
+            else if (m_radialMenuEnabled)
                 openRadialMenu(event->position());
-            }
             return true;
         }
         if (action == TabletAction::LastWriteTool) {
             const qint64 now = nowMs();
             if (m_radialOpen) {
-                m_radialOpen = false;
-                updateCursorShape();
-                update(radialMenuRect());
+                closeRadialMenu();
                 return true;
             }
             const qint64 dt = now - m_lastPenTriggerMs;
@@ -1351,66 +1435,90 @@ void CanvasWidget::tabletEvent(QTabletEvent* event) {
                 openRadialMenu(event->position());
             } else {
                 m_lastPenTriggerMs = now;
-                switchTabletTool(m_lastWriteTool);
+                switchTabletTool(m_lastWriteTool == ToolType::Ballpoint ? ToolType::Ballpoint : ToolType::Pen);
             }
             return true;
         }
-        if (m_radialOpen) {
-            m_radialOpen = false;
-            updateCursorShape();
-            update(radialMenuRect());
-        }
+        if (m_radialOpen)
+            closeRadialMenu();
         executeTabletAction(action, event->position());
         return true;
     };
 
-    if (event->type() != QEvent::TabletRelease) {
-        if (newlyPressedUpper && event->pressure() <= 0.01) {
-            if (handleButtonTrigger(m_stylusUpperAction))
-                return;
-        }
-        if (newlyPressedLower && event->pressure() <= 0.01) {
-            if (handleButtonTrigger(m_stylusLowerAction))
-                return;
-        }
+    if (!prevTip && !curTip && event->type() != QEvent::TabletRelease) {
+        if (newlyPressedUpper && handleButtonTrigger(m_stylusUpperAction))
+            return;
+        if (newlyPressedLower && handleButtonTrigger(m_stylusLowerAction))
+            return;
     }
-    if (m_radialOpen && event->pressure() <= 0.01) {
+
+    if (m_radialOpen && !curTip) {
         updateRadialHover(event->position());
         return;
     }
 
-    m_holdEraseUpper = (m_stylusUpperAction == TabletAction::HoldEraser) && ((btns & upperBtn) != 0);
-    m_holdEraseLower = (m_stylusLowerAction == TabletAction::HoldEraser) && ((btns & lowerBtn) != 0);
+    m_holdEraseUpper = (m_stylusUpperAction == TabletAction::HoldEraser) && isUpperDown;
+    m_holdEraseLower = (m_stylusLowerAction == TabletAction::HoldEraser) && isLowerDown;
     const bool useEraser = eraserTip || m_holdEraseUpper || m_holdEraseLower;
 
-    switch (event->type()) {
-    case QEvent::TabletPress:
-        if (event->pressure() <= 0.01) {
-            if (btn == upperBtn && handleButtonTrigger(m_stylusUpperAction))
-                return;
-            if (btn == lowerBtn && handleButtonTrigger(m_stylusLowerAction))
-                return;
+    if (!prevTip && curTip) {
+        const QPointF world = screenToWorld(event->position());
+        const qint64 now = nowMs();
+        const bool doubleTap = !useEraser && m_lastTabletTapMs > 0
+            && (now - m_lastTabletTapMs <= 340)
+            && pointDistance(world, m_lastTabletTapWorld) * m_doc.viewport().zoom <= 14.0;
+        m_lastTabletTapMs = now;
+        m_lastTabletTapWorld = world;
+        if (doubleTap
+            && (m_tool == ToolType::Text || m_tool == ToolType::Select
+                || (m_tool == ToolType::Lasso && m_lassoFilter.media))
+            && std::any_of(m_doc.texts().cbegin(), m_doc.texts().cend(), [&](const TextItem& item) {
+                   return item.bounds.adjusted(-4.0, -4.0, 4.0, 4.0).contains(world);
+               })) {
+            m_mode = InteractionMode::None;
+            m_tabletTipDown = true;
+            m_tabletActive = true;
+            beginTextEditAt(event->position(), world);
+            return;
         }
+        m_tabletTipDown = true;
         m_tabletActive = true;
         beginInput(event->position(), event->pressure(), event->xTilt(), event->yTilt(),
                    true, useEraser, Qt::LeftButton, event->modifiers());
-        break;
-    case QEvent::TabletMove:
+        updateCursorShape();
+        return;
+    }
+
+    if (prevTip && curTip) {
+        if (m_mode == InteractionMode::Erase && m_tool != ToolType::Eraser && !useEraser) {
+            endInput(event->position(), event->modifiers());
+            updateHoverCursors(screenToWorld(event->position()), false);
+            updateCursorShape();
+            return;
+        }
         moveInput(event->position(), event->pressure(), event->xTilt(), event->yTilt(),
                   true, useEraser, event->modifiers());
-        break;
-    case QEvent::TabletRelease:
-        if (m_tabletActive) {
-            moveInput(event->position(), event->pressure(), event->xTilt(), event->yTilt(),
-                      true, useEraser, event->modifiers());
-            if (m_mode == InteractionMode::Draw && m_hasActiveStroke && !m_activeStroke.points.isEmpty())
-                m_activeStroke.points.back().pressure = std::clamp(event->pressure(), 0.0, 1.0);
-            endInput(event->position(), event->modifiers());
-        }
+        return;
+    }
+
+    if (prevTip && !curTip) {
+        moveInput(event->position(), event->pressure(), event->xTilt(), event->yTilt(),
+                  true, useEraser, event->modifiers());
+        if (m_mode == InteractionMode::Draw && m_hasActiveStroke && !m_activeStroke.points.isEmpty())
+            m_activeStroke.points.back().pressure = std::clamp(event->pressure(), 0.0, 1.0);
+        endInput(event->position(), event->modifiers());
+        m_tabletTipDown = false;
         m_tabletActive = false;
-        break;
-    default:
-        break;
+        updateHoverCursors(screenToWorld(event->position()), useEraser);
+        updateCursorShape();
+        return;
+    }
+
+    // Hover puro (!prevTip && !curTip): nunca borra ni inicia trazo al pulsar el botón del lápiz en el aire.
+    m_tabletActive = false;
+    if (m_mode == InteractionMode::None) {
+        updateHoverCursors(screenToWorld(event->position()), useEraser);
+        updateCursorShape();
     }
 }
 
@@ -1423,7 +1531,11 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event) {
 
 void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
     event->accept();
-    if (m_mode == InteractionMode::None && !m_tabletActive) {
+    if (m_tabletActive || (m_palmRejectionEnabled && event->source() != Qt::MouseEventNotSynthesized))
+        return;
+    m_lastHoverScreenPos = event->position();
+    m_hasHoverScreenPos = true;
+    if (m_mode == InteractionMode::None) {
         if (m_radialOpen) {
             updateRadialHover(event->position());
             return;
@@ -1433,9 +1545,8 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
             && (m_tool == ToolType::Pen || m_tool == ToolType::Ballpoint
                 || m_tool == ToolType::Highlighter || m_tool == ToolType::Laser);
         updatePenCursor(world, showPen);
+        updateEraserCursor(world, m_tool == ToolType::Eraser);
     }
-    if (m_tabletActive || (m_palmRejectionEnabled && event->source() != Qt::MouseEventNotSynthesized))
-        return;
     moveInput(event->position(), 0.5, 0.0, 0.0, false, false, event->modifiers());
 }
 
@@ -1537,29 +1648,7 @@ void CanvasWidget::keyPressEvent(QKeyEvent* event) {
         return;
     }
     if (event->key() == Qt::Key_P && !event->isAutoRepeat() && event->modifiers() == Qt::NoModifier) {
-        if (m_radialOpen) {
-            m_radialOpen = false;
-            updateCursorShape();
-            update(radialMenuRect());
-            event->accept();
-            return;
-        }
-        const qint64 now = nowMs();
-        const qint64 dt = now - m_lastPenTriggerMs;
-        if (m_radialMenuEnabled && m_mode == InteractionMode::None
-            && m_lastPenTriggerMs > 0 && dt >= 70 && dt <= 420) {
-            m_lastPenTriggerMs = 0;
-            const Viewport& vp = m_doc.viewport();
-            QPointF c = m_showPenCursor
-                ? (m_hoverWorldPos * vp.zoom + QPointF(vp.x, vp.y))
-                : QPointF(mapFromGlobal(QCursor::pos()));
-            if (!rect().contains(c.toPoint()))
-                c = QPointF(width() / 2.0, height() / 2.0);
-            openRadialMenu(c);
-        } else {
-            m_lastPenTriggerMs = now;
-            setTool(m_lastWriteTool);
-        }
+        triggerPenOrRadialShortcut();
         event->accept();
         return;
     }
@@ -1643,10 +1732,14 @@ void CanvasWidget::keyReleaseEvent(QKeyEvent* event) {
 
 void CanvasWidget::focusOutEvent(QFocusEvent* event) {
     m_spaceHeld = false;
-    if (m_radialOpen) {
-        m_radialOpen = false;
-        update(radialMenuRect());
-    }
+    m_tabletActive = false;
+    m_tabletTipDown = false;
+    m_holdEraseUpper = false;
+    m_holdEraseLower = false;
+    m_lastTabletButtons = Qt::NoButton;
+    clearPenCursor();
+    clearEraserCursor();
+    closeRadialMenu();
     updateCursorShape();
     QWidget::focusOutEvent(event);
 }
@@ -1711,7 +1804,7 @@ void CanvasWidget::executeTabletAction(TabletAction action, const QPointF& scree
         switchTabletTool(ToolType::Eraser);
         return;
     case TabletAction::LastWriteTool:
-        switchTabletTool(m_lastWriteTool);
+        switchTabletTool(m_lastWriteTool == ToolType::Ballpoint ? ToolType::Ballpoint : ToolType::Pen);
         return;
     case TabletAction::Lasso:
         switchTabletTool(ToolType::Lasso);
@@ -1747,10 +1840,18 @@ void CanvasWidget::executeTabletAction(TabletAction action, const QPointF& scree
         }
         return;
     case TabletAction::RightClickMenu:
-        if (hasSelection())
+        if (m_polylineActive) {
+            finishActivePolyline();
+            return;
+        }
+        if (hasSelection()) {
             emit selectionMenuRequested(mapToGlobal(screenPos.toPoint()));
-        else
-            emit tabletActionTriggered(TabletAction::RightClickMenu, screenPos);
+        } else if (m_radialMenuEnabled) {
+            if (m_radialOpen)
+                closeRadialMenu();
+            else
+                openRadialMenu(screenPos);
+        }
         return;
     case TabletAction::ToggleCleanUi:
         emit tabletActionTriggered(TabletAction::ToggleCleanUi, screenPos);
@@ -1759,6 +1860,9 @@ void CanvasWidget::executeTabletAction(TabletAction action, const QPointF& scree
 }
 
 void CanvasWidget::leaveEvent(QEvent* event) {
+    m_holdEraseUpper = false;
+    m_holdEraseLower = false;
+    m_lastTabletButtons = Qt::NoButton;
     clearPenCursor();
     clearEraserCursor();
     QWidget::leaveEvent(event);
@@ -1804,6 +1908,7 @@ void CanvasWidget::updateCursorShape() {
     } else if (m_spaceHeld || m_tool == ToolType::Hand) {
         setCursor(Qt::OpenHandCursor);
     } else if (m_tool == ToolType::Eraser || m_mode == InteractionMode::Erase
+               || m_holdEraseUpper || m_holdEraseLower
                || m_tool == ToolType::Pen || m_tool == ToolType::Ballpoint
                || m_tool == ToolType::Highlighter || m_tool == ToolType::Laser) {
         setCursor(Qt::BlankCursor);

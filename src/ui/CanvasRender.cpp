@@ -366,7 +366,7 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
             m_liveInk.advance(m_activeStroke, m_liveInkLayer, vp, pixels, dpr);
             m_liveInkPending = false;
         }
-        const Stroke live = withPredictedTip(m_activeStroke, vp.zoom);
+        const Stroke live = m_tipPredictionEnabled ? withPredictedTip(m_activeStroke, vp.zoom) : m_activeStroke;
         if (LiveInkRenderer::eligible(live) && m_liveInk.usable(vp, pixels, dpr)
             && m_liveInkLayer.devicePixelRatio() == dpr) {
             p.save();
@@ -701,16 +701,18 @@ void CanvasWidget::commitRadialSelection(bool quickTap) {
     m_radialOpen = false;
     m_radialHoveredColor = -1;
     m_radialHoveredTool = -1;
+    const ToolType targetPen = (m_lastWriteTool == ToolType::Ballpoint) ? ToolType::Ballpoint : ToolType::Pen;
     if (colIdx >= 0) {
         const ThemeConfig th = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground());
         const QVector<QColor> rColors = radialPaletteColors(th.isDark);
-        // Primero volvemos al lápiz (sin recolorear una figura seleccionada por accidente)
-        // y luego cambiamos el color.
-        if (m_tool != ToolType::Pen && m_tool != ToolType::Ballpoint && m_tool != ToolType::Highlighter)
-            setTool(m_lastWriteTool);
+        // Primero volvemos al lápiz y limpiamos selección para no recolorear objetos por accidente.
+        if (m_tool != ToolType::Pen && m_tool != ToolType::Ballpoint)
+            setTool(targetPen);
+        if (hasSelection())
+            clearSelection();
         setInkColor(rColors[colIdx]);
     } else if (quickTap) {
-        setTool(m_lastWriteTool);
+        setTool(targetPen);
     }
     updateCursorShape();
     if (!dirty.isEmpty())

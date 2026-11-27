@@ -28,6 +28,7 @@ class EditorInlineTextBar;
 class EditorLaserPanel;
 class EditorLassoPanel;
 class EditorLibraryModal;
+class EditorLibraryPickerModal;
 class EditorPageCapsule;
 class EditorPagesPanel;
 class EditorPaperPanel;
@@ -79,6 +80,7 @@ public:
     void startInlineRenameActiveTab();
     void openSettingsModal(const QString& section = QStringLiteral("escritura"));
     void openLibraryModal(const QString& section = QStringLiteral("escritura"));
+    void openLibraryPickerModal();
     bool hasModalOpen() const;
     void closeOpenModal();
     bool handleEscape();
@@ -153,6 +155,7 @@ private:
     void showEdgeMarkCapsule(const QPointF& screenPos, const QPointF& worldPos);
 
     void positionAll();
+    QRect activeToolAnchorRect(ToolType tool) const;
     void positionFloatingCard(QWidget* card, const QRect& anchorRect, bool preferLeft = false);
     void positionContextCapsule();
     void updateOverlayMask();
@@ -204,6 +207,7 @@ private:
     EditorConfirmCard* m_confirmCard = nullptr;
     EditorSettingsModal* m_settingsModal = nullptr;
     EditorLibraryModal* m_libraryModal = nullptr;
+    EditorLibraryPickerModal* m_libraryPickerModal = nullptr;
     NewBoardSheet* m_boardSheet = nullptr;
     NewNotebookSheet* m_notebookSheet = nullptr;
 

@@ -113,6 +113,17 @@ public:
     int pageCount() const { return m_doc.pageCount(); }
     QString currentFilePath() const { return m_doc.filePath(); }
     void setCurrentFilePath(const QString& path) { m_doc.setFilePath(path); emit stateChanged(); }
+
+    bool isRadialMenuOpen() const { return m_radialOpen; }
+    bool isInlineTextEditing() const { return m_textEditor != nullptr; }
+    QPointF lastHoverScreenPos() const {
+        return m_hasHoverScreenPos ? m_lastHoverScreenPos : QPointF(rect().center());
+    }
+    ToolType lastWriteTool() const { return m_lastWriteTool; }
+    void openRadialMenu(const QPointF& centerScreen);
+    void closeRadialMenu();
+    void triggerPenOrRadialShortcut();
+    bool eventFilter(QObject* watched, QEvent* event) override;
     QRectF selectionScreenRect() const;
     bool isActivelyDragging() const { return m_mode != InteractionMode::None; }
     bool lassoRectMode() const { return m_lassoRectMode; }
@@ -454,7 +465,6 @@ private:
     QRect laserTrailScreenRect() const;
     void updateLaserDirtyRect();
     bool appendStrokeToStaticCache(const Stroke& stroke);
-    void openRadialMenu(const QPointF& centerScreen);
     void updateRadialHover(const QPointF& screenPos);
     void commitRadialSelection(bool quickTap);
     QRect shapePulseRect() const;
@@ -557,6 +567,12 @@ private:
     // Live interaction state
     InteractionMode m_mode = InteractionMode::None;
     bool m_tabletActive = false;
+    bool m_tabletTipDown = false;
+    bool m_inTabletProximity = false;
+    bool m_hasHoverScreenPos = false;
+    QPointF m_lastHoverScreenPos;
+    qint64 m_lastTabletTapMs = 0;
+    QPointF m_lastTabletTapWorld;
     bool m_spaceHeld = false;
     bool m_hasActiveStroke = false;
     Stroke m_activeStroke;
