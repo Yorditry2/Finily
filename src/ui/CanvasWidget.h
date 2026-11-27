@@ -115,7 +115,7 @@ public:
     void setCurrentFilePath(const QString& path) { m_doc.setFilePath(path); emit stateChanged(); }
 
     bool isRadialMenuOpen() const { return m_radialOpen; }
-    bool isInlineTextEditing() const { return m_textEditor != nullptr; }
+    bool isInlineTextEditing() const;
     QPointF lastHoverScreenPos() const {
         return m_hasHoverScreenPos ? m_lastHoverScreenPos : QPointF(rect().center());
     }

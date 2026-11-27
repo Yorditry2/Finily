@@ -18,6 +18,10 @@ void CanvasWidget::finishTextEditor(bool accept) {
         m_textEditor->finish(accept);
 }
 
+bool CanvasWidget::isInlineTextEditing() const {
+    return m_textEditor != nullptr;
+}
+
 void CanvasWidget::cancelPendingBeautify() {
     if (m_beautifyTimer)
         m_beautifyTimer->stop();
