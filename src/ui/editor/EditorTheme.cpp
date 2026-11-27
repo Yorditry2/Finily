@@ -178,23 +178,6 @@ void paintEditorFamilyCorner(QPainter& p, const QRectF& btnRect, const QColor& c
     p.restore();
 }
 
-void paintEditorGripDots(QPainter& p, const QRectF& rect, const QColor& color, qreal opacity) {
-    p.save();
-    p.setRenderHint(QPainter::Antialiasing, true);
-    QColor c = color;
-    c.setAlphaF(opacity);
-    p.setPen(Qt::NoPen);
-    p.setBrush(c);
-    const qreal cx = rect.center().x();
-    const qreal cy = rect.center().y();
-    for (int row = 0; row < 4; ++row) {
-        const qreal y = cy - 7.5 + row * 5.0;
-        p.drawEllipse(QPointF(cx - 2.0, y), 1.1, 1.1);
-        p.drawEllipse(QPointF(cx + 2.0, y), 1.1, 1.1);
-    }
-    p.restore();
-}
-
 QString editorScrollAreaStyle(bool dark) {
     const QString thumb = dark ? QStringLiteral("rgba(255, 255, 255, 56)")
                                : QStringLiteral("rgba(24, 24, 27, 48)");

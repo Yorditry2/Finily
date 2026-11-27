@@ -72,18 +72,6 @@ qreal pillHeightForTool(ToolType t, double mm) {
     return std::clamp(mm * 1.15, 2.0, 8.0);
 }
 
-ToolbarDockMode dockModeFromGlobalDrag(const QWidget* topLevelRef, const QPoint& globalPos) {
-    if (!topLevelRef)
-        return ToolbarDockMode::Top;
-    const QPoint local = topLevelRef->mapFromGlobal(globalPos);
-    const QSize sz = topLevelRef->size();
-    if (local.x() < std::min(160, sz.width() / 4) && local.y() > 54 && local.y() < sz.height() - 120)
-        return ToolbarDockMode::Left;
-    if (local.y() > sz.height() - std::min(150, sz.height() / 4))
-        return ToolbarDockMode::Float;
-    return ToolbarDockMode::Top;
-}
-
 } // namespace
 
 // ---------------- EditorDropdownMenu ----------------
@@ -915,17 +903,10 @@ void EditorTopBar::paintEvent(QPaintEvent* event) {
 }
 
 void EditorTopBar::mouseMoveEvent(QMouseEvent* event) {
-    if (m_draggingGrip) {
-        setCursor(Qt::ClosedHandCursor);
-        return;
-    }
     const int idx = hitIndexAt(event->position());
     if (idx != m_hoverHit) {
         m_hoverHit = idx;
-        if (idx >= 0 && m_hits.at(idx).kind == HitKind::Grip)
-            setCursor(Qt::OpenHandCursor);
-        else
-            setCursor(idx >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
+        setCursor(idx >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
         update();
     }
 }
@@ -992,18 +973,6 @@ void EditorTopBar::finishInlineRename(bool accept) {
 }
 
 void EditorTopBar::mouseReleaseEvent(QMouseEvent* event) {
-    if (m_draggingGrip) {
-        m_draggingGrip = false;
-        setCursor(Qt::ArrowCursor);
-        const QPoint gpos = event->globalPosition().toPoint();
-        if ((gpos - m_dragStartGlobal).manhattanLength() >= 10) {
-            const auto nextMode = dockModeFromGlobalDrag(parentWidget(), gpos);
-            if (nextMode != m_dockMode)
-                emit dockModeDragFinished(nextMode);
-        }
-        return;
-    }
-
     if (event->button() != Qt::LeftButton)
         return;
 
@@ -1226,7 +1195,7 @@ void EditorDetachedDock::paintEvent(QPaintEvent* event) {
         const auto& prev = m_hits.at(i - 1);
         const auto& cur = m_hits.at(i);
         const qreal gap = vertical ? (cur.rect.top() - prev.rect.bottom()) : (cur.rect.left() - prev.rect.right());
-        if (gap >= 6.0 && prev.kind != HitKind::Grip) {
+        if (gap >= 6.0) {
             if (vertical) {
                 const qreal dy = std::round((prev.rect.bottom() + cur.rect.top()) * 0.5) + 0.5;
                 p.drawLine(QPointF(11.0, dy), QPointF(width() - 11.0, dy));
@@ -1241,10 +1210,6 @@ void EditorDetachedDock::paintEvent(QPaintEvent* event) {
         const auto& h = m_hits.at(i);
         const bool hovered = (i == m_hoverHit);
 
-        if (h.kind == HitKind::Grip) {
-            paintEditorGripDots(p, h.rect, m_pal.icon, hovered ? 0.85 : 0.45);
-            continue;
-        }
         if (h.kind == HitKind::WidthSlot) {
             const qreal mm = m_widths[std::clamp(h.index, 0, 2)];
             const bool adaptInk = (m_activeTool != ToolType::Highlighter && m_activeTool != ToolType::Laser);
@@ -1302,16 +1267,10 @@ void EditorDetachedDock::paintEvent(QPaintEvent* event) {
 }
 
 void EditorDetachedDock::mouseMoveEvent(QMouseEvent* event) {
-    if (m_draggingGrip) {
-        setCursor(Qt::ClosedHandCursor);
-        return;
-    }
     const int idx = hitIndexAt(event->position());
     if (idx != m_hoverHit) {
         m_hoverHit = idx;
-        setCursor((idx >= 0 && m_hits.at(idx).kind == HitKind::Grip)
-                  ? Qt::OpenHandCursor
-                  : (idx >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor));
+        setCursor(idx >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
         update();
     }
 }
@@ -1333,25 +1292,9 @@ void EditorDetachedDock::mousePressEvent(QMouseEvent* event) {
         emit fineWidthRequested(h.tool, QRect(mapTo(parentWidget(), h.rect.topLeft().toPoint()), h.rect.size().toSize()));
         return;
     }
-    if (event->button() == Qt::LeftButton && h.kind == HitKind::Grip) {
-        m_draggingGrip = true;
-        m_dragStartGlobal = event->globalPosition().toPoint();
-        setCursor(Qt::ClosedHandCursor);
-    }
 }
 
 void EditorDetachedDock::mouseReleaseEvent(QMouseEvent* event) {
-    if (m_draggingGrip) {
-        m_draggingGrip = false;
-        setCursor(Qt::ArrowCursor);
-        const QPoint gpos = event->globalPosition().toPoint();
-        if ((gpos - m_dragStartGlobal).manhattanLength() >= 10) {
-            const auto nextMode = dockModeFromGlobalDrag(parentWidget(), gpos);
-            if (nextMode != m_dockMode)
-                emit dockModeDragFinished(nextMode);
-        }
-        return;
-    }
     if (event->button() != Qt::LeftButton)
         return;
     const int idx = hitIndexAt(event->position());

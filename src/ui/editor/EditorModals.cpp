@@ -894,13 +894,12 @@ EditorLibraryModal::EditorLibraryModal(QWidget* parent)
     m_navHost->setGeometry(0, 0, 176, 560);
 
     struct NavDef { const char* key; const char* title; const char* icon; const char* pack; };
-    const NavDef defs[6] = {
+    const NavDef defs[5] = {
         {"escritura", "Escritura", "pen", "ui"},
         {"figuras", "Figuras", "shapes", "ui"},
         {"elementos", "Elementos", "el", "ui"},
         {"paletas", "Paletas", "palette", "editor"},
         {"atajos", "Atajos 1–5", "bookmark", "editor"},
-        {"descargados", "Descargados", "download", "ui"},
     };
     int y = 44;
     for (const auto& d : defs) {
@@ -1142,14 +1141,6 @@ void EditorLibraryModal::buildSectionContent() {
             h->addWidget(saveBtn);
             m_bodyLayout->addWidget(row);
         }
-    } else {
-        m_bodyLayout->addWidget(makeSectionHeading(QStringLiteral("Descargados"), m_pal, m_bodyHost));
-        auto* note = new QLabel(QStringLiteral("+ Próximamente: paquetes y creaciones de la comunidad."), m_bodyHost);
-        note->setFont(editorFont(12.0, QFont::Medium));
-        note->setWordWrap(true);
-        note->setStyleSheet(QStringLiteral("color: %1; padding: 14px; border: 1px dashed %2; border-radius: 12px;")
-                                .arg(m_pal.muted.name(), m_pal.border.name(QColor::HexArgb)));
-        m_bodyLayout->addWidget(note);
     }
 
     m_bodyLayout->addStretch(1);

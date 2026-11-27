@@ -891,38 +891,22 @@ NewNotebookSheet::NewNotebookSheet(QWidget* parent)
     coverSec->addLayout(coverHdr);
 
     m_covers = new TileGrid(
-        3, 5, 110,
-        [this](QPainter& p, const QRectF& c, int i, bool sel, bool hover) {
+        1, 5, 110,
+        [this](QPainter& p, const QRectF& c, int /*i*/, bool sel, bool hover) {
             const auto pal = tokens::paletteFor(m_covers->dark());
             const QRectF r = c.adjusted(0.75, 0.75, -0.75, -0.75);
-            if (i == 0) {
-                p.setPen(sel ? QPen(pal.accent, 1.5) : Qt::NoPen);
-                p.setBrush(pal.neutral);
-                p.drawRoundedRect(r, 11, 11);
-                NotebookMeta meta;
-                meta.coverColorIndex = std::max(0, m_spec.cover.colorIndex);
-                const qreal s = 68.0 / std::max<qreal>(1.0, libobj::bookRect(QPointF(0, 0), meta.pageFormat).width());
-                const QPointF bc(c.center().x(), c.bottom() - 11.0 - (hover && !sel ? 2.0 : 0.0));
-                p.save();
-                p.translate(bc);
-                p.scale(s, s);
-                libobj::paintBook(p, QPointF(0, 0), meta, m_covers->dark());
-                p.restore();
-            } else {
-                p.setPen(QPen(pal.borderPop, 1.0, Qt::DashLine));
-                p.setBrush(pal.neutral);
-                p.drawRoundedRect(r, 11, 11);
-                const QString icName = (i == 1) ? QStringLiteral("upload") : QStringLiteral("download");
-                const QString title = (i == 1) ? QStringLiteral("Subir imagen") : QStringLiteral("Más portadas");
-                paintUiIcon(&p, QRectF(c.center().x() - 9, c.center().y() - 21, 18, 18), icName, pal.muted);
-                p.setFont(nbFont(10.5, QFont::DemiBold));
-                p.setPen(pal.icon);
-                p.drawText(QRectF(c.left() + 4, c.center().y() + 1, c.width() - 8, 14), Qt::AlignCenter, title);
-                p.setFont(nbFont(9.5, QFont::Normal));
-                p.setPen(pal.muted);
-                p.drawText(QRectF(c.left() + 4, c.center().y() + 16, c.width() - 8, 13), Qt::AlignCenter,
-                           QStringLiteral("Próximamente"));
-            }
+            p.setPen(sel ? QPen(pal.accent, 1.5) : Qt::NoPen);
+            p.setBrush(pal.neutral);
+            p.drawRoundedRect(r, 11, 11);
+            NotebookMeta meta;
+            meta.coverColorIndex = std::max(0, m_spec.cover.colorIndex);
+            const qreal s = 68.0 / std::max<qreal>(1.0, libobj::bookRect(QPointF(0, 0), meta.pageFormat).width());
+            const QPointF bc(c.center().x(), c.bottom() - 11.0 - (hover && !sel ? 2.0 : 0.0));
+            p.save();
+            p.translate(bc);
+            p.scale(s, s);
+            libobj::paintBook(p, QPointF(0, 0), meta, m_covers->dark());
+            p.restore();
         },
         inner);
     m_covers->setSelectableCount(1);
@@ -933,7 +917,7 @@ NewNotebookSheet::NewNotebookSheet(QWidget* parent)
     coverSec->addWidget(m_covers);
     ic->addLayout(coverSec);
 
-    // Hoja: 6 tonos de papel + '+' libre + 4 plantillas + «Más plantillas».
+    // Hoja: 6 tonos de papel + '+' libre + 4 plantillas.
     m_pageBlock = new QWidget(inner);
     m_pageBlock->setAttribute(Qt::WA_StyledBackground, false);
     m_pageBlock->setAutoFillBackground(false);
@@ -955,37 +939,21 @@ NewNotebookSheet::NewNotebookSheet(QWidget* parent)
     pageHdr->addWidget(m_paperColors);
     pageSec->addLayout(pageHdr);
     m_pages = new TileGrid(
-        5, 5, 110,
+        4, 4, 110,
         [this](QPainter& p, const QRectF& c, int i, bool sel, bool hover) {
             const auto pal = tokens::paletteFor(m_pages->dark());
             const ThemeConfig tc = effectiveThemeConfig(m_spec.theme, m_spec.customBackground);
             const QRectF r = c.adjusted(0.75, 0.75, -0.75, -0.75);
-            if (i < 4) {
-                p.save();
-                p.translate(0, hover && !sel ? -2 : 0);
-                p.setPen(QPen(sel ? pal.accent : pal.borderPop, sel ? 1.5 : 1.0));
-                p.setBrush(tc.background);
-                p.drawRoundedRect(r, 11, 11);
-                QPainterPath clip;
-                clip.addRoundedRect(r.adjusted(1, 1, -1, -1), 10, 10);
-                p.setClipPath(clip);
-                paintMiniTemplate(p, r, tc, kTpls[i], m_spec.templateScale);
-                p.restore();
-            } else {
-                p.setPen(QPen(pal.borderPop, 1.0, Qt::DashLine));
-                p.setBrush(pal.neutral);
-                p.drawRoundedRect(r, 11, 11);
-                paintUiIcon(&p, QRectF(c.center().x() - 9, c.center().y() - 21, 18, 18),
-                            QStringLiteral("download"), pal.muted);
-                p.setFont(nbFont(10.5, QFont::DemiBold));
-                p.setPen(pal.icon);
-                p.drawText(QRectF(c.left() + 4, c.center().y() + 1, c.width() - 8, 14), Qt::AlignCenter,
-                           QStringLiteral("Más plantillas"));
-                p.setFont(nbFont(9.5, QFont::Normal));
-                p.setPen(pal.muted);
-                p.drawText(QRectF(c.left() + 4, c.center().y() + 16, c.width() - 8, 13), Qt::AlignCenter,
-                           QStringLiteral("Próximamente"));
-            }
+            p.save();
+            p.translate(0, hover && !sel ? -2 : 0);
+            p.setPen(QPen(sel ? pal.accent : pal.borderPop, sel ? 1.5 : 1.0));
+            p.setBrush(tc.background);
+            p.drawRoundedRect(r, 11, 11);
+            QPainterPath clip;
+            clip.addRoundedRect(r.adjusted(1, 1, -1, -1), 10, 10);
+            p.setClipPath(clip);
+            paintMiniTemplate(p, r, tc, kTpls[i], m_spec.templateScale);
+            p.restore();
         },
         m_pageBlock);
     m_pages->setSelectableCount(4);

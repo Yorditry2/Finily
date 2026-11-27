@@ -202,36 +202,6 @@ private:
     QString m_badge;
 };
 
-// Tarjeta «Personalización avanzada · próximamente» (.soon).
-class SoonCard : public Themed {
-public:
-    explicit SoonCard(QWidget* parent)
-        : Themed(parent) {
-        setMinimumHeight(88);
-    }
-
-protected:
-    void paintEvent(QPaintEvent*) override {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing, true);
-        QPen pen(m_dark ? QColor(255, 255, 255, 50) : QColor(24, 24, 27, 56), 1, Qt::DashLine);
-        p.setPen(pen);
-        p.setBrush(tk().sidebar);
-        p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 14, 14);
-        paintUiIcon(&p, QRectF(16, 15, 18, 18), QStringLiteral("sparkle"), tk().icon);
-        p.setFont(pxFont(font(), 12.5, QFont::DemiBold));
-        p.setPen(tk().text);
-        p.drawText(QRect(46, 14, width() - 62, 18), Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("Personalización avanzada · próximamente"));
-        p.setFont(pxFont(font(), 11.5, QFont::Normal));
-        p.setPen(tk().muted);
-        p.drawText(QRect(46, 36, width() - 62, height() - 44), Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop,
-                   QStringLiteral("Aquí podrás cambiar el aspecto de las carpetas, usar tus propios iconos, crear "
-                                  "temas completos e instalar paquetes. Por eso el diseño base es neutro: todo lo de "
-                                  "color se podrá reemplazar."));
-    }
-};
-
 // Logo oficial B1 (Facetada 45°) en Acerca de.
 class AboutLogo : public Themed {
 public:
@@ -825,10 +795,6 @@ SettingsView::SettingsView(QWidget* parent)
            QStringLiteral("Quita rebotes y transiciones largas."),
            m_reducedMotion);
 
-    auto* soon = trackThemed(new SoonCard(paneBox));
-    pane->addSpacing(2);
-    pane->addWidget(soon);
-
     // --- 1. Inicio
     g = addGroup(pane, QStringLiteral("Inicio"));
     m_startupSeg = new SegmentedControl(
@@ -986,7 +952,7 @@ SettingsView::SettingsView(QWidget* parent)
     }
     pane->addStretch(1);
 
-    // Índice: 6 secciones + Personalizar · pronto.
+    // Índice: 6 secciones.
     const QStringList icons = {
         QStringLiteral("palette"), QStringLiteral("grid"),    QStringLiteral("pen"),
         QStringLiteral("hdd"),     QStringLiteral("refresh"), QStringLiteral("info"),
@@ -998,10 +964,6 @@ SettingsView::SettingsView(QWidget* parent)
         navCol->addWidget(item);
     }
     navCol->addStretch(1);
-    auto* custom = trackThemed(
-        new NavItem(QStringLiteral("sparkle"), QStringLiteral("Personalizar"), QStringLiteral("pronto"), m_nav));
-    custom->setToolTip(QStringLiteral("Próximamente: aspecto de carpetas, iconos y temas propios"));
-    navCol->addWidget(custom);
 
     connect(m_scroll->verticalScrollBar(), &QScrollBar::sliderPressed, this, [this] { m_pinnedSection = -1; });
     connect(m_scroll->verticalScrollBar(), &QScrollBar::sliderMoved, this, [this] { m_pinnedSection = -1; });

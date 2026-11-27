@@ -144,7 +144,6 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     connect(m_topBar, &EditorTopBar::customColorRequested, this, [this](ToolType t, const QRect& r) {
         openColorPopover(t, r, false);
     });
-    connect(m_topBar, &EditorTopBar::dockModeDragFinished, this, &FloatingToolbar::setDockMode);
     connect(m_topBar, &EditorTopBar::pagesRequested, this, [this] {
         if (!m_pagesPanel) return;
         closeTransientPopovers();
@@ -186,7 +185,6 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
     connect(m_detachedDock, &EditorDetachedDock::customColorRequested, this, [this](ToolType t, const QRect& r) {
         openColorPopover(t, r, false);
     });
-    connect(m_detachedDock, &EditorDetachedDock::dockModeDragFinished, this, &FloatingToolbar::setDockMode);
 
     m_pageCapsule = new EditorPageCapsule(this);
     connect(m_pageCapsule, &EditorPageCapsule::prevPageRequested, this, [this] {

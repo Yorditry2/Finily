@@ -64,8 +64,6 @@ add_executable(finily
     src/ui/CanvasInput.cpp
     src/ui/CanvasRender.cpp
     src/ui/CanvasSelection.cpp
-    src/ui/IconLibrary.h
-    src/ui/IconLibrary.cpp
     src/ui/FloatingToolbar.h
     src/ui/FloatingToolbar.cpp
     src/ui/ToolbarPopovers.cpp

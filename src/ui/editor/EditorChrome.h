@@ -152,7 +152,6 @@ signals:
     void widthSlotSelected(ToolType tool, int slotIndex);
     void colorSwatchSelected(ToolType tool, int colorIndex);
     void customColorRequested(ToolType tool, const QRect& anchorRect);
-    void dockModeDragFinished(ToolbarDockMode mode);
     void undoRequested();
     void redoRequested();
     void homeRequested();
@@ -183,7 +182,7 @@ protected:
 private:
     enum class HitKind {
         None, Home, Tab, TabClose, NewTab, Fullscreen,
-        Undo, Redo, Grip, Tool, Elements,
+        Undo, Redo, Tool, Elements,
         WidthSlot, ColorSwatch, ColorWheel,
         Pages, Paper, ZoomOut, ZoomReset, ZoomIn, Export, Gear
     };
@@ -206,8 +205,6 @@ private:
     QVector<HitItem> m_hits;
     QVector<qreal> m_row2Dividers;
     int m_hoverHit = -1;
-    bool m_draggingGrip = false;
-    QPoint m_dragStartGlobal;
 
     ToolType m_activeTool = ToolType::Pen;
     bool m_elementsOpen = false;
@@ -256,7 +253,6 @@ signals:
     void widthSlotSelected(ToolType tool, int slotIndex);
     void colorSwatchSelected(ToolType tool, int colorIndex);
     void customColorRequested(ToolType tool, const QRect& anchorRect);
-    void dockModeDragFinished(ToolbarDockMode mode);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -266,7 +262,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
-    enum class HitKind { None, Grip, Tool, Elements, WidthSlot, ColorSwatch, ColorWheel };
+    enum class HitKind { None, Tool, Elements, WidthSlot, ColorSwatch, ColorWheel };
     struct HitItem {
         QRectF rect;
         HitKind kind = HitKind::None;
@@ -282,8 +278,6 @@ private:
     ToolbarDockMode m_dockMode = ToolbarDockMode::Left;
     QVector<HitItem> m_hits;
     int m_hoverHit = -1;
-    bool m_draggingGrip = false;
-    QPoint m_dragStartGlobal;
 
     ToolType m_activeTool = ToolType::Pen;
     bool m_elementsOpen = false;

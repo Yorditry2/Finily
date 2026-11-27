@@ -97,7 +97,7 @@ private:
     QNetworkAccessManager* m_nam = nullptr;
 };
 
-// Modal de Biblioteca (690x560): Escritura, Figuras, Elementos, Paletas, Atajos 1-5, Descargados.
+// Modal de Biblioteca (690x560): Escritura, Figuras, Elementos, Paletas, Atajos 1-5.
 class EditorLibraryModal : public QWidget {
     Q_OBJECT
 

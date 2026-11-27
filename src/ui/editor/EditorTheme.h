@@ -76,7 +76,6 @@ void paintEditorWidthSlot(QPainter& p, const QRectF& rect, qreal pillThickness,
                           const EditorPalette& pal);
 void paintEditorSubChevron(QPainter& p, const QRectF& btnRect, const QColor& color);
 void paintEditorFamilyCorner(QPainter& p, const QRectF& btnRect, const QColor& color);
-void paintEditorGripDots(QPainter& p, const QRectF& rect, const QColor& color, qreal opacity = 0.55);
 QString editorScrollAreaStyle(bool dark);
 
 // Superficie flotante / panel / cápsula pintada con QPainter (Wayland + Wacom safe).
