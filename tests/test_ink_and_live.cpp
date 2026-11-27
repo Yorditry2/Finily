@@ -320,6 +320,168 @@ private slots:
         QVERIFY(!renderer.usable(vp, pixels, 1.0));
     }
 
+    void liveInkRendererIncrementalMatchesFullStrokeAndReusesLayer() {
+        Stroke full;
+        full.id = QStringLiteral("long_pen");
+        full.tool = ToolType::Pen;
+        full.tipStyle = 1;
+        full.color = QColor(QStringLiteral("#38bdf8"));
+        full.size = 4.0;
+        full.hasHardwarePressure = true;
+        full.pressureSensitivity = 0.7;
+        for (int i = 0; i < 260; ++i) {
+            const double x = 20.0 + i * 4.2;
+            const double y = 160.0 + 36.0 * std::sin(i * 0.11);
+            const double pressure = 0.35 + 0.50 * (0.5 + 0.5 * std::cos(i * 0.08));
+            full.points.push_back({x, y, pressure, i * 5, 10.0, -5.0});
+        }
+
+        const Viewport vp{0.0, 0.0, 1.0};
+        const QSize pixels(1200, 320);
+        LiveInkRenderer renderer;
+        QImage layer;
+
+        Stroke partial = full;
+        partial.points.clear();
+        for (qsizetype i = 0; i < full.points.size(); ++i) {
+            partial.points.push_back(full.points[i]);
+            if (i % 4 == 0 || i + 1 == full.points.size())
+                renderer.advance(partial, layer, vp, pixels, 1.0);
+        }
+        QVERIFY(renderer.usable(vp, pixels, 1.0));
+        QVERIFY(renderer.frozenPointIndex() > 200);
+
+        QImage incrementalImg(pixels, QImage::Format_ARGB32_Premultiplied);
+        incrementalImg.fill(Qt::transparent);
+        {
+            QPainter p(&incrementalImg);
+            p.drawImage(QPointF(0, 0), layer);
+            renderer.drawTail(p, full);
+        }
+
+        QImage fullImg(pixels, QImage::Format_ARGB32_Premultiplied);
+        fullImg.fill(Qt::transparent);
+        {
+            QPainter p(&fullImg);
+            drawStroke(p, full, false);
+        }
+
+        int fullInk = 0;
+        int incInk = 0;
+        int strayInc = 0;
+        int missingInc = 0;
+        auto hasNeighborInk = [&](const QImage& img, int x, int y) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                const int yy = y + dy;
+                if (yy < 0 || yy >= pixels.height())
+                    continue;
+                const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(yy));
+                for (int dx = -1; dx <= 1; ++dx) {
+                    const int xx = x + dx;
+                    if (xx >= 0 && xx < pixels.width() && qAlpha(row[xx]) > 16)
+                        return true;
+                }
+            }
+            return false;
+        };
+        for (int y = 0; y < pixels.height(); ++y) {
+            const QRgb* a = reinterpret_cast<const QRgb*>(fullImg.constScanLine(y));
+            const QRgb* b = reinterpret_cast<const QRgb*>(incrementalImg.constScanLine(y));
+            for (int x = 0; x < pixels.width(); ++x) {
+                const int aa = qAlpha(a[x]);
+                const int ab = qAlpha(b[x]);
+                if (aa > 24)
+                    ++fullInk;
+                if (ab > 24)
+                    ++incInk;
+                if (ab > 128 && !hasNeighborInk(fullImg, x, y))
+                    ++strayInc;
+                if (aa > 128 && !hasNeighborInk(incrementalImg, x, y))
+                    ++missingInc;
+            }
+        }
+        QVERIFY(fullInk > 500);
+        QVERIFY(std::abs(fullInk - incInk) < fullInk / 12);
+        QCOMPARE(strayInc, 0);
+        QCOMPARE(missingInc, 0);
+
+        // Comparar también contra LiveInkRenderer en una sola pasada (sin ventana incremental).
+        LiveInkRenderer singleShot;
+        QImage singleLayer;
+        singleShot.advance(full, singleLayer, vp, pixels, 1.0);
+        QImage singleImg(pixels, QImage::Format_ARGB32_Premultiplied);
+        singleImg.fill(Qt::transparent);
+        {
+            QPainter p(&singleImg);
+            p.drawImage(QPointF(0, 0), singleLayer);
+            singleShot.drawTail(p, full);
+        }
+        int incVsSingleMismatch = 0;
+        for (int y = 0; y < pixels.height(); ++y) {
+            const QRgb* s = reinterpret_cast<const QRgb*>(singleImg.constScanLine(y));
+            const QRgb* b = reinterpret_cast<const QRgb*>(incrementalImg.constScanLine(y));
+            for (int x = 0; x < pixels.width(); ++x) {
+                if (std::abs(qAlpha(s[x]) - qAlpha(b[x])) > 24)
+                    ++incVsSingleMismatch;
+            }
+        }
+        QVERIFY(incVsSingleMismatch < incInk / 40);
+
+        // reset(layer) debe reutilizar la asignación de memoria limpiando solo el área sucia.
+        renderer.reset(layer);
+        QCOMPARE(layer.size(), pixels);
+        QVERIFY(!renderer.usable(vp, pixels, 1.0));
+        for (int y = 0; y < pixels.height(); ++y) {
+            const QRgb* row = reinterpret_cast<const QRgb*>(layer.constScanLine(y));
+            for (int x = 0; x < pixels.width(); ++x)
+                QCOMPARE(qAlpha(row[x]), 0);
+        }
+
+        // Un trazo largo de 1000 puntos mantiene drawTail acotado en O(1) sobre la cola.
+        Stroke huge = full;
+        huge.points.clear();
+        for (int i = 0; i < 1000; ++i)
+            huge.points.push_back({10.0 + i * 2.0, 140.0 + 18.0 * std::sin(i * 0.1), 0.6, i * 4, 0.0, 0.0});
+        renderer.advance(huge, layer, vp, QSize(2200, 320), 1.0);
+        QImage tailOut(QSize(2200, 320), QImage::Format_ARGB32_Premultiplied);
+        tailOut.fill(Qt::transparent);
+        QElapsedTimer timer;
+        timer.start();
+        {
+            QPainter p(&tailOut);
+            for (int i = 0; i < 60; ++i)
+                renderer.drawTail(p, huge);
+        }
+        QVERIFY(timer.elapsed() < 500);
+    }
+
+    void dotsTemplateRasterAlignsToWorldGrid() {
+        const ThemeConfig theme = getThemeConfig(ThemeId::DarkBoard);
+        QImage img(320, 240, QImage::Format_ARGB32_Premultiplied);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            drawBackgroundTemplate(p, BackgroundTemplate::Dots, theme, Viewport{0.0, 0.0, 1.0},
+                                   QRectF(0, 0, 320, 240), 1.0);
+        }
+        QVERIFY(img.pixelColor(64, 64) != QColor(Qt::black));
+        QCOMPARE(img.pixelColor(48, 48), QColor(Qt::black));
+
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            p.translate(13.0, 17.0);
+            p.scale(1.37, 1.37);
+            const QRectF vis((-13.0) / 1.37, (-17.0) / 1.37, 320.0 / 1.37, 240.0 / 1.37);
+            drawBackgroundTemplate(p, BackgroundTemplate::Dots, theme, Viewport{13.0, 17.0, 1.37},
+                                   vis, 1.0);
+        }
+        const QPoint dotPt(qRound(64.0 * 1.37 + 13.0), qRound(64.0 * 1.37 + 17.0));
+        const QPoint gapPt(qRound(48.0 * 1.37 + 13.0), qRound(48.0 * 1.37 + 17.0));
+        QVERIFY(img.pixelColor(dotPt) != QColor(Qt::black));
+        QCOMPARE(img.pixelColor(gapPt), QColor(Qt::black));
+    }
+
     void backgroundTemplateExtremeZoomOutStaysBounded() {
         const ThemeConfig theme = getThemeConfig(ThemeId::DarkBoard);
         QImage img(256, 256, QImage::Format_ARGB32_Premultiplied);

@@ -18,7 +18,6 @@
 #include <QEasingCurve>
 #include <QEvent>
 #include <QFontMetrics>
-#include <QGraphicsDropShadowEffect>
 #include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -26,6 +25,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QPaintEvent>
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
@@ -234,9 +234,6 @@ FloatingToolbar::FloatingToolbar(CanvasWidget* canvas, QWidget* parent)
         capsule.first->setCapsuleRadius(capsule.second);
         capsule.first->setCapsuleTheme(initialTheme);
         m_capsules.append(capsule.first);
-        if (capsule.first != m_toastPill) {
-            applyShadow(capsule.first);
-        }
     }
 
     applyThemeStylesheet();
@@ -1220,7 +1217,39 @@ void FloatingToolbar::updateOverlayMask() {
     if (m_restoreBtn && !m_restoreBtn->isHidden()) {
         region += m_restoreBtn->geometry().adjusted(-8, -6, 8, 12);
     }
-    setMask(region);
+    if (region != m_lastOverlayMask) {
+        m_lastOverlayMask = region;
+        setMask(region);
+    }
+}
+
+void FloatingToolbar::paintEvent(QPaintEvent* event) {
+    // Sombra ligera directa: evita 14 blur Gaussiano CPU de QGraphicsDropShadowEffect durante Meet.
+    const bool isDark = getThemeConfig(m_theme).isDark;
+    const int alphas[3] = {isDark ? 24 : 14, isDark ? 13 : 8, isDark ? 6 : 4};
+    const int spreads[3] = {1, 3, 5};
+    const int yOffsets[3] = {2, 4, 6};
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+
+    const QRect dirty = event->rect();
+    for (const GlassCapsule* capsule : m_capsules) {
+        if (!capsule || !capsule->isVisible() || capsule == m_toastPill)
+            continue;
+        const QRect base = capsule->geometry();
+        if (!base.adjusted(-6, -2, 6, 10).intersects(dirty))
+            continue;
+        const int radius = capsule->capsuleRadius();
+        for (int layer = 2; layer >= 0; --layer) {
+            const int spread = spreads[layer];
+            const QRectF r = QRectF(base).adjusted(-spread, -spread + yOffsets[layer],
+                                                  spread, spread + yOffsets[layer]);
+            painter.setBrush(QColor(0, 0, 0, alphas[layer]));
+            painter.drawRoundedRect(r, radius + spread, radius + spread);
+        }
+    }
 }
 
 void FloatingToolbar::tabletEvent(QTabletEvent* event) {
@@ -1469,27 +1498,8 @@ void FloatingToolbar::showToast(const QString& message) {
     }
 }
 
-void FloatingToolbar::applyShadow(QWidget* widget) {
-    if (!widget || widget->graphicsEffect()) {
-        return;
-    }
-    auto* effect = new QGraphicsDropShadowEffect;
-    effect->setBlurRadius(28);
-    effect->setOffset(0.0, 8.0);
-    effect->setColor(QColor(0, 0, 0, getThemeConfig(m_theme).isDark ? 90 : 30));
-    widget->setGraphicsEffect(effect);
-}
-
 void FloatingToolbar::refreshShadowColors() {
-    const QColor shadowColor(0, 0, 0, getThemeConfig(m_theme).isDark ? 90 : 30);
-    for (GlassCapsule* widget : m_capsules) {
-        if (!widget || widget == m_toastPill) {
-            continue;
-        }
-        if (auto* effect = qobject_cast<QGraphicsDropShadowEffect*>(widget->graphicsEffect())) {
-            effect->setColor(shadowColor);
-        }
-    }
+    update();
 }
 
 void FloatingToolbar::loadDockPosition() {

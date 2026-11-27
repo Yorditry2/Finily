@@ -302,10 +302,11 @@ void CanvasWidget::cancelInteraction() {
     if (snapshot) {
         m_doc.restoreSnapshot(*snapshot);
     }
+    const bool wasRadial = m_radialOpen;
     m_holdTimer->stop();
     m_radialOpen = false;
-    m_liveInk.reset();
-    m_liveInkLayer = QImage();
+    m_liveInk.reset(m_liveInkLayer);
+    m_lastLiveDirtyRect = {};
     m_hasActiveStroke = false;
     m_hasActiveShape = false;
     m_holdSnappedToShape = false;
@@ -317,6 +318,8 @@ void CanvasWidget::cancelInteraction() {
     m_activeGuides.clear();
     clearSelection();
     updateCursorShape();
+    if (wasRadial)
+        update(radialMenuRect());
 }
 
 void CanvasWidget::cancelActivePolyline() {
@@ -955,8 +958,8 @@ void CanvasWidget::beginFreehandStroke(const QPointF& world,
     m_holdSnappedToShape = false;
     m_stabilizerFilter->reset();
     m_stabilizerFilter->setStrength(0.0);
-    m_liveInk.reset();
-    m_liveInkLayer = QImage();
+    m_liveInk.reset(m_liveInkLayer);
+    m_lastLiveDirtyRect = {};
     const double zoom = m_doc.viewport().zoom;
     m_inkSmoother.reset(m_stabilizer > 0.0 ? (1.5 + 10.5 * m_stabilizer) / zoom : 0.0,
                         3 + qRound(5.0 * m_stabilizer));
@@ -1011,8 +1014,12 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
     if (m_mode != InteractionMode::None) {
         return;
     }
-    m_zoomAnimation->stop();
+    if (m_zoomAnimation->state() == QAbstractAnimation::Running) {
+        m_zoomAnimation->stop();
+        invalidateStaticCache();
+    }
     clearPenCursor();
+    clearEraserCursor();
     setFocus(Qt::MouseFocusReason);
     finishTextEditor(true);
     m_rightClickOnSelection = false;
@@ -1055,7 +1062,7 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
         m_mode = InteractionMode::LaserTrail;
         m_laserTrail.append({world, nowMs(), true});
         m_laserTimer->start();
-        update();
+        updateLaserDirtyRect();
         return;
     }
     if (m_tool == ToolType::Fill) {
@@ -1166,8 +1173,7 @@ void CanvasWidget::moveErase(const QPointF& world, Qt::KeyboardModifiers mods) {
     for (int i = 1; i <= steps; ++i) {
         applyEraseAt(previous + (world - previous) * (double(i) / steps), trimIntersections);
     }
-    m_eraserWorldPos = world;
-    update();
+    updateEraserCursor(world, true);
 }
 
 void CanvasWidget::moveLassoDraw(const QPointF& world) {
@@ -1486,7 +1492,7 @@ void CanvasWidget::moveFreehandStroke(const QPointF& world,
     }
     StrokePoint point = m_stabilizerFilter->filter(inputPoint(world, pressure, tiltX, tiltY));
     if (mods.testFlag(Qt::ShiftModifier) || m_holdSnappedToShape) {
-        m_liveInk.reset();
+        m_liveInk.reset(m_liveInkLayer);
         m_liveInkPending = false;
         point = snappedPoint(m_rawStartPoint, point);
         m_activeStroke.points = {m_rawStartPoint, point};
@@ -1510,14 +1516,41 @@ void CanvasWidget::moveFreehandStroke(const QPointF& world,
                                 std::min(m_liveStrokeBounds.top(), point.y),
                                 std::max(m_liveStrokeBounds.right(), point.x),
                                 std::max(m_liveStrokeBounds.bottom(), point.y));
+
+    const double dpr = devicePixelRatioF();
+    const QSize pixels(int(std::ceil(width() * dpr)), int(std::ceil(height() * dpr)));
+    QRectF tailWorld = m_liveStrokeBounds;
+    if (m_liveInk.usable(vp, pixels, dpr) && LiveInkRenderer::eligible(m_activeStroke)
+        && !mods.testFlag(Qt::ShiftModifier) && !m_holdSnappedToShape) {
+        const qsizetype fromPt = std::max<qsizetype>(0, m_liveInk.frozenPointIndex() - 2);
+        const auto& pts = m_activeStroke.points;
+        double l = pts[fromPt].x;
+        double r = l;
+        double t = pts[fromPt].y;
+        double b = t;
+        for (qsizetype i = fromPt + 1; i < pts.size(); ++i) {
+            l = std::min(l, pts[i].x);
+            r = std::max(r, pts[i].x);
+            t = std::min(t, pts[i].y);
+            b = std::max(b, pts[i].y);
+        }
+        tailWorld.setCoords(l, t, r, b);
+    }
+
     const QPointF offset(vp.x, vp.y);
-    const QRectF screenBounds(m_liveStrokeBounds.topLeft() * vp.zoom + offset,
-                              m_liveStrokeBounds.bottomRight() * vp.zoom + offset);
-    // Catmull-Rom puede exceder los puntos hasta 1/6 del rango de cada eje; margen para punta y AA.
-    const double pad = m_activeStroke.size * vp.zoom + 20.0;
-    const double padX = screenBounds.width() / 6.0 + pad;
-    const double padY = screenBounds.height() / 6.0 + pad;
-    update(screenBounds.adjusted(-padX, -padY, padX, padY).toAlignedRect());
+    const QRectF screenBounds(tailWorld.topLeft() * vp.zoom + offset,
+                              tailWorld.bottomRight() * vp.zoom + offset);
+    // Catmull-Rom + predicción de punta pueden exceder los puntos; unir con el rect previo limpia residuos.
+    const double pad = m_activeStroke.size * vp.zoom + 24.0;
+    const double padX = screenBounds.width() / 6.0 + pad + 24.0;
+    const double padY = screenBounds.height() / 6.0 + pad + 24.0;
+    const QRect nextDirty = screenBounds.adjusted(-padX, -padY, padX, padY)
+                                .toAlignedRect()
+                                .intersected(rect());
+    const QRect dirty = m_lastLiveDirtyRect.isEmpty() ? nextDirty : m_lastLiveDirtyRect.united(nextDirty);
+    m_lastLiveDirtyRect = nextDirty;
+    if (!dirty.isEmpty())
+        update(dirty);
 }
 
 void CanvasWidget::updateHoverCursors(const QPointF& world, bool eraser) {
@@ -1560,15 +1593,7 @@ void CanvasWidget::updateHoverCursors(const QPointF& world, bool eraser) {
         && (m_tool == ToolType::Pen || m_tool == ToolType::Ballpoint
             || m_tool == ToolType::Highlighter || m_tool == ToolType::Laser);
     updatePenCursor(world, showPen);
-    const bool wantsEraserCursor = eraser || (m_tool == ToolType::Eraser);
-    if (wantsEraserCursor) {
-        m_showEraserCursor = true;
-        m_eraserWorldPos = world;
-        update();
-    } else if (m_showEraserCursor) {
-        m_showEraserCursor = false;
-        update();
-    }
+    updateEraserCursor(world, eraser || (m_tool == ToolType::Eraser));
 }
 
 void CanvasWidget::moveInput(const QPointF& screenPos,
@@ -1586,7 +1611,7 @@ void CanvasWidget::moveInput(const QPointF& screenPos,
         if (!m_laserTimer->isActive()) {
             m_laserTimer->start();
         }
-        update();
+        updateLaserDirtyRect();
         return;
     case InteractionMode::TextMove:
         moveText(world);
@@ -1631,8 +1656,8 @@ void CanvasWidget::moveInput(const QPointF& screenPos,
 
 void CanvasWidget::finishAutoGeometry(const ShapeItem& pulseShape) {
     m_hasActiveStroke = false;
-    m_liveInk.reset();
-    m_liveInkLayer = QImage();
+    m_liveInk.reset(m_liveInkLayer);
+    m_lastLiveDirtyRect = {};
     m_holdTimer->stop();
     m_shapePulseAnimation->stop();
     m_shapePulseShape = pulseShape;
@@ -1726,11 +1751,12 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
     }
     if (m_mode == InteractionMode::LaserTrail) {
         m_mode = InteractionMode::None;
-        update();
+        updateLaserDirtyRect();
         return;
     }
 
     bool documentChanged = false;
+    bool skipFullRepaint = false;
     const double zoom = m_doc.viewport().zoom;
     const QPointF world = screenToWorld(screenPos);
 
@@ -1929,10 +1955,10 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
             && m_activeStroke.points.size() >= 2) {
             m_activeStroke.points = {m_activeStroke.points.front(), m_activeStroke.points.back()};
         }
-        m_liveInk.reset();
-        m_liveInkLayer = QImage();
+        m_liveInk.reset(m_liveInkLayer);
         m_activeStroke.bounds = computeBounds(m_activeStroke.points, m_activeStroke.size * 0.7);
         if (tryCommitFreehandGeometry(mods)) {
+            m_lastLiveDirtyRect = {};
             return;
         }
         pushUndoSnapshot(currentSnapshot());
@@ -1964,7 +1990,10 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
                 m_beautifyTimer->start(650);
             }
         }
-        invalidateStaticCache();
+        skipFullRepaint = appendStrokeToStaticCache(m_activeStroke);
+        m_lastLiveDirtyRect = {};
+        if (!skipFullRepaint)
+            invalidateStaticCache();
         break;
     }
 
@@ -1977,7 +2006,8 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
         saveAutosave();
     }
     emit stateChanged();
-    update();
+    if (!skipFullRepaint)
+        update();
 }
 
 void CanvasWidget::flushPendingBeautify() {
@@ -2109,8 +2139,8 @@ void CanvasWidget::triggerHoldToShape() {
             return;
         }
         m_holdSnappedToShape = true;
-        m_liveInk.reset();
-        m_liveInkLayer = QImage();
+        m_liveInk.reset(m_liveInkLayer);
+        m_lastLiveDirtyRect = {};
         m_activeStroke.points = {
             m_rawStartPoint,
             snappedPoint(m_rawStartPoint, m_activeStroke.points.back()),
@@ -2125,8 +2155,8 @@ void CanvasWidget::triggerHoldToShape() {
         QPointF edgePt;
         if (isPointNearGeometryEdge(m_holdLastWorld, m_doc.shapes(), vp.zoom, 22.0, &edgePt)) {
             m_hasActiveStroke = false;
-            m_liveInk.reset();
-            m_liveInkLayer = QImage();
+            m_liveInk.reset(m_liveInkLayer);
+            m_lastLiveDirtyRect = {};
             m_mode = InteractionMode::None;
             m_holdTimer->stop();
             update();
@@ -2171,8 +2201,8 @@ void CanvasWidget::triggerHoldToShape() {
         }
     }
 
-    m_liveInk.reset();
-    m_liveInkLayer = QImage();
+    m_liveInk.reset(m_liveInkLayer);
+    m_lastLiveDirtyRect = {};
     m_activeShape = *recognized;
     m_hasActiveShape = true;
     m_hasActiveStroke = false;

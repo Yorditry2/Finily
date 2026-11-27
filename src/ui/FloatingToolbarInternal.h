@@ -143,6 +143,8 @@ public:
         update();
     }
 
+    int capsuleRadius() const { return m_radius; }
+
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);

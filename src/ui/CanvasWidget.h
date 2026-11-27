@@ -354,6 +354,12 @@ private:
     QRectF activeFiniteSheetRect() const;
     void clearPenCursor();
     void updatePenCursor(const QPointF& world, bool visible);
+    void clearEraserCursor();
+    void updateEraserCursor(const QPointF& world, bool visible);
+    QRect radialMenuRect() const;
+    QRect laserTrailScreenRect() const;
+    void updateLaserDirtyRect();
+    bool appendStrokeToStaticCache(const Stroke& stroke);
     void openRadialMenu(const QPointF& centerScreen);
     void updateRadialHover(const QPointF& screenPos);
     void commitRadialSelection(bool quickTap);
@@ -426,6 +432,7 @@ private:
     bool m_hasActiveStroke = false;
     Stroke m_activeStroke;
     QRectF m_liveStrokeBounds;
+    QRect m_lastLiveDirtyRect;
     bool m_liveInkPending = false;
     StrokePoint m_rawStartPoint;
     std::unique_ptr<VelocityGaussianStabilizer> m_stabilizerFilter;
@@ -492,6 +499,7 @@ private:
         bool breakBefore = false;
     };
     QVector<LaserSample> m_laserTrail;
+    QRect m_lastLaserRect;
     QTimer* m_laserTimer = nullptr;
 
     // Eraser sweep state (1 Undo per sweep)
@@ -499,6 +507,7 @@ private:
     bool m_erasedAnything = false;
     bool m_showEraserCursor = false;
     QPointF m_eraserWorldPos;
+    QRect m_eraserCursorRect;
 
     // Pan state
     QPointF m_panStartScreen;
@@ -507,6 +516,7 @@ private:
 
     // Dual-layer backing cache for <0.5ms live drawing latency
     QImage m_staticCache;
+    Viewport m_cacheViewport;
     QImage m_hlBackground;
     QImage m_hlInk;
     LiveInkRenderer m_liveInk;

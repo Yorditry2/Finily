@@ -26,13 +26,18 @@ class LiveInkRenderer {
 public:
     static bool eligible(const Stroke& stroke);
     void reset();
+    void reset(QImage& layer);
     bool usable(const Viewport& vp, const QSize& pixels, double dpr = 1.0) const;
+    qsizetype frozenPointIndex() const { return m_frozenPoint; }
     void advance(const Stroke& stroke, QImage& layer, const Viewport& vp,
                  const QSize& pixels, double dpr);
     void drawTail(QPainter& painter, const Stroke& stroke) const;
 
 private:
-    qsizetype m_frozen = -1;
+    qsizetype m_frozenPoint = -1;
+    QVector<double> m_pointDist;
+    QRect m_dirtyRect;
+    bool m_layerDirty = false;
     Viewport m_vp;
     QSize m_pixels;
     double m_dpr = 1.0;

@@ -68,10 +68,12 @@ void CanvasWidget::afterPageLoaded(bool structureChanged) {
     m_holdTimer->stop();
     m_laserTimer->stop();
     m_laserTrail.clear();
+    m_lastLaserRect = {};
     m_mode = InteractionMode::None;
     m_tabletActive = false;
     m_hasActiveStroke = false;
     m_activeStroke = {};
+    m_lastLiveDirtyRect = {};
     m_liveInkPending = false;
     m_liveInk.reset();
     m_liveInkLayer = QImage();
@@ -85,6 +87,7 @@ void CanvasWidget::afterPageLoaded(bool structureChanged) {
     m_polylineVertices.clear();
     m_polylineSnapClose = false;
     m_showEraserCursor = false;
+    m_eraserCursorRect = {};
     m_linkedPreview = false;
     m_activeGuides.clear();
     m_rightClickOnSelection = false;
@@ -363,10 +366,13 @@ void CanvasWidget::writeAutosaveNow(bool async) {
         break;
     }
 
-    NotebookDocument::AutosaveJob job = m_doc.prepareAutosave(toolSettingsForDocument(), overrideSnap, true);
+    const bool wantCover = m_doc.isCoverThumbDirty();
+    NotebookDocument::AutosaveJob job =
+        m_doc.prepareAutosave(toolSettingsForDocument(), overrideSnap, wantCover, async);
     const uint64_t rev = job.revision;
     const uint64_t epoch = job.sessionEpoch;
     const bool wroteNotebook = job.writeNotebook;
+    const bool savedCover = job.saveCoverThumb;
 
     waitForAutosave();
     if (async) {
@@ -376,14 +382,17 @@ void CanvasWidget::writeAutosaveNow(bool async) {
              job = std::move(job),
              rev,
              epoch,
-             wroteNotebook]() mutable {
+             wroteNotebook,
+             savedCover]() mutable {
                 const bool ok = NotebookDocument::executeAutosaveJob(std::move(job));
                 if (ok && wroteNotebook && guard) {
                     QMetaObject::invokeMethod(
                         guard,
-                        [guard, rev, epoch] {
+                        [guard, rev, epoch, savedCover] {
                             if (guard && guard->m_doc.sessionEpoch() == epoch) {
                                 guard->m_doc.markSaved(rev);
+                                if (savedCover)
+                                    guard->m_doc.markCoverThumbSaved(rev);
                                 emit guard->stateChanged();
                             }
                         },
@@ -391,8 +400,11 @@ void CanvasWidget::writeAutosaveNow(bool async) {
                 }
             });
     } else {
-        if (NotebookDocument::executeAutosaveJob(std::move(job)) && wroteNotebook)
+        if (NotebookDocument::executeAutosaveJob(std::move(job)) && wroteNotebook) {
             m_doc.markSaved(rev);
+            if (savedCover)
+                m_doc.markCoverThumbSaved(rev);
+        }
     }
 }
 

@@ -49,6 +49,8 @@ void NotebookDocument::restoreSnapshot(const DocumentSnapshot& snapshot) {
     page.shapes = snapshot.shapes;
     page.images = snapshot.images;
     page.texts = snapshot.texts;
+    if (m_currentPageIndex == 0)
+        m_coverThumbDirty = true;
 }
 
 void NotebookDocument::setThemeId(ThemeId themeId) {
@@ -57,6 +59,7 @@ void NotebookDocument::setThemeId(ThemeId themeId) {
     m_themeId = themeId;
     m_customBackground = QColor();
     ++m_revision;
+    m_coverThumbDirty = true;
 }
 
 BackgroundTemplate NotebookDocument::pageTemplate(int index) const {
@@ -79,6 +82,7 @@ bool NotebookDocument::setBackgroundTemplate(BackgroundTemplate tpl) {
         m_defaultTemplate = tpl;
         ++m_revision;
     }
+    m_coverThumbDirty = true;
     return true;
 }
 
@@ -89,6 +93,7 @@ void NotebookDocument::setPageFormat(PageFormat format) {
         return;
     m_pageFormat = format;
     ++m_revision;
+    m_coverThumbDirty = true;
 }
 
 void NotebookDocument::setTemplateScale(double scale) {
@@ -97,6 +102,7 @@ void NotebookDocument::setTemplateScale(double scale) {
         return;
     m_templateScale = clamped;
     ++m_revision;
+    m_coverThumbDirty = true;
 }
 
 void NotebookDocument::setCoverStyle(CoverStyle cover) {
@@ -104,11 +110,17 @@ void NotebookDocument::setCoverStyle(CoverStyle cover) {
         return;
     m_cover = cover;
     ++m_revision;
+    m_coverThumbDirty = true;
 }
 
 void NotebookDocument::markSaved(uint64_t rev) {
     if (rev == m_revision)
         m_savedRevision = rev;
+}
+
+void NotebookDocument::markCoverThumbSaved(uint64_t rev) {
+    if (rev == m_revision)
+        m_coverThumbDirty = false;
 }
 
 bool NotebookDocument::currentPageHasContent() const {
@@ -271,6 +283,7 @@ void NotebookDocument::resetNew(const Viewport& initialViewport) {
     m_redoStack.clear();
     m_revision = 0;
     m_savedRevision = 0;
+    m_coverThumbDirty = true;
     ++m_sessionEpoch;
 }
 
@@ -294,6 +307,8 @@ void NotebookDocument::pushUndoSnapshot(const DocumentSnapshot& before) {
     m_redoStack.clear();
     m_redoStack.squeeze();
     ++m_revision;
+    if (m_currentPageIndex == 0)
+        m_coverThumbDirty = true;
 }
 
 void NotebookDocument::pushPageHistory() {
@@ -319,6 +334,7 @@ void NotebookDocument::pushPageHistory() {
     m_redoStack.clear();
     m_redoStack.squeeze();
     ++m_revision;
+    m_coverThumbDirty = true;
 }
 
 NotebookDocument::HistoryRestoreResult NotebookDocument::restoreHistoryEntry(
@@ -333,6 +349,7 @@ NotebookDocument::HistoryRestoreResult NotebookDocument::restoreHistoryEntry(
         m_pages = std::move(entry.pages);
         if (m_pages.isEmpty())
             m_pages.append(PageData{});
+        m_coverThumbDirty = true;
     } else {
         const int targetIndex = std::clamp(entry.pageIndex, 0, int(m_pages.size()) - 1);
         auto& page = m_pages[targetIndex];
@@ -341,6 +358,8 @@ NotebookDocument::HistoryRestoreResult NotebookDocument::restoreHistoryEntry(
         page.shapes = std::move(entry.content.shapes);
         page.images = std::move(entry.content.images);
         page.texts = std::move(entry.content.texts);
+        if (targetIndex == 0)
+            m_coverThumbDirty = true;
     }
     m_currentPageIndex = std::clamp(entry.pageIndex, 0, int(m_pages.size()) - 1);
     ++m_revision;
@@ -388,6 +407,7 @@ bool NotebookDocument::saveToFile(const QString& path, const DocumentToolSetting
         return false;
     m_filePath = path;
     m_savedRevision = m_revision;
+    m_coverThumbDirty = false;
     updateCoverThumbnailForPages(path, m_pages, m_themeId, m_defaultTemplate, m_pageFormat,
                                  m_templateScale, m_customBackground);
     return true;
@@ -455,6 +475,7 @@ bool NotebookDocument::loadFromFile(const QString& path, DocumentToolSettings* o
     }
     m_revision = dirtyAfterLoad ? 1 : 0;
     m_savedRevision = 0;
+    m_coverThumbDirty = true;
     return true;
 }
 
@@ -473,7 +494,8 @@ bool NotebookDocument::loadAutosave(DocumentToolSettings* outToolSettings) {
 NotebookDocument::AutosaveJob NotebookDocument::prepareAutosave(
     const DocumentToolSettings& toolSettings,
     const std::optional<DocumentSnapshot>& currentPageOverride,
-    bool renderCoverThumb) const {
+    bool renderCoverThumb,
+    bool deferCoverRender) const {
     AutosaveJob job;
     job.autosaveFile = autosavePath();
     job.notebookFile = m_filePath;
@@ -498,12 +520,25 @@ NotebookDocument::AutosaveJob NotebookDocument::prepareAutosave(
                                     job.pages.at(job.currentPage).viewport, m_pageFormat,
                                     m_templateScale, m_cover.colorIndex, m_cover.iconIndex,
                                     m_customBackground);
+    job.themeId = m_themeId;
+    job.defaultTemplate = m_defaultTemplate;
+    job.pageFormat = m_pageFormat;
+    job.templateScale = m_templateScale;
+    job.customBackground = m_customBackground;
     if (renderCoverThumb && job.writeNotebook && !job.pages.isEmpty()) {
-        const auto& first = job.pages.first();
-        if (pageHasVisibleContent(first))
-            job.coverThumb = renderPageThumbnail(first, m_themeId, m_defaultTemplate,
-                                                 m_pageFormat, kCoverThumbSize, m_templateScale,
-                                                 m_customBackground);
+        job.saveCoverThumb = true;
+        job.deferCoverThumb = deferCoverRender;
+        if (deferCoverRender) {
+            // Desacoplar página 0 para que renderPageThumbnail en el worker no comparta
+            // cachés mutables (`cachedPath`/`cachedShapeHash`) con el hilo de interfaz.
+            job.pages[0].strokes.detach();
+        } else {
+            const auto& first = job.pages.first();
+            if (pageHasVisibleContent(first))
+                job.coverThumb = renderPageThumbnail(first, m_themeId, m_defaultTemplate,
+                                                     m_pageFormat, kCoverThumbSize, m_templateScale,
+                                                     m_customBackground);
+        }
     }
     return job;
 }
@@ -515,8 +550,16 @@ bool NotebookDocument::executeAutosaveJob(AutosaveJob job) {
     bool notebookSaved = true;
     if (job.writeNotebook) {
         notebookSaved = serializeDocumentToFile(job.notebookFile, job.pages, job.currentPage, job.settings);
-        if (notebookSaved)
+        if (notebookSaved && job.saveCoverThumb) {
+            if (job.deferCoverThumb && job.coverThumb.isNull() && !job.pages.isEmpty()) {
+                const auto& first = job.pages.first();
+                if (pageHasVisibleContent(first))
+                    job.coverThumb = renderPageThumbnail(first, job.themeId, job.defaultTemplate,
+                                                         job.pageFormat, kCoverThumbSize,
+                                                         job.templateScale, job.customBackground);
+            }
             saveCoverThumbnail(job.notebookFile, job.coverThumb);
+        }
     }
 
     QJsonObject sessionSettings = job.settings;
@@ -559,6 +602,7 @@ void NotebookDocument::importSession(const NotebookSession& session) {
     m_redoStack.clear();
     m_revision = session.dirty ? 1 : 0;
     m_savedRevision = 0;
+    m_coverThumbDirty = true;
     ++m_sessionEpoch;
 }
 

@@ -13,6 +13,7 @@ class QButtonGroup;
 class QHBoxLayout;
 class QLabel;
 class QLineEdit;
+class QPaintEvent;
 class QPropertyAnimation;
 class QResizeEvent;
 class QTabletEvent;
@@ -88,6 +89,7 @@ public slots:
     void setDocumentTitle(const QString& title, bool unsaved);
 
 protected:
+    void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void tabletEvent(QTabletEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -179,7 +181,6 @@ private:
     void openPopover(GlassCapsule* popover, QWidget* anchor);
     void closePopovers();
 
-    void applyShadow(QWidget* widget);
     void refreshShadowColors();
     void loadDockPosition();
     void setDockPosition(DockPos pos);
@@ -285,6 +286,7 @@ private:
     QPropertyAnimation* m_toastAnim = nullptr;
 
     QVector<GlassCapsule*> m_capsules;
+    QRegion m_lastOverlayMask;
     QPointer<QPropertyAnimation> m_popoverAnim;
     QPointer<QPropertyAnimation> m_pillAnim;
 

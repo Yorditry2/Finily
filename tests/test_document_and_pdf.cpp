@@ -649,6 +649,52 @@ private slots:
 
         QVERIFY(!exportPagesToPdf(QString(), {richPage}, theme, BackgroundTemplate::Blank));
     }
+
+    void autosaveDeferredCoverThumbAndPageDirtyTracking() {
+        ScopedTestPaths paths;
+        QVERIFY(paths.isValid());
+
+        const QString nbPath = paths.path(QStringLiteral("clase_meet.finily"));
+        NotebookDocument::DocumentToolSettings ts;
+        NotebookDocument doc;
+        QVERIFY(doc.createNotebook(nbPath, ThemeId::DarkBoard, BackgroundTemplate::Dots,
+                                   PageFormat::Infinite, Viewport{}, ts));
+
+        PageData second;
+        QVERIFY(doc.insertPages(1, {second}));
+        QVERIFY(doc.goToPage(0));
+        doc.pushUndoSnapshot(doc.currentSnapshot());
+        doc.strokes().push_back(makeLineStroke(QPointF(10, 10), QPointF(120, 40)));
+        QVERIFY(doc.saveToFile(nbPath, ts));
+        QVERIFY(!doc.isCoverThumbDirty());
+
+        // Editar página 2 NO ensucia la portada (página 1) durante el autoguardado periódico.
+        QVERIFY(doc.goToPage(1));
+        doc.pushUndoSnapshot(doc.currentSnapshot());
+        doc.strokes().push_back(makeLineStroke(QPointF(20, 20), QPointF(160, 80)));
+        QVERIFY(!doc.isCoverThumbDirty());
+
+        const auto p2Job = doc.prepareAutosave(ts, std::nullopt, doc.isCoverThumbDirty(), true);
+        QVERIFY(p2Job.writeNotebook);
+        QVERIFY(!p2Job.saveCoverThumb);
+
+        // Editar página 1 sí marca portada sucia y difiere el render al hilo trabajador.
+        QVERIFY(doc.goToPage(0));
+        doc.pushUndoSnapshot(doc.currentSnapshot());
+        doc.strokes().push_back(makeLineStroke(QPointF(10, 80), QPointF(150, 90)));
+        QVERIFY(doc.isCoverThumbDirty());
+
+        const auto p1Job = doc.prepareAutosave(ts, std::nullopt, true, /*deferCoverRender=*/true);
+        QVERIFY(p1Job.saveCoverThumb);
+        QVERIFY(p1Job.deferCoverThumb);
+        QVERIFY(p1Job.coverThumb.isNull());
+
+        QFile::remove(coverThumbnailPath(nbPath));
+        QVERIFY(NotebookDocument::executeAutosaveJob(p1Job));
+        QVERIFY(QFileInfo::exists(coverThumbnailPath(nbPath)));
+        doc.markCoverThumbSaved(p1Job.revision);
+        QVERIFY(!doc.isCoverThumbDirty());
+    }
 };
 
 QTEST_MAIN(TestDocumentAndPdf)

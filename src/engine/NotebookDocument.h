@@ -34,6 +34,8 @@ public:
         QString autosaveFile;
         QString notebookFile;
         bool writeNotebook = false;
+        bool saveCoverThumb = false;
+        bool deferCoverThumb = false;
         uint64_t revision = 0;
         uint64_t sessionEpoch = 0;
         bool sessionDirty = false;
@@ -41,6 +43,11 @@ public:
         int currentPage = 0;
         QJsonObject settings;
         QImage coverThumb;
+        ThemeId themeId = ThemeId::DarkBoard;
+        BackgroundTemplate defaultTemplate = BackgroundTemplate::Dots;
+        PageFormat pageFormat = PageFormat::Infinite;
+        double templateScale = 1.0;
+        QColor customBackground;
     };
 
     NotebookDocument();
@@ -94,10 +101,16 @@ public:
     void setFilePath(const QString& path) { m_filePath = path; }
 
     bool isDirty() const { return m_revision != m_savedRevision; }
+    bool isCoverThumbDirty() const { return m_coverThumbDirty; }
     uint64_t revision() const { return m_revision; }
     uint64_t sessionEpoch() const { return m_sessionEpoch; }
-    void markDirty() { ++m_revision; }
+    void markDirty() {
+        ++m_revision;
+        if (m_currentPageIndex == 0)
+            m_coverThumbDirty = true;
+    }
     void markSaved(uint64_t rev);
+    void markCoverThumbSaved(uint64_t rev);
 
     bool currentPageHasContent() const;
     bool hasAnyContent() const;
@@ -139,7 +152,8 @@ public:
 
     AutosaveJob prepareAutosave(const DocumentToolSettings& toolSettings,
                                 const std::optional<DocumentSnapshot>& currentPageOverride = std::nullopt,
-                                bool renderCoverThumb = true) const;
+                                bool renderCoverThumb = true,
+                                bool deferCoverRender = false) const;
     static bool executeAutosaveJob(AutosaveJob job);
 
     NotebookSession exportSession() const;
@@ -167,6 +181,7 @@ private:
     uint64_t m_revision = 0;
     uint64_t m_savedRevision = 0;
     uint64_t m_sessionEpoch = 1;
+    bool m_coverThumbDirty = true;
     ThemeId m_themeId = ThemeId::DarkBoard;
     BackgroundTemplate m_defaultTemplate = BackgroundTemplate::Dots;
     PageFormat m_pageFormat = PageFormat::Infinite;

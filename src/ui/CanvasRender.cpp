@@ -5,6 +5,7 @@
 #include "engine/LassoEngine.h"
 #include "engine/LiveStroke.h"
 
+#include <QPaintEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QtMath>
@@ -38,6 +39,8 @@ bool hasPdfBackground(const QVector<ImageItem>& images) {
 }
 
 bool hasSelectedHighlightStroke(const QVector<Stroke>& strokes, const QSet<QString>& selectedIds) {
+    if (selectedIds.isEmpty())
+        return false;
     return std::any_of(strokes.cbegin(), strokes.cend(), [&](const Stroke& stroke) {
         return selectedIds.contains(stroke.id) && stroke.tool == ToolType::Highlighter;
     });
@@ -46,10 +49,20 @@ bool hasSelectedHighlightStroke(const QVector<Stroke>& strokes, const QSet<QStri
 bool hasSelectedShadedRegion(const QVector<ShapeItem>& shapes,
                              const QSet<QString>& selectedIds,
                              const QString& selectedShapeId) {
+    if (selectedIds.isEmpty() && selectedShapeId.isEmpty())
+        return false;
     return std::any_of(shapes.cbegin(), shapes.cend(), [&](const ShapeItem& shape) {
         return (selectedIds.contains(shape.id) || shape.id == selectedShapeId)
             && shape.kind == ShapeKind::ShadedRegion;
     });
+}
+
+void blitImageRegion(QPainter& p, const QImage& img, const QRect& dirty, double dpr) {
+    if (img.isNull() || dirty.isEmpty())
+        return;
+    const QRectF src(dirty.left() * dpr, dirty.top() * dpr,
+                     dirty.width() * dpr, dirty.height() * dpr);
+    p.drawImage(QRectF(dirty), img, src);
 }
 
 } // namespace
@@ -173,7 +186,8 @@ void CanvasWidget::rebuildStaticCache() {
             drawShapes(inkPainter, false);
             drawPass(inkPainter, false);
             for (const auto& item : texts) {
-                if (item.id != m_selectedTextId && !m_selectedTextIds.contains(item.id))
+                if (item.id != m_selectedTextId && !m_selectedTextIds.contains(item.id)
+                    && (item.bounds.isEmpty() || item.bounds.intersects(visible)))
                     drawTextItem(inkPainter, item);
             }
         }
@@ -185,22 +199,86 @@ void CanvasWidget::rebuildStaticCache() {
         drawShapes(p, false);
         drawPass(p, false);
         for (const auto& item : texts) {
-            if (item.id != m_selectedTextId && !m_selectedTextIds.contains(item.id))
+            if (item.id != m_selectedTextId && !m_selectedTextIds.contains(item.id)
+                && (item.bounds.isEmpty() || item.bounds.intersects(visible)))
                 drawTextItem(p, item);
         }
         m_hlBackground = QImage();
         m_hlInk = QImage();
     }
+    m_cacheViewport = vp;
     m_staticCacheDirty = false;
 }
 
-void CanvasWidget::paintEvent(QPaintEvent*) {
+bool CanvasWidget::appendStrokeToStaticCache(const Stroke& stroke) {
+    if (m_staticCacheDirty || m_staticCache.isNull()
+        || (stroke.tool != ToolType::Pen && stroke.tool != ToolType::Ballpoint)
+        || hasSelection() || !m_hlBackground.isNull() || !m_hlInk.isNull())
+        return false;
     const double dpr = devicePixelRatioF();
     const QSize pixels(qCeil(width() * dpr), qCeil(height() * dpr));
+    const Viewport& vp = m_doc.viewport();
+    if (pixels.isEmpty() || m_staticCache.size() != pixels || m_staticCache.devicePixelRatio() != dpr
+        || m_cacheViewport.x != vp.x || m_cacheViewport.y != vp.y || m_cacheViewport.zoom != vp.zoom)
+        return false;
+
+    const ThemeConfig theme = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground());
+    const bool hasPdfPage = hasPdfBackground(m_doc.images());
+    const QRectF sheet = hasPdfPage ? QRectF() : sheetRectForPageFormat(m_doc.pageFormat());
+    {
+        QPainter p(&m_staticCache);
+        p.translate(vp.x, vp.y);
+        p.scale(vp.zoom, vp.zoom);
+        if (!sheet.isEmpty())
+            p.setClipRect(sheet, Qt::IntersectClip);
+        drawStroke(p, stroke, !theme.isDark || hasPdfPage);
+    }
+
+    const double margin = std::max(16.0, stroke.size * 5.0);
+    const QRectF wb = stroke.bounds.adjusted(-margin, -margin, margin, margin);
+    const QPointF offset(vp.x, vp.y);
+    QRect dirty = QRectF(wb.topLeft() * vp.zoom + offset, wb.bottomRight() * vp.zoom + offset)
+                      .adjusted(-4.0, -4.0, 4.0, 4.0)
+                      .toAlignedRect()
+                      .intersected(rect());
+    if (!m_lastLiveDirtyRect.isEmpty())
+        dirty = dirty.isEmpty() ? m_lastLiveDirtyRect : dirty.united(m_lastLiveDirtyRect);
+    if (!dirty.isEmpty())
+        update(dirty);
+    return true;
+}
+
+void CanvasWidget::paintEvent(QPaintEvent* event) {
+    const double dpr = devicePixelRatioF();
+    const QSize pixels(qCeil(width() * dpr), qCeil(height() * dpr));
+    const Viewport& vp = m_doc.viewport();
+
+    // Durante la animación de zoom (~140 ms), transformar la caché existente evita reconstruir todo en cada frame.
+    if (m_zoomAnimation && m_zoomAnimation->state() == QAbstractAnimation::Running
+        && !m_staticCache.isNull() && m_cacheViewport.zoom > 0.0
+        && !hasSelection() && !m_hasActiveStroke && !m_hasActiveShape) {
+        const ThemeConfig theme = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground());
+        const bool hasPdfPage = hasPdfBackground(m_doc.images());
+        const QRectF sheet = hasPdfPage ? QRectF() : sheetRectForPageFormat(m_doc.pageFormat());
+        const bool finiteSheet = hasPdfPage || !sheet.isEmpty();
+        const QColor deskColor = theme.isDark ? theme.background.darker(135) : QColor("#e4e7ee");
+        QPainter p(this);
+        p.fillRect(rect(), finiteSheet ? deskColor : theme.background);
+        const double s = vp.zoom / m_cacheViewport.zoom;
+        p.translate(vp.x - m_cacheViewport.x * s, vp.y - m_cacheViewport.y * s);
+        p.scale(s, s);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.drawImage(QPointF(0, 0), m_staticCache);
+        return;
+    }
+
+    const QRect dirty = event->rect().intersected(rect());
+    if (dirty.isEmpty())
+        return;
+
     if (m_staticCacheDirty || m_staticCache.size() != pixels || m_staticCache.devicePixelRatio() != dpr)
         rebuildStaticCache();
 
-    const Viewport& vp = m_doc.viewport();
     const auto& strokes = m_doc.strokes();
     const auto& shapes = m_doc.shapes();
     const auto& images = m_doc.images();
@@ -213,8 +291,9 @@ void CanvasWidget::paintEvent(QPaintEvent*) {
         || hasSelectedShadedRegion(shapes, m_selectedShapeIds, m_selectedShapeId);
 
     QPainter p(this);
-    p.drawImage(QPointF(0, 0),
-                (liveHighlight && !m_hlBackground.isNull()) ? m_hlBackground : m_staticCache);
+    const QImage& baseCache =
+        (liveHighlight && !m_hlBackground.isNull()) ? m_hlBackground : m_staticCache;
+    blitImageRegion(p, baseCache, dirty, dpr);
     p.translate(vp.x, vp.y);
     p.scale(vp.zoom, vp.zoom);
 
@@ -264,7 +343,7 @@ void CanvasWidget::paintEvent(QPaintEvent*) {
             && m_liveInkLayer.devicePixelRatio() == dpr) {
             p.save();
             p.resetTransform();
-            p.drawImage(QPointF(0, 0), m_liveInkLayer);
+            blitImageRegion(p, m_liveInkLayer, dirty, dpr);
             p.restore();
             m_liveInk.drawTail(p, live);
         } else {
@@ -275,7 +354,7 @@ void CanvasWidget::paintEvent(QPaintEvent*) {
     if (liveHighlight && !m_hlInk.isNull()) {
         p.save();
         p.resetTransform();
-        p.drawImage(QPointF(0, 0), m_hlInk);
+        blitImageRegion(p, m_hlInk, dirty, dpr);
         p.restore();
     }
 
@@ -568,10 +647,11 @@ void CanvasWidget::updateRadialHover(const QPointF& screenPos) {
         newCol = std::clamp(int(ang / (kPi / 4.0)), 0, 7);
     }
     m_radialHoveredColor = newCol;
-    update();
+    update(radialMenuRect());
 }
 
 void CanvasWidget::commitRadialSelection(bool quickTap) {
+    const QRect dirty = radialMenuRect();
     const int colIdx = m_radialHoveredColor;
     m_radialOpen = false;
     m_radialHoveredColor = -1;
@@ -588,7 +668,75 @@ void CanvasWidget::commitRadialSelection(bool quickTap) {
         setTool(m_lastWriteTool);
     }
     updateCursorShape();
-    update();
+    if (!dirty.isEmpty())
+        update(dirty);
+}
+
+QRect CanvasWidget::radialMenuRect() const {
+    return QRectF(m_radialCenter - QPointF(92.0, 92.0), QSizeF(184.0, 184.0))
+        .toAlignedRect()
+        .intersected(rect());
+}
+
+QRect CanvasWidget::laserTrailScreenRect() const {
+    if (m_laserTrail.isEmpty())
+        return {};
+    double minX = m_laserTrail.front().pos.x();
+    double maxX = minX;
+    double minY = m_laserTrail.front().pos.y();
+    double maxY = minY;
+    for (const auto& s : m_laserTrail) {
+        minX = std::min(minX, s.pos.x());
+        maxX = std::max(maxX, s.pos.x());
+        minY = std::min(minY, s.pos.y());
+        maxY = std::max(maxY, s.pos.y());
+    }
+    const Viewport& vp = m_doc.viewport();
+    const QPointF offset(vp.x, vp.y);
+    return QRectF(QPointF(minX, minY) * vp.zoom + offset, QPointF(maxX, maxY) * vp.zoom + offset)
+        .adjusted(-26.0, -26.0, 26.0, 26.0)
+        .toAlignedRect()
+        .intersected(rect());
+}
+
+void CanvasWidget::updateLaserDirtyRect() {
+    const QRect next = laserTrailScreenRect();
+    const QRect dirty = m_lastLaserRect.isEmpty()
+        ? next
+        : (next.isEmpty() ? m_lastLaserRect : m_lastLaserRect.united(next));
+    m_lastLaserRect = next;
+    if (!dirty.isEmpty())
+        update(dirty);
+}
+
+void CanvasWidget::clearEraserCursor() {
+    if (!m_showEraserCursor)
+        return;
+    m_showEraserCursor = false;
+    if (!m_eraserCursorRect.isEmpty())
+        update(m_eraserCursorRect);
+    m_eraserCursorRect = {};
+}
+
+void CanvasWidget::updateEraserCursor(const QPointF& world, bool visible) {
+    if (!visible) {
+        clearEraserCursor();
+        return;
+    }
+    const Viewport& vp = m_doc.viewport();
+    const QPointF center = world * vp.zoom + QPointF(vp.x, vp.y);
+    const double radius = m_eraserSize * vp.zoom / 2.0 + 4.0;
+    const QRect dirty = QRectF(center - QPointF(radius, radius), QSizeF(radius * 2.0, radius * 2.0))
+                            .toAlignedRect();
+    if (m_showEraserCursor && dirty == m_eraserCursorRect
+        && pointDistance(world, m_eraserWorldPos) * vp.zoom < 0.5)
+        return;
+    if (m_showEraserCursor && !m_eraserCursorRect.isEmpty())
+        update(m_eraserCursorRect);
+    m_eraserWorldPos = world;
+    m_showEraserCursor = true;
+    m_eraserCursorRect = dirty;
+    update(dirty);
 }
 
 void CanvasWidget::clearPenCursor() {

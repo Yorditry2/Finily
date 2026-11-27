@@ -6,6 +6,8 @@
 #include <QImage>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QPaintDevice>
+#include <QPaintEngine>
 #include <QPainterPath>
 #include <QPolygonF>
 #include <QTransform>
@@ -80,25 +82,28 @@ struct InkSample {
     qsizetype seg = 0;  // Index of the source point this sample starts from.
 };
 
-QVector<InkSample> sampledCurve(const QVector<StrokePoint>& points) {
+double pointSpeedAt(const QVector<StrokePoint>& points, qsizetype i) {
+    const qsizetype before = std::max<qsizetype>(0, i - 1);
+    const qsizetype after = std::min(i + 1, points.size() - 1);
+    const double elapsed = double(points[after].timestampMs - points[before].timestampMs);
+    // Old documents may lack usable timing. Do not invent extreme flicks.
+    if (elapsed <= 0.0)
+        return 0.0;
+    double distance = 0.0;
+    for (qsizetype j = before + 1; j <= after; ++j)
+        distance += length(pos(points[j]) - pos(points[j - 1]));
+    return distance / elapsed;
+}
+
+QVector<InkSample> sampledCurveRange(const QVector<StrokePoint>& points, qsizetype startPoint) {
     QVector<InkSample> samples;
     if (points.isEmpty())
         return samples;
-    QVector<double> speeds(points.size(), 0.0);
-    for (qsizetype i = 0; i < points.size(); ++i) {
-        const qsizetype before = std::max<qsizetype>(0, i - 1);
-        const qsizetype after = std::min(i + 1, points.size() - 1);
-        const double elapsed = double(points[after].timestampMs - points[before].timestampMs);
-        // Old documents may lack usable timing. Do not invent extreme flicks.
-        if (elapsed > 0.0) {
-            double distance = 0.0;
-            for (qsizetype j = before + 1; j <= after; ++j)
-                distance += length(pos(points[j]) - pos(points[j - 1]));
-            speeds[i] = distance / elapsed;
-        }
-    }
-    samples.append({points.front(), speeds.front(), 0});
-    for (qsizetype i = 0; i + 1 < points.size(); ++i) {
+    const qsizetype start = std::clamp<qsizetype>(startPoint, 0, points.size() - 1);
+    double prevSpeed = pointSpeedAt(points, start);
+    samples.append({points[start], prevSpeed, start});
+    for (qsizetype i = start; i + 1 < points.size(); ++i) {
+        const double nextSpeed = pointSpeedAt(points, i + 1);
         const QPointF a = pos(points[std::max<qsizetype>(0, i - 1)]);
         const QPointF b = pos(points[i]);
         const QPointF c = pos(points[i + 1]);
@@ -116,8 +121,9 @@ QVector<InkSample> sampledCurve(const QVector<StrokePoint>& points) {
             point.pressure = points[i].pressure + (points[i + 1].pressure - points[i].pressure) * blend;
             point.x = p.x();
             point.y = p.y();
-            samples.append({point, speeds[i] + (speeds[i + 1] - speeds[i]) * blend, i});
+            samples.append({point, prevSpeed + (nextSpeed - prevSpeed) * blend, i});
         }
+        prevSpeed = nextSpeed;
     }
     return samples;
 }
@@ -132,12 +138,14 @@ struct LiquidShape {
     QVector<double> radii;
 };
 
-LiquidShape liquidShape(const Stroke& stroke, double minRadius) {
-    const auto samples = sampledCurve(stroke.points);
+LiquidShape liquidShapeRange(const Stroke& stroke, qsizetype startPoint,
+                             double prefixDistance, double minRadius) {
+    const auto samples = sampledCurveRange(stroke.points, startPoint);
     if (samples.isEmpty())
         return {};
     QVector<double> distances(samples.size(), 0.0);
     QVector<double> radii(samples.size(), 0.0);
+    distances[0] = prefixDistance;
     for (qsizetype i = 1; i < samples.size(); ++i)
         distances[i] = distances[i - 1] + length(pos(samples[i].point) - pos(samples[i - 1].point));
     const double total = distances.back();
@@ -231,6 +239,10 @@ LiquidShape liquidShape(const Stroke& stroke, double minRadius) {
     for (auto& r : radii)
         r = std::max(r, minRadius);
     return {samples, distances, radii};
+}
+
+LiquidShape liquidShape(const Stroke& stroke, double minRadius) {
+    return liquidShapeRange(stroke, 0, 0.0, minRadius);
 }
 
 // Envelope of samples first..last. With diskAtFirst the disk at `first` is included;
@@ -563,6 +575,56 @@ void arrowHead(QPainter& painter, QPointF tip, QPointF previous, double size, QC
 
 } // namespace
 
+namespace {
+
+constexpr qsizetype kLiveInkContextPoints = 6;
+
+// Índice en `shape.samples` que coincide exactamente con el punto fuente `ptIdx`.
+qsizetype sampleIndexForSourcePoint(const LiquidShape& shape, qsizetype winStart, qsizetype ptIdx) {
+    if (ptIdx <= winStart || shape.samples.isEmpty())
+        return 0;
+    const qsizetype targetSeg = ptIdx - 1;
+    qsizetype found = -1;
+    for (qsizetype i = 1; i < shape.samples.size(); ++i) {
+        if (shape.samples[i].seg == targetSeg)
+            found = i;
+        else if (shape.samples[i].seg > targetSeg)
+            break;
+    }
+    return found >= 0 ? found : (shape.samples.size() - 1);
+}
+
+QBrush cachedDotTileBrush(int tilePx, QColor color, double dotRadiusPx) {
+    static QMutex cacheMutex;
+    static QHash<quint64, QBrush> cache;
+    QMutexLocker locker(&cacheMutex);
+    const int radiusTenths = std::clamp(int(std::lround(dotRadiusPx * 10.0)), 4, 40);
+    const quint64 key = (quint64(tilePx) << 40)
+        | (quint64(radiusTenths) << 32)
+        | quint64(color.rgba());
+    if (auto it = cache.constFind(key); it != cache.constEnd())
+        return *it;
+    if (cache.size() >= 32)
+        cache.clear();
+
+    QImage tile(tilePx, tilePx, QImage::Format_ARGB32_Premultiplied);
+    tile.fill(Qt::transparent);
+    QPainter tp(&tile);
+    tp.setRenderHint(QPainter::Antialiasing, true);
+    tp.setPen(Qt::NoPen);
+    tp.setBrush(color);
+    const double r = radiusTenths / 10.0;
+    const double center = tilePx * 0.5;
+    tp.drawEllipse(QPointF(center, center), r, r);
+    tp.end();
+
+    QBrush brush(tile);
+    cache.insert(key, brush);
+    return brush;
+}
+
+} // namespace
+
 bool LiveInkRenderer::eligible(const Stroke& s) {
     return (s.tool == ToolType::Pen || s.tool == ToolType::Ballpoint)
         && s.linePattern == LinePattern::Solid
@@ -574,14 +636,36 @@ bool LiveInkRenderer::eligible(const Stroke& s) {
 }
 
 void LiveInkRenderer::reset() {
-    m_frozen = -1;
+    m_frozenPoint = -1;
+    m_pointDist.clear();
+    m_layerDirty = !m_dirtyRect.isEmpty();
+    m_vp = {};
+    m_pixels = {};
+    m_dpr = 1.0;
+}
+
+void LiveInkRenderer::reset(QImage& layer) {
+    if (!layer.isNull() && !m_dirtyRect.isEmpty() && layer.size() == m_pixels
+        && layer.devicePixelRatio() == m_dpr) {
+        QPainter clr(&layer);
+        clr.setCompositionMode(QPainter::CompositionMode_Clear);
+        clr.fillRect(m_dirtyRect, Qt::transparent);
+        m_dirtyRect = {};
+        m_layerDirty = false;
+    } else if (!layer.isNull() && (m_frozenPoint >= 0 || m_layerDirty)) {
+        layer.fill(Qt::transparent);
+        m_dirtyRect = {};
+        m_layerDirty = false;
+    }
+    m_frozenPoint = -1;
+    m_pointDist.clear();
     m_vp = {};
     m_pixels = {};
     m_dpr = 1.0;
 }
 
 bool LiveInkRenderer::usable(const Viewport& vp, const QSize& pixels, double dpr) const {
-    return m_frozen >= 0
+    return m_frozenPoint >= 0
         && vp.x == m_vp.x
         && vp.y == m_vp.y
         && vp.zoom == m_vp.zoom
@@ -593,57 +677,118 @@ void LiveInkRenderer::advance(const Stroke& stroke, QImage& layer, const Viewpor
                               const QSize& pixels, double dpr) {
     constexpr double kTail = 30.0;
     constexpr double kChunk = 40.0;
-    if (!eligible(stroke))
+    if (!eligible(stroke) || pixels.isEmpty())
         return;
-    const auto shape = liquidShape(stroke, screenMinRadius(vp.zoom));
-    const auto n = shape.samples.size();
-    if (n < 2)
+
+    const bool stale = m_frozenPoint >= 0
+        && (m_frozenPoint >= stroke.points.size() || layer.size() != pixels || vp.x != m_vp.x
+            || vp.y != m_vp.y || vp.zoom != m_vp.zoom || layer.devicePixelRatio() != dpr);
+
+    // Conservar contexto previo a m_frozenPoint para mantener idénticas las tangentes
+    // Catmull-Rom y las 3 pasadas [1 2 1]/4 sin recalcular desde el punto 0.
+    const qsizetype winStart = (m_frozenPoint > kLiveInkContextPoints && !stale)
+        ? (m_frozenPoint - kLiveInkContextPoints)
+        : 0;
+    const double prefixDist = (winStart > 0 && winStart < m_pointDist.size()) ? m_pointDist[winStart] : 0.0;
+    const auto shape = liquidShapeRange(stroke, winStart, prefixDist, screenMinRadius(vp.zoom));
+    if (shape.samples.size() < 2)
         return;
+
     const double total = shape.distances.back();
     if (total < kTail + kChunk)
         return;
-    qsizetype target = -1;
-    for (qsizetype i = n - 1; i >= 0; --i) {
-        if (shape.distances[i] <= total - kTail && shape.samples[i].seg <= stroke.points.size() - 9) {
-            target = i;
+
+    const qsizetype maxTargetPoint = stroke.points.size() - 9;
+    if (maxTargetPoint <= 0)
+        return;
+
+    qsizetype targetPoint = -1;
+    for (qsizetype i = shape.samples.size() - 1; i >= 0; --i) {
+        if (shape.distances[i] <= total - kTail && shape.samples[i].seg <= maxTargetPoint - 1) {
+            targetPoint = shape.samples[i].seg + 1;
             break;
         }
     }
-    if (target < 0 || pixels.isEmpty())
+    if (targetPoint <= 0 || targetPoint < winStart)
         return;
-    const bool stale = m_frozen >= 0
-        && (m_frozen >= n || layer.size() != pixels || vp.x != m_vp.x || vp.y != m_vp.y
-            || vp.zoom != m_vp.zoom || layer.devicePixelRatio() != dpr);
-    if (m_frozen >= 0 && !stale && shape.distances[target] - shape.distances[m_frozen] < kChunk)
+
+    const qsizetype fromPoint = (m_frozenPoint < 0 || stale) ? 0 : m_frozenPoint;
+    if (targetPoint <= fromPoint)
         return;
-    if (m_frozen < 0 || stale) {
-        layer = QImage(pixels, QImage::Format_ARGB32_Premultiplied);
-        layer.setDevicePixelRatio(dpr);
-        layer.fill(Qt::transparent);
+
+    const qsizetype targetSample = sampleIndexForSourcePoint(shape, winStart, targetPoint);
+    const double frozenDistBefore = (fromPoint > 0 && fromPoint < m_pointDist.size())
+        ? m_pointDist[fromPoint]
+        : 0.0;
+    if (m_frozenPoint >= 0 && !stale && shape.distances[targetSample] - frozenDistBefore < kChunk)
+        return;
+
+    if (m_frozenPoint < 0 || stale) {
+        if (layer.size() != pixels || layer.devicePixelRatio() != dpr) {
+            layer = QImage(pixels, QImage::Format_ARGB32_Premultiplied);
+            layer.setDevicePixelRatio(dpr);
+            layer.fill(Qt::transparent);
+        } else if (stale || m_layerDirty) {
+            if (!stale && !m_dirtyRect.isEmpty()) {
+                QPainter clr(&layer);
+                clr.setCompositionMode(QPainter::CompositionMode_Clear);
+                clr.fillRect(m_dirtyRect, Qt::transparent);
+            } else {
+                layer.fill(Qt::transparent);
+            }
+        }
+        m_dirtyRect = {};
+        m_layerDirty = false;
+        m_pointDist.clear();
         m_vp = vp;
         m_pixels = pixels;
         m_dpr = dpr;
     }
-    const qsizetype from = (m_frozen < 0 || stale) ? 0 : m_frozen;
+
+    const qsizetype fromSample = sampleIndexForSourcePoint(shape, winStart, fromPoint);
+    const QPainterPath chunkPath = liquidEnvelope(shape, fromSample, targetSample, fromPoint == 0);
     QPainter lp(&layer);
     lp.setRenderHint(QPainter::Antialiasing, true);
     lp.translate(vp.x, vp.y);
     lp.scale(vp.zoom, vp.zoom);
     lp.setPen(Qt::NoPen);
     lp.setBrush(stroke.color);
-    lp.drawPath(liquidEnvelope(shape, from, target, from == 0));
-    m_frozen = target;
+    lp.drawPath(chunkPath);
+
+    const QRectF chunkBounds = chunkPath.boundingRect();
+    if (!chunkBounds.isEmpty()) {
+        const QRect logicalBounds(0, 0, int(std::ceil(pixels.width() / dpr)) + 1,
+                                  int(std::ceil(pixels.height() / dpr)) + 1);
+        const QRect screenRect = QRectF(chunkBounds.topLeft() * vp.zoom + QPointF(vp.x, vp.y),
+                                        chunkBounds.bottomRight() * vp.zoom + QPointF(vp.x, vp.y))
+                                     .adjusted(-4.0, -4.0, 4.0, 4.0)
+                                     .toAlignedRect()
+                                     .intersected(logicalBounds);
+        m_dirtyRect = m_dirtyRect.isEmpty() ? screenRect : m_dirtyRect.united(screenRect);
+    }
+
+    m_pointDist.resize(targetPoint + 1);
+    for (qsizetype p = fromPoint; p <= targetPoint; ++p)
+        m_pointDist[p] = shape.distances[sampleIndexForSourcePoint(shape, winStart, p)];
+    m_frozenPoint = targetPoint;
 }
 
 void LiveInkRenderer::drawTail(QPainter& painter, const Stroke& stroke) const {
-    const auto shape = liquidShape(stroke, screenMinRadius(painterScale(painter)));
+    if (stroke.points.isEmpty())
+        return;
+    const qsizetype fromPoint = std::max<qsizetype>(0, m_frozenPoint);
+    const qsizetype winStart = (fromPoint > kLiveInkContextPoints && fromPoint < m_pointDist.size())
+        ? (fromPoint - kLiveInkContextPoints)
+        : 0;
+    const double prefixDist = (winStart > 0 && winStart < m_pointDist.size()) ? m_pointDist[winStart] : 0.0;
+    const auto shape = liquidShapeRange(stroke, winStart, prefixDist, screenMinRadius(painterScale(painter)));
     if (shape.samples.isEmpty())
         return;
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(Qt::NoPen);
     painter.setBrush(stroke.color);
-    const qsizetype first = std::min(std::max<qsizetype>(m_frozen, 0), shape.samples.size() - 1);
+    const qsizetype first = sampleIndexForSourcePoint(shape, winStart, fromPoint);
     painter.drawPath(liquidEnvelope(shape, first, shape.samples.size() - 1, true));
     painter.restore();
 }
@@ -957,13 +1102,27 @@ void drawBackgroundTemplate(QPainter& painter, BackgroundTemplate tpl, const The
     const QColor marginColor = theme.isDark ? QColor(248, 113, 113, 95) : QColor(220, 38, 38, 105);
 
     if (tpl == BackgroundTemplate::Dots) {
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(color);
-        const double radius = 1.0 / vp.zoom;
-        for (double x = left; x <= rect.right(); x += step) {
-            for (double y = top; y <= rect.bottom(); y += step)
-                painter.drawEllipse(QPointF(x, y), radius, radius);
+        const auto* engine = painter.paintEngine();
+        if (engine && engine->type() == QPaintEngine::Raster) {
+            const double dpr = painter.device() ? painter.device()->devicePixelRatioF() : 1.0;
+            const int tilePx = std::clamp(int(std::lround(step * vp.zoom * dpr)), 16, 256);
+            const double dotRadiusPx = std::max(0.8, 1.0 * (double(tilePx) / std::max(1e-6, step * vp.zoom)));
+            QBrush brush = cachedDotTileBrush(tilePx, color, dotRadiusPx);
+            QTransform bt;
+            bt.scale(step / double(tilePx), step / double(tilePx));
+            bt.translate(-tilePx * 0.5, -tilePx * 0.5);
+            brush.setTransform(bt);
+            painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+            painter.fillRect(rect, brush);
+        } else {
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(color);
+            const double radius = 1.0 / vp.zoom;
+            for (double x = left; x <= rect.right(); x += step) {
+                for (double y = top; y <= rect.bottom(); y += step)
+                    painter.drawEllipse(QPointF(x, y), radius, radius);
+            }
         }
     } else if (tpl == BackgroundTemplate::Engineering) {
         const double minor = step * 0.5;

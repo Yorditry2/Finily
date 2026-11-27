@@ -40,7 +40,7 @@ CanvasWidget::CanvasWidget(QWidget* parent)
     connect(m_holdTimer, &QTimer::timeout, this, &CanvasWidget::triggerHoldToShape);
 
     m_laserTimer = new QTimer(this);
-    m_laserTimer->setInterval(16);
+    m_laserTimer->setInterval(25);
     connect(m_laserTimer, &QTimer::timeout, this, [this] {
         const auto now = nowMs();
         m_laserTrail.removeIf([now](const LaserSample& sample) {
@@ -48,7 +48,7 @@ CanvasWidget::CanvasWidget(QWidget* parent)
         });
         if (m_laserTrail.isEmpty())
             m_laserTimer->stop();
-        update();
+        updateLaserDirtyRect();
     });
 
     m_zoomAnimation = new QVariantAnimation(this);
@@ -63,9 +63,10 @@ CanvasWidget::CanvasWidget(QWidget* parent)
             m_zoomStart.y + (m_zoomTarget.y - m_zoomStart.y) * t,
             m_zoomStart.zoom + (m_zoomTarget.zoom - m_zoomStart.zoom) * t
         };
-        invalidateStaticCache();
         emit viewportChanged(m_doc.viewport().zoom);
+        update();
     });
+    connect(m_zoomAnimation, &QVariantAnimation::finished, this, &CanvasWidget::invalidateStaticCache);
 
     m_shapePulseAnimation = new QVariantAnimation(this);
     m_shapePulseAnimation->setDuration(220);
@@ -130,6 +131,8 @@ CanvasWidget::~CanvasWidget() {
 
 void CanvasWidget::setTool(ToolType tool) {
     clearPenCursor();
+    clearEraserCursor();
+    const bool hadRadial = m_radialOpen;
     m_radialOpen = false;
     finishTextEditor(true);
     if (m_tool == ToolType::Select && tool != m_tool && m_mode != InteractionMode::None)
@@ -145,7 +148,6 @@ void CanvasWidget::setTool(ToolType tool) {
     if (tool == ToolType::Pen || tool == ToolType::Ballpoint || tool == ToolType::Highlighter)
         m_lastWriteTool = tool;
     m_tool = tool;
-    m_showEraserCursor = false;
     if (tool == ToolType::Polyline && m_linePattern == LinePattern::Dimension)
         m_linePattern = LinePattern::Solid;
     if (tool != ToolType::Text && tool != ToolType::Lasso && tool != ToolType::Select
@@ -154,7 +156,8 @@ void CanvasWidget::setTool(ToolType tool) {
         clearSelection();
     }
     updateCursorShape();
-    update();
+    if (hadRadial)
+        update(radialMenuRect());
     emit stateChanged();
 }
 
@@ -588,7 +591,7 @@ void CanvasWidget::openRadialMenu(const QPointF& centerScreen) {
     m_radialCenter = c;
     m_radialCursorPos = c;
     updateCursorShape();
-    update();
+    update(radialMenuRect());
 }
 
 void CanvasWidget::tabletEvent(QTabletEvent* event) {
@@ -612,7 +615,7 @@ void CanvasWidget::tabletEvent(QTabletEvent* event) {
             if (m_radialOpen) {
                 m_radialOpen = false;
                 updateCursorShape();
-                update();
+                update(radialMenuRect());
             }
             switchTabletTool(ToolType::Eraser);
             return;
@@ -622,7 +625,7 @@ void CanvasWidget::tabletEvent(QTabletEvent* event) {
             if (m_radialOpen) {
                 m_radialOpen = false;
                 updateCursorShape();
-                update();
+                update(radialMenuRect());
                 return;
             }
             const qint64 dt = now - m_lastPenTriggerMs;
@@ -755,7 +758,10 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent* event) {
 
 void CanvasWidget::wheelEvent(QWheelEvent* event) {
     event->accept();
-    m_zoomAnimation->stop();
+    if (m_zoomAnimation->state() == QAbstractAnimation::Running) {
+        m_zoomAnimation->stop();
+        invalidateStaticCache();
+    }
     if (m_mode != InteractionMode::None)
         return;
     const auto mods = event->modifiers();
@@ -797,7 +803,7 @@ void CanvasWidget::keyPressEvent(QKeyEvent* event) {
         if (m_radialOpen) {
             m_radialOpen = false;
             updateCursorShape();
-            update();
+            update(radialMenuRect());
             event->accept();
             return;
         }
@@ -901,7 +907,7 @@ void CanvasWidget::focusOutEvent(QFocusEvent* event) {
     m_spaceHeld = false;
     if (m_radialOpen) {
         m_radialOpen = false;
-        update();
+        update(radialMenuRect());
     }
     updateCursorShape();
     QWidget::focusOutEvent(event);
@@ -919,10 +925,7 @@ void CanvasWidget::switchTabletTool(ToolType tool) {
 
 void CanvasWidget::leaveEvent(QEvent* event) {
     clearPenCursor();
-    if (m_showEraserCursor) {
-        m_showEraserCursor = false;
-        update();
-    }
+    clearEraserCursor();
     QWidget::leaveEvent(event);
 }
 
