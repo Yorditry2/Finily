@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-finily">
+    <comment>Cuaderno de Finily</comment>
+    <glob pattern="*.finily"/>
+  </mime-type>
+</mime-info>

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Finily
+GenericName=Pizarra Digital y Cuadernos
+Comment=Pizarra digital nativa para Linux y Windows con tableta gráfica, geometría inteligente y PDF
+Exec=finily %f
+Icon=finily
+Terminal=false
+Categories=Education;Graphics;Office;
+MimeType=application/x-finily;
+Keywords=pizarra;whiteboard;pdf;wacom;matematicas;geometria;notas;cuaderno;
+StartupWMClass=finily

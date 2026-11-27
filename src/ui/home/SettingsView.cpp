@@ -48,7 +48,7 @@ QFont pxFont(const QFont& base, qreal px, int weight) {
 
 QString appVersionText() {
     const QString v = QCoreApplication::applicationVersion().trimmed();
-    return v.isEmpty() ? QStringLiteral("0.2.1") : v;
+    return v.isEmpty() ? QStringLiteral("0.3.0") : v;
 }
 
 double pressureMix(double base, double varied, double sensitivity) {

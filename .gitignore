@@ -1,5 +1,7 @@
 build/
 build-*/
+dist/
+dist-*/
 *.user
 *.o
 *.autosave
@@ -9,7 +11,4 @@ build-*/
 CMakeUserPresets.json
 compile_commands.json
 *.swp
-.archify/
-mockups/*
-!mockups/redesign/
 *.finily.bak

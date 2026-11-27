@@ -35,6 +35,11 @@ private slots:
             "\"url\":\"https://github.com/Yorditry2/Finily/releases/download/v0.2.1/"
             "Finily-Setup-x64.exe\","
             "\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
+            "},"
+            "\"linux\":{"
+            "\"tarball\":{\"asset\":\"Finily-Linux-x64.tar.gz\","
+            "\"url\":\"https://github.com/Yorditry2/Finily/releases/download/v0.2.1/Finily-Linux-x64.tar.gz\","
+            "\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"
             "}}");
         const auto parsed = parseUpdateManifest(validJson);
         QVERIFY(parsed.has_value());

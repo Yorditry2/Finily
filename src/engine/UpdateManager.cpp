@@ -115,7 +115,7 @@ bool isValidSha256Hex(const QString& value) {
 QNetworkRequest makeGitHubRequest(const QUrl& url) {
     QNetworkRequest req(url);
     const QString ver = QCoreApplication::applicationVersion().isEmpty()
-        ? QStringLiteral("0.2.0")
+        ? QStringLiteral("0.3.0")
         : QCoreApplication::applicationVersion();
     req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Finily/%1").arg(ver));
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,

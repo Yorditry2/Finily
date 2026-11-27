@@ -10,7 +10,15 @@
 - **Modo Ecuación (`∑`, tecla `M`):** modo opcional separado de la escritura libre con red neuronal convolucional embebida en C++ puro (100 % offline, sin dependencias de Python/ONNX) para embellecer números, signos matemáticos (auto-coloreados), grados y alinear métricas por renglón.
 - **PDF e imágenes:** importa PDF multipágina o imágenes desde disco/portapapeles (`Ctrl+V`) y exporta tu clase completa en PDF vectorial (`Ctrl+E`).
 
-## Dependencias (Linux)
+## Descarga directa (Windows y Linux)
+
+Desde [Releases](../../releases) puedes descargar los binarios listos para usar:
+
+- **Windows x64 (`Finily-Setup-x64.exe`):** instalador por usuario (sin permisos de administrador) que incluye Qt y añade Finily al menú Inicio.
+- **Ubuntu / Debian x64 (`Finily-Linux-x64.deb`):** paquete instalable con `sudo apt install ./Finily-Linux-x64.deb`.
+- **Linux x64 portable (`Finily-Linux-x64.tar.gz`):** paquete autocontenido con Qt 6 incluido; descomprímelo y ejecuta `./Finily/finily`, o instala los accesos de escritorio locales con `./Finily/install.sh`.
+
+## Compilar desde el código fuente (Linux)
 
 - **Arch / EndeavourOS / Manjaro:**
   ```bash
@@ -19,14 +27,12 @@
   *(Nota: en Arch Linux `Qt6::Pdf` viene incluido en el paquete `qt6-webengine`.)*
 - **Ubuntu / Debian (24.04+):**
   ```bash
-  sudo apt install cmake ninja-build g++ qt6-base-dev qt6-svg-dev qt6-pdf-dev
+  sudo apt install cmake ninja-build g++ qt6-base-dev qt6-svg-dev qt6-pdf-dev qt6-wayland
   ```
 - **Fedora:**
   ```bash
   sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtsvg-devel qt6-qtwebengine-devel
   ```
-
-## Compilar y ejecutar en Linux
 
 ```bash
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -34,19 +40,19 @@ cmake --build build
 ./build/finily
 ```
 
-Para ejecutar las pruebas unitarias (`finily_tests`):
+Para ejecutar las pruebas unitarias (`ctest`):
 ```bash
 ctest --test-dir build --output-on-failure
 ```
 
-Instalación opcional para tu usuario:
+Instalación opcional para tu usuario (binario, lanzador de escritorio, icono y asociación `.finily`):
 ```bash
-install -m 755 build/finily "$HOME/.local/bin/finily"
+cmake --install build --prefix "$HOME/.local"
 ```
 
-## Instalador para Windows x64
+## Compilar instalador en Windows x64
 
-Descarga `Finily-Setup-x64.exe` desde [Releases](../../releases). El instalador incluye Qt, se instala por usuario sin requerir permisos de administrador y añade Finily al menú Inicio. La integración directa de los botones físicos del pad Wacom usa el controlador de Linux.
+La integración directa de los botones físicos del pad Wacom usa el controlador de Linux.
 
 En Windows, los cuadernos nuevos se guardan en `Documentos\Finily`. Si esa carpeta no admite escritura, Finily guarda los nuevos cuadernos en la biblioteca local de tu perfil. Las dos ubicaciones aparecen en la misma biblioteca de la aplicación.
 

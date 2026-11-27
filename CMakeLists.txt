@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(finily VERSION 0.2.1 LANGUAGES CXX)
+project(finily VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -151,11 +151,19 @@ if(FINILY_DEV_SNAPSHOTS)
 endif()
 target_link_libraries(finily PRIVATE finily_engine Qt6::Widgets)
 
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/finily-version.txt" "${PROJECT_VERSION}\n")
+
 if(WIN32)
     target_sources(finily PRIVATE windows/finily.rc)
     set_target_properties(finily PROPERTIES WIN32_EXECUTABLE TRUE)
     install(TARGETS finily RUNTIME DESTINATION .)
-    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/finily-version.txt" "${PROJECT_VERSION}\n")
+elseif(UNIX AND NOT APPLE)
+    include(GNUInstallDirs)
+    install(TARGETS finily RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES linux/finily.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES linux/finily-mime.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/mime/packages RENAME finily.xml)
+    install(FILES resources/icons/app/finily-app.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps RENAME finily.svg)
+    install(FILES LICENSE resources/fonts/Inter-OFL.txt DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/finily)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
