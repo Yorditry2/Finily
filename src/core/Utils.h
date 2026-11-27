@@ -152,18 +152,19 @@ inline Viewport fittedSheetViewport(PageFormat format, const QSize& size) {
     const auto sheet = sheetRectForPageFormat(format);
     if (sheet.isEmpty() || size.width() <= 0 || size.height() <= 0)
         return {};
+    constexpr double topClearance = 104.0;
     if (sheet.width() > sheet.height()) {
-        // Formatos apaisados: centrados y ocupando el área útil entre el dock y las cápsulas
+        // Formatos apaisados: centrados y dejando >= 94 px arriba para librar la barra (84 px)
         const double availW = std::max(320.0, size.width() - 156.0);
-        const double availH = std::max(240.0, size.height() - 124.0);
+        const double availH = std::max(220.0, size.height() - 196.0);
         const double zoom = std::clamp(std::min(availW / sheet.width(), availH / sheet.height()), 0.3, 5.0);
         return {size.width() / 2.0 - sheet.center().x() * zoom,
                 size.height() / 2.0 - sheet.center().y() * zoom,
                 zoom};
     }
-    // Hoja A4 vertical: centrada horizontalmente con ancho de escritura cómodo y alineada arriba
+    // Hoja vertical (A4/Carta): centrada horizontalmente y con el borde superior libre bajo la barra (84 px)
     const double availW = std::max(320.0, size.width() - 180.0);
-    const double availH = std::max(240.0, size.height() - 108.0);
+    const double availH = std::max(220.0, size.height() - 196.0);
     const double fitFullH = availH / sheet.height();
     const double comfortableZoom = std::min(availW / sheet.width(), fitFullH * 1.32);
     const double zoom = std::clamp(std::max(fitFullH, comfortableZoom), 0.3, 5.0);
@@ -171,13 +172,13 @@ inline Viewport fittedSheetViewport(PageFormat format, const QSize& size) {
     const double sheetScreenH = sheet.height() * zoom;
     const double y = (sheetScreenH <= availH)
         ? (size.height() / 2.0 - sheet.center().y() * zoom)
-        : (62.0 - sheet.top() * zoom);
+        : (topClearance - sheet.top() * zoom);
     return {x, y, zoom};
 }
 
 inline Viewport fittedPdfViewport(const QRectF& bounds, const QSize& size) {
     const double w = std::max(1.0, size.width() - 140.0);
-    const double h = std::max(1.0, size.height() - 110.0);
+    const double h = std::max(1.0, size.height() - 196.0);
     const double zoom = std::clamp(std::min(w / bounds.width(), h / bounds.height()), 0.2, 5.0);
     return {size.width() / 2.0 - bounds.center().x() * zoom,
             size.height() / 2.0 - bounds.center().y() * zoom,

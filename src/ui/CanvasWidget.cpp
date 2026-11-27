@@ -1156,15 +1156,16 @@ void CanvasWidget::clampFiniteViewport() {
         return;
 
     Viewport& vp = m_doc.viewport();
-    const double availW = std::max(240.0, width() - 156.0);
-    const double availH = std::max(200.0, height() - 116.0);
+    constexpr double marginX = 72.0;
+    constexpr double marginTop = 108.0;    // Deja el borde superior libre bajo la barra (84 px)
+    constexpr double marginBottom = 72.0;
+    const double availW = std::max(240.0, width() - marginX * 2.0 - 12.0);
+    const double availH = std::max(200.0, height() - (marginTop + marginBottom));
     const double minZoom = std::clamp(std::min(availW / sheet.width(), availH / sheet.height()), 0.2, 5.0);
     vp.zoom = std::clamp(vp.zoom, minZoom, 5.0);
 
     const double sheetW = sheet.width() * vp.zoom;
     const double sheetH = sheet.height() * vp.zoom;
-    constexpr double marginX = 72.0;
-    constexpr double marginY = 58.0;
 
     if (sheetW <= width() - marginX * 2.0) {
         vp.x = width() / 2.0 - sheet.center().x() * vp.zoom;
@@ -1174,11 +1175,11 @@ void CanvasWidget::clampFiniteViewport() {
         vp.x = std::clamp(vp.x, std::min(minX, maxX), std::max(minX, maxX));
     }
 
-    if (sheetH <= height() - marginY * 2.0) {
+    if (sheetH <= height() - marginTop * 2.0) {
         vp.y = height() / 2.0 - sheet.center().y() * vp.zoom;
     } else {
-        const double maxY = marginY - sheet.top() * vp.zoom;
-        const double minY = (height() - marginY) - sheet.bottom() * vp.zoom;
+        const double maxY = marginTop - sheet.top() * vp.zoom;
+        const double minY = (height() - marginBottom) - sheet.bottom() * vp.zoom;
         vp.y = std::clamp(vp.y, std::min(minY, maxY), std::max(minY, maxY));
     }
 }
