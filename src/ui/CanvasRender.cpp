@@ -134,7 +134,14 @@ void CanvasWidget::rebuildStaticCache() {
                 p.fillRect(image.rect.translated(4.0 / vp.zoom, 5.0 / vp.zoom), QColor(0, 0, 0, 38));
                 p.fillRect(image.rect, Qt::white);
             }
-            p.drawImage(image.rect, image.image);
+            if (image.opacity < 0.999) {
+                p.save();
+                p.setOpacity(p.opacity() * image.opacity);
+                p.drawImage(image.rect, image.image);
+                p.restore();
+            } else {
+                p.drawImage(image.rect, image.image);
+            }
         }
     }
 
@@ -162,8 +169,22 @@ void CanvasWidget::rebuildStaticCache() {
     const bool imageUnderlay = !m_selectedImageId.isEmpty() || !m_selectedImageIds.isEmpty();
     if (!imageUnderlay)
         drawShapes(p, true);
-    if (!imageUnderlay && !selectedShade)
-        drawPass(p, true);
+
+    if (m_hlDrawBehindInk) {
+        if (!imageUnderlay && !selectedShade)
+            drawPass(p, true); // Highlights first
+        if (!imageUnderlay)
+            drawShapes(p, false);
+        if (!imageUnderlay && !selectedShade)
+            drawPass(p, false); // Pens second
+    } else {
+        if (!imageUnderlay)
+            drawShapes(p, false);
+        if (!imageUnderlay && !selectedShade)
+            drawPass(p, false); // Pens first
+        if (!imageUnderlay && !selectedShade)
+            drawPass(p, true);  // Highlights second
+    }
 
     if ((m_hasActiveStroke && m_activeStroke.tool == ToolType::Highlighter) || selectedHighlight
         || selectedShade || imageUnderlay) {
@@ -319,7 +340,14 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         if (image.id == m_selectedImageId || m_selectedImageIds.contains(image.id)) {
             drawWithDelta(image.locked && image.id != m_selectedImageId, [&] {
                 p.setRenderHint(QPainter::SmoothPixmapTransform);
-                p.drawImage(image.rect, image.image);
+                if (image.opacity < 0.999) {
+                    p.save();
+                    p.setOpacity(p.opacity() * image.opacity);
+                    p.drawImage(image.rect, image.image);
+                    p.restore();
+                } else {
+                    p.drawImage(image.rect, image.image);
+                }
             });
         }
     }
@@ -430,9 +458,8 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
 
     p.setRenderHint(QPainter::Antialiasing);
     const auto laserNow = nowMs();
-    // Láser continuo de seda (UN SOLO QPainterPath suavizado con quadTo por trazo,
-    // CERO bolitas/puntos superpuestos en los vértices!).
-    {
+    // Láser continuo de seda o punto brillante
+    if (m_laserMode == LaserMode::Trail) {
         qsizetype segStart = 0;
         while (segStart < m_laserTrail.size()) {
             qsizetype segEnd = segStart + 1;
@@ -442,7 +469,7 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
             double avgFade = 0.0;
             for (qsizetype i = segStart; i < segEnd; ++i) {
                 const double f = std::clamp(
-                    1.0 - double(laserNow - m_laserTrail[i].timestampMs) / 1200.0, 0.0, 1.0);
+                    1.0 - double(laserNow - m_laserTrail[i].timestampMs) / std::max(1.0, double(m_laserDurationMs)), 0.0, 1.0);
                 if (f > 0.02) {
                     livePts.append(m_laserTrail[i].pos);
                     avgFade = std::max(avgFade, f);
@@ -457,12 +484,16 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
                 }
                 smoothPath.lineTo(livePts.back());
                 const double ease = avgFade * avgFade;
-                QColor glowCol("#ff3b30");
+                QColor glowCol = m_laserColor;
                 glowCol.setAlphaF(ease * 0.22);
-                QColor midCol("#ff453a");
+                QColor midCol = m_laserColor.lighter(115);
                 midCol.setAlphaF(ease * 0.65);
-                QColor coreCol("#fff8f6");
-                coreCol.setAlphaF(ease * 0.98);
+                QColor coreCol = QColor::fromRgbF(
+                    std::clamp(0.85 + 0.15 * m_laserColor.redF(), 0.0, 1.0),
+                    std::clamp(0.85 + 0.15 * m_laserColor.greenF(), 0.0, 1.0),
+                    std::clamp(0.85 + 0.15 * m_laserColor.blueF(), 0.0, 1.0),
+                    ease * 0.98
+                );
                 p.setBrush(Qt::NoBrush);
                 p.setPen(QPen(glowCol, 14.0 / vp.zoom, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
                 p.strokePath(smoothPath, p.pen());
@@ -476,11 +507,25 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     }
     if (!m_laserTrail.isEmpty()) {
         const auto& tip = m_laserTrail.back();
-        const double fade = std::clamp(1.0 - double(laserNow - tip.timestampMs) / 1200.0, 0.0, 1.0);
+        double fade = 1.0;
+        if (m_laserMode == LaserMode::Dot) {
+            fade = m_laserDotFading
+                ? std::clamp(1.0 - double(laserNow - m_laserDotReleaseMs) / 180.0, 0.0, 1.0)
+                : 1.0;
+        } else {
+            fade = std::clamp(
+                1.0 - double(laserNow - tip.timestampMs) / std::max(1.0, double(m_laserDurationMs)),
+                0.0, 1.0);
+        }
         if (fade > 0.02) {
             p.setPen(Qt::NoPen);
             for (int layer = 3; layer >= 0; --layer) {
-                QColor color = layer == 0 ? QColor("#ffffff") : QColor("#ff3b30");
+                QColor color = layer == 0
+                    ? QColor::fromRgbF(
+                          std::clamp(0.85 + 0.15 * m_laserColor.redF(), 0.0, 1.0),
+                          std::clamp(0.85 + 0.15 * m_laserColor.greenF(), 0.0, 1.0),
+                          std::clamp(0.85 + 0.15 * m_laserColor.blueF(), 0.0, 1.0))
+                    : m_laserColor;
                 color.setAlphaF(fade * (layer == 0 ? 1.0 : layer == 1 ? 0.55 : layer == 2 ? 0.24 : 0.10));
                 const double r = (2.6 + layer * 3.4) / vp.zoom;
                 p.setBrush(color);
@@ -497,11 +542,11 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         const QPointF c = m_hoverWorldPos * vp.zoom + QPointF(vp.x, vp.y);
         if (m_tool == ToolType::Laser) {
             p.setPen(Qt::NoPen);
-            QColor glow("#ff3b30");
+            QColor glow = m_laserColor;
             glow.setAlpha(75);
             p.setBrush(glow);
             p.drawEllipse(c, 10.0, 10.0);
-            p.setBrush(QColor("#ff3b30"));
+            p.setBrush(m_laserColor);
             p.drawEllipse(c, 4.5, 4.5);
             p.setBrush(QColor("#ffffff"));
             p.drawEllipse(c, 1.9, 1.9);

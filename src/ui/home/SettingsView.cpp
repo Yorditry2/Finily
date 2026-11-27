@@ -232,7 +232,7 @@ protected:
     }
 };
 
-// Cuadrado con el logo provisional (Acerca de).
+// Logo oficial B1 (Facetada 45°) en Acerca de.
 class AboutLogo : public Themed {
 public:
     explicit AboutLogo(QWidget* parent)
@@ -244,10 +244,20 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
+        const QRectF r(rect());
+        QLinearGradient grad(r.topLeft(), r.bottomRight());
+        if (m_dark) {
+            grad.setColorAt(0.0, QColor(255, 255, 255));
+            grad.setColorAt(1.0, QColor(228, 228, 231));
+        } else {
+            grad.setColorAt(0.0, QColor(39, 39, 44));
+            grad.setColorAt(1.0, QColor(20, 20, 23));
+        }
         p.setPen(Qt::NoPen);
-        p.setBrush(tk().accent);
-        p.drawRoundedRect(QRectF(rect()), 13, 13);
-        paintUiIcon(&p, QRectF(12, 12, 24, 24), QStringLiteral("pen"), tk().accentFg);
+        p.setBrush(grad);
+        p.drawRoundedRect(r, 13, 13);
+        const QColor fg = m_dark ? QColor(20, 21, 26) : QColor(255, 255, 255);
+        paintUiIcon(&p, QRectF(7, 7, 34, 34), QStringLiteral("brand-mark"), fg);
     }
 };
 

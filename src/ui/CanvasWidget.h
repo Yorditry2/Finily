@@ -16,6 +16,7 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <array>
 #include <future>
 #include <memory>
 
@@ -23,6 +24,22 @@ namespace finily {
 
 class InlineTextEditor;
 class VelocityGaussianStabilizer;
+
+struct ToolStrokeBank {
+    std::array<double, 3> widths{1.2, 2.4, 4.5};
+    int activeSlot = 1;
+    QVector<QColor> palette;
+    int activeColorIndex = 0;
+};
+
+struct InlineTextState {
+    bool active = false;
+    int fontFamilyIndex = 0;
+    double fontSize = 16.0;
+    bool bold = false;
+    bool italic = false;
+    QRect screenRect;
+};
 
 struct SelectionStyle {
     std::optional<QColor> color;
@@ -39,6 +56,8 @@ class CanvasWidget : public QWidget {
     Q_OBJECT
 
 public:
+    enum class BankKey { Pen = 0, Highlighter = 1, Eraser = 2, Laser = 3 };
+
     explicit CanvasWidget(QWidget* parent = nullptr);
     ~CanvasWidget() override;
 
@@ -98,6 +117,9 @@ public:
     bool isActivelyDragging() const { return m_mode != InteractionMode::None; }
     bool lassoRectMode() const { return m_lassoRectMode; }
     void setLassoRectMode(bool rectMode);
+    LassoTargetFilter lassoTargetFilter() const { return m_lassoFilter; }
+    void setLassoTargetFilter(const LassoTargetFilter& filter);
+
     int penTip() const { return m_penTip; }
     int highlighterTip() const { return m_highlighterTip; }
     EraserMode eraserMode() const { return m_eraserMode; }
@@ -106,12 +128,77 @@ public:
     bool eraserOnlyHighlight() const { return m_eraserOnlyHighlight; }
     void setEraserPreserveShapes(bool preserve);
     void setEraserOnlyHighlight(bool onlyHighlight);
+    EraserTargets eraserTargets() const { return m_eraserTargets; }
+    void setEraserTargets(const EraserTargets& targets);
+
+    std::array<double, 3> toolWidths(ToolType tool) const;
+    int activeWidthSlot(ToolType tool) const;
+    void setToolWidthSlot(ToolType tool, int slot);
+    void setToolFineWidth(ToolType tool, double mm);
+    QVector<QColor> toolPalette(ToolType tool) const;
+    int activeColorIndex(ToolType tool) const;
+    void setToolColorIndex(ToolType tool, int idx);
+    void setCustomSwatchColor(ToolType tool, const QColor& color);
+    void setToolPalette(ToolType tool, const QVector<QColor>& palette);
+
+    LaserMode laserMode() const { return m_laserMode; }
+    void setLaserMode(LaserMode mode);
+    int laserDurationMs() const { return m_laserDurationMs; }
+    void setLaserDurationMs(int ms);
+    QColor laserColor() const { return m_laserColor; }
+    void setLaserColor(const QColor& color);
+
+    AutoShapeOptions autoShapeOptions() const { return m_autoShapeOptions; }
+    void setAutoShapeOptions(const AutoShapeOptions& opts);
+    int holdToShapeDelayMs() const { return m_holdToShapeDelayMs; }
+    void setHoldToShapeDelayMs(int ms);
+    GeometryGestureOptions geometryGestureOptions() const { return m_gestureOptions; }
+    void setGeometryGestureOptions(const GeometryGestureOptions& opts);
+    SmartGuideOptions smartGuideOptions() const { return m_smartGuideOptions; }
+    void setSmartGuideOptions(const SmartGuideOptions& opts);
+    bool tipPredictionEnabled() const { return m_tipPredictionEnabled; }
+    void setTipPredictionEnabled(bool enabled);
+    bool fountainFlickEnabled() const { return m_fountainFlickEnabled; }
+    void setFountainFlickEnabled(bool enabled);
+    bool highlighterDrawBehindInk() const { return m_hlDrawBehindInk; }
+    void setHighlighterDrawBehindInk(bool behind);
+    bool highlighterStraightenOnRelease() const { return m_hlStraightenOnRelease; }
+    void setHighlighterStraightenOnRelease(bool straighten);
+    bool highlighterRoundTip() const { return m_hlRoundTip; }
+    void setHighlighterRoundTip(bool roundTip);
+    int beautifyPauseMs() const { return m_beautifyPauseMs; }
+    void setBeautifyPauseMs(int ms);
+    bool showAutoMeasurements() const { return m_showAutoMeasurements; }
+    void setShowAutoMeasurements(bool show);
+    bool palmRejectionEnabled() const { return m_palmRejectionEnabled; }
+    void setPalmRejectionEnabled(bool enabled);
+
+    TabletAction stylusLowerAction() const { return m_stylusLowerAction; }
+    void setStylusLowerAction(TabletAction action);
+    TabletAction stylusUpperAction() const { return m_stylusUpperAction; }
+    void setStylusUpperAction(TabletAction action);
+    bool stylusEraserTipEnabled() const { return m_stylusEraserTipEnabled; }
+    void setStylusEraserTipEnabled(bool enabled);
+    bool radialMenuEnabled() const { return m_radialMenuEnabled; }
+    void setRadialMenuEnabled(bool enabled);
+
+    ShapeFamily selectedShapeFamily(int* outVariant = nullptr) const;
+    bool applySelectedShapeVariant(ShapeFamily family, int variant);
+    bool setSelectedShapeFillColor(const QColor& color);
+    bool toggleSelectedShapeAngles();
+    double selectedImageOpacity() const;
+    bool setSelectedImageOpacity(double opacity);
+    bool cropSelectedImageToRect(const QRectF& normalizedRect);
+    bool cropSelectedImageInteractiveOrRatio(double aspectRatio);
+    InlineTextState inlineTextState() const;
+    bool setInlineTextStyle(int familyIdx, double fontSize, bool bold, bool italic);
+    bool isCurrentSheetDark() const;
     bool hasSelectedAxes() const;
     QString selectedAxesFunction() const;
     void setSelectedAxesFunction(const QString& expr);
     void createTableShape(int rows, int cols);
     bool insertStickerTemplate(const QString& stickerId, StickerStyle style);
-    bool saveSelectionAsSticker(const QString& title, const QString& category = QStringLiteral("Mis ★"));
+    bool saveSelectionAsSticker(const QString& title, const QString& category = QStringLiteral("Mis elementos"));
     QColor inkColor() const { return m_color; }
     double strokeSize() const { return m_size; }
     LinePattern linePattern() const { return m_linePattern; }
@@ -160,6 +247,7 @@ public:
     void setPressureSensitivity(double sensitivity);// [0.0, 1.0]
     void setPressureProfile(PressureProfile profile);
     void setThemeId(ThemeId themeId);
+    void setCustomBackground(const QColor& color);
     void setBackgroundTemplate(BackgroundTemplate tpl);
     void setTemplateScale(double scale);
     void setPageFormat(PageFormat format);
@@ -192,6 +280,8 @@ public:
     bool importImageFile(const QString& filePath);
     bool importPdfFile(const QString& filePath, bool newNotebook = false);
     bool exportToPdf(const QString& filePath);
+    QImage renderCurrentPageImage(const QSize& targetSize = {}) const;
+    bool exportCurrentPageToPng(const QString& filePath, const QSize& targetSize = {}) const;
 
     // Viewport controls
     void zoomByFactor(double factor, const QPointF& anchorScreenPos);
@@ -242,6 +332,8 @@ signals:
     void edgeMarkMenuRequested(const QPointF& screenPos, const QPointF& worldPos);
     void viewportChanged(double zoom);
     void toastRequested(const QString& message);
+    void tabletActionTriggered(TabletAction action, const QPointF& screenPos);
+    void inlineTextEditorChanged(bool active, const QRect& screenRect);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -366,6 +458,16 @@ private:
     QRect shapePulseRect() const;
     void stopShapePulse();
     void switchTabletTool(ToolType tool);
+    void executeTabletAction(TabletAction action, const QPointF& screenPos);
+
+    static BankKey bankKeyForTool(ToolType tool);
+    const ToolStrokeBank& bankForKey(BankKey key) const;
+    ToolStrokeBank& bankForKey(BankKey key);
+    void loadToolBanksAndSettings();
+    void saveToolBank(BankKey key) const;
+    QColor resolvedColorForBank(BankKey key) const;
+    void refreshActiveColorFromTheme();
+    void syncActiveToolFromBank();
 
     QVariantAnimation* m_zoomAnimation = nullptr;
     Viewport m_zoomStart;
@@ -405,19 +507,43 @@ private:
     QString m_congruenceMarkSpec;
     ShadePattern m_shadePattern = ShadePattern::Solid;
     bool m_holdToShapeEnabled = true;
+    int m_holdToShapeDelayMs = 380;
+    AutoShapeOptions m_autoShapeOptions;
+    GeometryGestureOptions m_gestureOptions;
+    SmartGuideOptions m_smartGuideOptions;
     bool m_smartGuidesEnabled = true;
     bool m_mathBeautifyEnabled = false;
+    int m_beautifyPauseMs = 650;
     bool m_autoColorOperators = true;
     QColor m_operatorColor = QColor("#ef4444");
+    bool m_showAutoMeasurements = false;
     int m_cursorStyle = 0;      // 0 = Lapicito, 1 = Aro, 2 = Cruz
     int m_penTip = 1;           // 0 = Bolígrafo, 1 = Pluma, 2 = Plumón, 3 = Pincel
+    bool m_tipPredictionEnabled = true;
+    bool m_fountainFlickEnabled = true;
     int m_highlighterTip = 0;   // 0 = Biselado, 1 = Redondo, 2 = Recto
+    bool m_hlDrawBehindInk = true;
+    bool m_hlStraightenOnRelease = false;
+    bool m_hlRoundTip = false;
     EraserMode m_eraserMode = EraserMode::Stroke;
     double m_eraserSize = 18.0;
     bool m_eraserPreserveShapes = false;
     bool m_eraserOnlyHighlight = false;
-    QColor m_color = QColor("#f8fafc");
-    double m_size = 2.6;
+    EraserTargets m_eraserTargets;
+    LassoTargetFilter m_lassoFilter;
+    ToolStrokeBank m_penBank;
+    ToolStrokeBank m_highlighterBank;
+    ToolStrokeBank m_eraserBank;
+    ToolStrokeBank m_laserBank;
+    TabletAction m_stylusLowerAction = TabletAction::RightClickMenu;
+    TabletAction m_stylusUpperAction = TabletAction::HoldEraser;
+    bool m_stylusEraserTipEnabled = true;
+    bool m_radialMenuEnabled = true;
+    bool m_palmRejectionEnabled = true;
+    bool m_holdEraseUpper = false;
+    bool m_holdEraseLower = false;
+    QColor m_color = QColor("#18181B");
+    double m_size = 2.4;
     LinePattern m_linePattern = LinePattern::Solid;
     LineEnding m_lineEnding = LineEnding::None;
     double m_stabilizer = 0.15;
@@ -498,6 +624,11 @@ private:
         qint64 timestampMs = 0;
         bool breakBefore = false;
     };
+    LaserMode m_laserMode = LaserMode::Trail;
+    QColor m_laserColor = QColor("#EF4444");
+    int m_laserDurationMs = 1000;
+    bool m_laserDotFading = false;
+    qint64 m_laserDotReleaseMs = 0;
     QVector<LaserSample> m_laserTrail;
     QRect m_lastLaserRect;
     QTimer* m_laserTimer = nullptr;

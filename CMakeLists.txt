@@ -67,24 +67,23 @@ add_executable(finily
     src/ui/IconLibrary.h
     src/ui/IconLibrary.cpp
     src/ui/FloatingToolbar.h
-    src/ui/FloatingToolbarInternal.h
-    src/ui/ToolbarIcons.h
-    src/ui/ToolbarIcons.cpp
     src/ui/FloatingToolbar.cpp
     src/ui/ToolbarPopovers.cpp
-    src/ui/popovers/FilePopover.h
-    src/ui/popovers/FilePopover.cpp
-    src/ui/popovers/PaperPopover.h
-    src/ui/popovers/PaperPopover.cpp
-    src/ui/popovers/ShapesPopover.h
-    src/ui/popovers/ShapesPopover.cpp
-    src/ui/popovers/StickersPopover.h
-    src/ui/popovers/StickersPopover.cpp
-    src/ui/popovers/StrokePopover.h
-    src/ui/popovers/StrokePopover.cpp
-    src/ui/popovers/ThumbnailPanel.h
-    src/ui/popovers/ThumbnailPanel.cpp
     src/ui/DesignTokens.h
+    src/ui/editor/EditorTheme.h
+    src/ui/editor/EditorTheme.cpp
+    src/ui/editor/EditorColorPopover.h
+    src/ui/editor/EditorColorPopover.cpp
+    src/ui/editor/EditorChrome.h
+    src/ui/editor/EditorChrome.cpp
+    src/ui/editor/EditorToolPanels.h
+    src/ui/editor/EditorToolPanels.cpp
+    src/ui/editor/EditorSidePanels.h
+    src/ui/editor/EditorSidePanels.cpp
+    src/ui/editor/EditorContextCapsules.h
+    src/ui/editor/EditorContextCapsules.cpp
+    src/ui/editor/EditorModals.h
+    src/ui/editor/EditorModals.cpp
     src/ui/UiIcons.h
     src/ui/UiIcons.cpp
     src/ui/home/HomeTheme.h
@@ -155,6 +154,7 @@ endif()
 target_link_libraries(finily PRIVATE finily_engine Qt6::Widgets)
 
 if(WIN32)
+    target_sources(finily PRIVATE windows/finily.rc)
     set_target_properties(finily PROPERTIES WIN32_EXECUTABLE TRUE)
     install(TARGETS finily RUNTIME DESTINATION .)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/finily-version.txt" "${PROJECT_VERSION}\n")

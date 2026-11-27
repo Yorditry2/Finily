@@ -25,7 +25,30 @@ public:
     explicit InlineTextEditor(QWidget* parent)
         : QLineEdit(parent) {}
 
+    TextItem draft;
+    double origFontSize = 16.0;
+    int origFamilyIndex = 0;
+    bool origBold = false;
+    bool origItalic = false;
+    QString origText;
     std::function<void(const QString&)> commit;
+    std::function<void()> onClosed;
+
+    void applyTextStyle(double zoom, const QColor& textColor, const QColor& borderColor) {
+        const double pxSize = std::max(10.0, draft.fontSize * zoom);
+        setFont(textFont(pxSize, draft.fontFamilyIndex, draft.bold, draft.italic));
+        const QFontMetrics fm(font());
+        const int minW = std::max(150, fm.horizontalAdvance(text().isEmpty() ? QStringLiteral("Ag") : text()) + 28);
+        const int h = std::max(28, fm.height() + 10);
+        resize(std::max(width(), minW), h);
+        const auto bg = textColor.lightness() > 140
+            ? QStringLiteral("rgba(12,18,32,0.88)")
+            : QStringLiteral("rgba(255,255,255,0.92)");
+        setStyleSheet(QStringLiteral(
+            "QLineEdit { background: %1; color: %2; border: 1.5px solid %3;"
+            " border-radius: 6px; padding: 2px 6px; }")
+            .arg(bg, textColor.name(), borderColor.name()));
+    }
 
     void finish(bool accept) {
         if (done)
@@ -35,6 +58,8 @@ public:
         hide();
         if (accept && commit)
             commit(value);
+        if (onClosed)
+            onClosed();
         deleteLater();
     }
 

@@ -383,18 +383,28 @@ void CanvasWidget::openInlineTextEditor(const TextItem& draft,
     const bool isOcr = !strokesToReplace.isEmpty();
     auto* editor = new InlineTextEditor(this);
     m_textEditor = editor;
+    editor->draft = draft;
+    editor->origText = draft.text;
+    editor->origFontSize = draft.fontSize;
+    editor->origFamilyIndex = draft.fontFamilyIndex;
+    editor->origBold = draft.bold;
+    editor->origItalic = draft.italic;
     editor->setText(draft.text);
     if (isOcr) {
         editor->setPlaceholderText(QStringLiteral("Escribe o corrige el texto…"));
     }
-    editor->setFont(textFont(draft.fontSize * m_doc.viewport().zoom));
-    const ThemeConfig theme = getThemeConfig(m_doc.themeId());
+    const double zoom = m_doc.viewport().zoom;
+    editor->setFont(textFont(draft.fontSize * zoom, draft.fontFamilyIndex, draft.bold, draft.italic));
+    const ThemeConfig theme = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground());
+    const QString bgCss = theme.isDark
+        ? QStringLiteral("rgba(12,18,32,0.88)")
+        : QStringLiteral("rgba(255,255,255,0.92)");
     const QString style = isOcr
         ? QStringLiteral("QLineEdit { background: %1; color: %2; border: 1.5px solid %3; "
                          "border-radius: 6px; padding: 4px 6px; }")
         : QStringLiteral("QLineEdit { background: %1; color: %2; border: 1px solid %3; "
                          "border-radius: 5px; padding: 3px; }");
-    editor->setStyleSheet(style.arg(theme.uiSurface.name(), draft.color.name(), theme.accent.name()));
+    editor->setStyleSheet(style.arg(bgCss, draft.color.name(), theme.accent.name()));
 
     const int minW = isOcr ? 220 : 180;
     const int padW = isOcr ? 36 : 24;
@@ -403,12 +413,14 @@ void CanvasWidget::openInlineTextEditor(const TextItem& draft,
     editor->move(anchorScreen.toPoint());
     editor->resize(std::max(minW, qRound(metrics.horizontalAdvance(draft.text) + padW)),
                    qRound(metrics.height() + padH));
-    connect(editor, &QLineEdit::textChanged, editor, [editor, minW, padW](const QString& text) {
+    connect(editor, &QLineEdit::textChanged, editor, [this, editor, minW, padW](const QString& text) {
         const QFontMetricsF fm(editor->font());
         editor->resize(std::max(minW, qRound(fm.horizontalAdvance(text) + padW)), editor->height());
+        emit inlineTextEditorChanged(true, editor->geometry());
     });
 
-    editor->commit = [this, draft, existingTextId, strokesToReplace](const QString& text) mutable {
+    editor->commit = [this, editor, existingTextId, strokesToReplace](const QString& text) {
+        const TextItem draft = editor->draft;
         if (!strokesToReplace.isEmpty()) {
             const QString cleaned = text.trimmed();
             if (cleaned.isEmpty()) {
@@ -445,7 +457,12 @@ void CanvasWidget::openInlineTextEditor(const TextItem& draft,
             emit stateChanged();
             return;
         }
-        if (text.trimmed().isEmpty() || text == draft.text) {
+        const bool unchanged = (text == editor->origText
+            && draft.fontFamilyIndex == editor->origFamilyIndex
+            && std::abs(draft.fontSize - editor->origFontSize) < 1e-4
+            && draft.bold == editor->origBold
+            && draft.italic == editor->origItalic);
+        if (text.trimmed().isEmpty() || unchanged) {
             return;
         }
         auto& texts = m_doc.texts();
@@ -470,10 +487,14 @@ void CanvasWidget::openInlineTextEditor(const TextItem& draft,
         saveAutosave();
         emit stateChanged();
     };
+    editor->onClosed = [this] {
+        emit inlineTextEditorChanged(false, QRect());
+    };
 
     editor->show();
     editor->setFocus(Qt::MouseFocusReason);
     editor->selectAll();
+    emit inlineTextEditorChanged(true, editor->geometry());
     invalidateStaticCache();
 }
 
@@ -746,19 +767,21 @@ bool CanvasWidget::tryBeginLassoTool(const QPointF& world) {
             return true;
         }
     }
-    const auto& texts = m_doc.texts();
-    for (qsizetype i = texts.size(); i-- > 0;) {
-        if (texts.at(i).bounds.adjusted(-4.0, -4.0, 4.0, 4.0).contains(world)) {
-            return false;
+    if (m_lassoFilter.media) {
+        const auto& texts = m_doc.texts();
+        for (qsizetype i = texts.size(); i-- > 0;) {
+            if (texts.at(i).bounds.adjusted(-4.0, -4.0, 4.0, 4.0).contains(world)) {
+                return false;
+            }
         }
-    }
-    for (const auto& image : m_doc.images()) {
-        if (image.id == m_selectedImageId && !image.isPdfPage) {
-            const int handle = hitTestLassoHandle(image.rect, world, zoom);
-            if ((handle >= 0 && handle < 4) || image.rect.contains(world)) {
-                m_imageDragStartWorld = world;
-                startImageEdit(image, (handle >= 0 && handle < 4) ? handle : -1);
-                return true;
+        for (const auto& image : m_doc.images()) {
+            if (image.id == m_selectedImageId && !image.isPdfPage) {
+                const int handle = hitTestLassoHandle(image.rect, world, zoom);
+                if ((handle >= 0 && handle < 4) || image.rect.contains(world)) {
+                    m_imageDragStartWorld = world;
+                    startImageEdit(image, (handle >= 0 && handle < 4) ? handle : -1);
+                    return true;
+                }
             }
         }
     }
@@ -845,7 +868,7 @@ void CanvasWidget::beginPolylineTap(const QPointF& screen, const QPointF& world)
     const auto anchor = m_polylineVertices.isEmpty()
         ? std::nullopt
         : std::optional<QPointF>(m_polylineVertices.back());
-    const auto snap = snapPointWithGuides(world, anchor, m_doc.shapes(), {}, zoom, m_smartGuidesEnabled);
+    const auto snap = snapPointWithGuides(world, anchor, m_doc.shapes(), {}, zoom, m_smartGuideOptions);
     if (!m_polylineActive) {
         clearSelection();
         m_polylineActive = true;
@@ -911,7 +934,7 @@ void CanvasWidget::beginShapeInput(const QPointF& world) {
     const bool snapOrigin = (activeKind == ShapeKind::Line);
     const auto snap = snapOrigin
         ? snapPointWithGuides(world, std::nullopt, m_doc.shapes(), {}, m_doc.viewport().zoom,
-                              m_smartGuidesEnabled)
+                              m_smartGuideOptions)
         : SnapResult{world, {}, false};
     m_shapeDragStartWorld = world;
     m_shapeCreateOrigin = snap.point;
@@ -972,7 +995,9 @@ void CanvasWidget::beginFreehandStroke(const QPointF& world,
     m_activeStroke.pressureProfile = m_pressureProfile;
     m_activeStroke.pressureSensitivity = m_pressureSensitivity;
     m_activeStroke.hasHardwarePressure = hardware;
-    m_activeStroke.tipStyle = (m_tool == ToolType::Highlighter) ? m_highlighterTip : m_penTip;
+    m_activeStroke.tipStyle = (m_tool == ToolType::Highlighter)
+        ? (m_hlRoundTip ? 1 : m_highlighterTip)
+        : m_penTip;
     if (m_tool == ToolType::Highlighter) {
         m_activeStroke.opacity = m_highlighterOpacity;
     }
@@ -988,7 +1013,7 @@ void CanvasWidget::beginFreehandStroke(const QPointF& world,
     m_holdLastWorld = world;
     if (m_holdToShapeEnabled
         && (m_tool == ToolType::Pen || m_tool == ToolType::Ballpoint
-            || (m_tool == ToolType::Highlighter && m_highlighterTip != 2))) {
+            || (m_tool == ToolType::Highlighter && m_highlighterTip != 2 && !m_hlStraightenOnRelease))) {
         m_holdTimer->start();
     }
     if (m_activeStroke.tool == ToolType::Highlighter) {
@@ -1060,7 +1085,12 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
     }
     if (m_tool == ToolType::Laser) {
         m_mode = InteractionMode::LaserTrail;
-        m_laserTrail.append({world, nowMs(), true});
+        m_laserDotFading = false;
+        if (m_laserMode == LaserMode::Dot) {
+            m_laserTrail = {{world, nowMs(), true}};
+        } else {
+            m_laserTrail.append({world, nowMs(), true});
+        }
         m_laserTimer->start();
         updateLaserDirtyRect();
         return;
@@ -1076,7 +1106,8 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
     if (m_tool == ToolType::Lasso && tryBeginLassoTool(world)) {
         return;
     }
-    if ((m_tool == ToolType::Text || m_tool == ToolType::Lasso || m_tool == ToolType::Select)
+    if ((m_tool == ToolType::Text || m_tool == ToolType::Select
+         || (m_tool == ToolType::Lasso && m_lassoFilter.media))
         && tryBeginTextInput(screenPos, world, false)) {
         return;
     }
@@ -1383,8 +1414,9 @@ void CanvasWidget::moveShapeEdit(const QPointF& world) {
             } else {
                 const auto anchor = handleAnchor(*shape, m_activeHandleIndex);
                 const auto external =
-                    snapPointWithGuides(raw, anchor, shapes, shape->id, zoom, m_smartGuidesEnabled);
-                const auto result = snapShapeVertex(*shape, m_activeHandleIndex, external, raw, zoom);
+                    snapPointWithGuides(raw, anchor, shapes, shape->id, zoom, m_smartGuideOptions);
+                const auto result = snapShapeVertex(*shape, m_activeHandleIndex, external, raw, zoom,
+                                                    m_smartGuideOptions);
                 m_activeGuides = result.guides;
                 applyHandleDrag(*shape, m_activeHandleIndex, result.point);
             }
@@ -1396,7 +1428,7 @@ void CanvasWidget::moveShapeEdit(const QPointF& world) {
                 const QPointF origin = m_shapeDragOriginalVertices.front();
                 const auto snapped =
                     snapPointWithGuides(origin + delta, std::nullopt, shapes, shape->id, zoom,
-                                        m_smartGuidesEnabled);
+                                        m_smartGuideOptions);
                 m_activeGuides = snapped.guides;
                 translateShape(*shape, snapped.point - origin);
             }
@@ -1422,9 +1454,10 @@ void CanvasWidget::moveShapeCreate(const QPointF& world, Qt::KeyboardModifiers m
         m_activeShape.vertices = m_shapeDragOriginalVertices;
         const auto anchor = handleAnchor(m_activeShape, m_activeHandleIndex);
         const auto external =
-            snapPointWithGuides(world, anchor, shapes, m_activeShape.id, zoom, m_smartGuidesEnabled);
-        const auto result = m_smartGuidesEnabled
-            ? snapShapeVertex(m_activeShape, m_activeHandleIndex, external, world, zoom)
+            snapPointWithGuides(world, anchor, shapes, m_activeShape.id, zoom, m_smartGuideOptions);
+        const auto result = m_smartGuideOptions.enabled
+            ? snapShapeVertex(m_activeShape, m_activeHandleIndex, external, world, zoom,
+                              m_smartGuideOptions)
             : external;
         m_activeGuides = result.guides;
         applyHandleDrag(m_activeShape, m_activeHandleIndex, result.point);
@@ -1436,14 +1469,15 @@ void CanvasWidget::moveShapeCreate(const QPointF& world, Qt::KeyboardModifiers m
     const bool allowAngleSnap = (m_activeShape.kind == ShapeKind::Line);
     const auto anchor = allowAngleSnap ? std::optional<QPointF>(m_shapeCreateOrigin) : std::nullopt;
     const auto snapResult =
-        snapPointWithGuides(world, anchor, shapes, m_activeShape.id, zoom, m_smartGuidesEnabled);
+        snapPointWithGuides(world, anchor, shapes, m_activeShape.id, zoom, m_smartGuideOptions);
     m_activeGuides = snapResult.guides;
     const QPointF end = snapResult.point;
     QPointF start = m_shapeCreateOrigin;
     if (drawsFromEndpoints(m_activeShape.kind)
         && pointDistance(world, m_shapeDragStartWorld) * zoom > 3.0) {
         const auto reverse =
-            snapPointWithGuides(m_shapeDragStartWorld, end, shapes, m_activeShape.id, zoom, false);
+            snapPointWithGuides(m_shapeDragStartWorld, end, shapes, m_activeShape.id, zoom, false,
+                                m_smartGuideOptions);
         if (reverse.contact) {
             start = reverse.point;
         }
@@ -1566,7 +1600,7 @@ void CanvasWidget::updateHoverCursors(const QPointF& world, bool eraser) {
                 ? std::nullopt
                 : std::optional<QPointF>(m_polylineVertices.back());
             const auto snap = snapPointWithGuides(world, anchor, m_doc.shapes(), m_activeShape.id, zoom,
-                                                  m_smartGuidesEnabled);
+                                                  m_smartGuideOptions);
             m_polylineHoverWorld = snap.point;
             m_activeGuides = snap.guides;
         }
@@ -1607,7 +1641,12 @@ void CanvasWidget::moveInput(const QPointF& screenPos,
     const QPointF world = screenToWorld(screenPos);
     switch (m_mode) {
     case InteractionMode::LaserTrail:
-        m_laserTrail.append({world, nowMs(), false});
+        m_laserDotFading = false;
+        if (m_laserMode == LaserMode::Dot) {
+            m_laserTrail = {{world, nowMs(), true}};
+        } else {
+            m_laserTrail.append({world, nowMs(), false});
+        }
         if (!m_laserTimer->isActive()) {
             m_laserTimer->start();
         }
@@ -1684,15 +1723,23 @@ bool CanvasWidget::tryCommitFreehandGeometry(Qt::KeyboardModifiers mods) {
     const double zoom = m_doc.viewport().zoom;
     auto& shapes = m_doc.shapes();
 
-    if (const auto autoAngle = trySnapAngleArcAtVertex(m_activeStroke, shapes, zoom)) {
-        pushUndoSnapshot(currentSnapshot());
-        shapes.append(*autoAngle);
-        attachNewShape(shapes);
-        finishAutoGeometry(*autoAngle);
-        return true;
+    if (m_gestureOptions.angleArc || m_gestureOptions.rightAngle) {
+        if (auto autoAngle = trySnapAngleArcAtVertex(m_activeStroke, shapes, zoom,
+                                                     m_gestureOptions.angleArc,
+                                                     m_gestureOptions.rightAngle)) {
+            if (m_showAutoMeasurements && isAutoVertexAngle(*autoAngle)) {
+                autoAngle->label.clear();
+                autoAngle->bounds = computeShapeBounds(*autoAngle);
+            }
+            pushUndoSnapshot(currentSnapshot());
+            shapes.append(*autoAngle);
+            attachNewShape(shapes);
+            finishAutoGeometry(*autoAngle);
+            return true;
+        }
     }
 
-    {
+    if (m_gestureOptions.dividerDot) {
         auto candidate = shapes;
         QString createdId;
         if (trySnapFreehandDividerOnEdge(m_activeStroke, candidate, zoom, &createdId)) {
@@ -1708,7 +1755,7 @@ bool CanvasWidget::tryCommitFreehandGeometry(Qt::KeyboardModifiers mods) {
         }
     }
 
-    {
+    if (m_gestureOptions.attachArrowhead) {
         auto candidate = shapes;
         QString updatedId;
         if (tryAttachArrowheadToLine(m_activeStroke, candidate, zoom, &updatedId)) {
@@ -1724,21 +1771,25 @@ bool CanvasWidget::tryCommitFreehandGeometry(Qt::KeyboardModifiers mods) {
         }
     }
 
-    if (const auto arrow = tryRecognizeFreehandArrow(m_activeStroke, zoom)) {
-        pushUndoSnapshot(currentSnapshot());
-        shapes.append(*arrow);
-        attachNewShape(shapes);
-        emit toastRequested(QStringLiteral("Flecha ✓"));
-        finishAutoGeometry(*arrow);
-        return true;
+    if (m_gestureOptions.freehandArrow) {
+        if (const auto arrow = tryRecognizeFreehandArrow(m_activeStroke, zoom)) {
+            pushUndoSnapshot(currentSnapshot());
+            shapes.append(*arrow);
+            attachNewShape(shapes);
+            emit toastRequested(QStringLiteral("Flecha ✓"));
+            finishAutoGeometry(*arrow);
+            return true;
+        }
     }
 
-    if (const auto mark = trySnapCongruenceStrokeOnEdge(m_activeStroke, shapes, zoom, false)) {
-        pushUndoSnapshot(currentSnapshot());
-        shapes.append(*mark);
-        emit toastRequested(edgeMarkToast(parseEdgeMark(mark->label)));
-        finishAutoGeometry(*mark);
-        return true;
+    if (m_gestureOptions.edgeMarks) {
+        if (const auto mark = trySnapCongruenceStrokeOnEdge(m_activeStroke, shapes, zoom, false)) {
+            pushUndoSnapshot(currentSnapshot());
+            shapes.append(*mark);
+            emit toastRequested(edgeMarkToast(parseEdgeMark(mark->label)));
+            finishAutoGeometry(*mark);
+            return true;
+        }
     }
 
     return false;
@@ -1751,6 +1802,11 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
     }
     if (m_mode == InteractionMode::LaserTrail) {
         m_mode = InteractionMode::None;
+        if (m_laserMode == LaserMode::Dot && !m_laserTrail.isEmpty()) {
+            m_laserDotFading = true;
+            m_laserDotReleaseMs = nowMs();
+            m_laserTimer->start();
+        }
         updateLaserDirtyRect();
         return;
     }
@@ -1782,8 +1838,10 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
         const auto& shapes = m_doc.shapes();
         const auto& texts = m_doc.texts();
         const auto& images = m_doc.images();
-        selectByLasso(m_lassoPolygon, strokes, shapes, m_selectedStrokeIds, m_selectedShapeIds);
-        if (m_lassoPolygon.size() >= 3) {
+        const LassoTargetFilter filter =
+            (m_tool == ToolType::Lasso) ? m_lassoFilter : LassoTargetFilter{};
+        selectByLasso(m_lassoPolygon, strokes, shapes, m_selectedStrokeIds, m_selectedShapeIds, filter);
+        if (filter.media && m_lassoPolygon.size() >= 3) {
             for (const auto& text : texts) {
                 if (m_lassoPolygon.containsPoint(text.bounds.center(), Qt::OddEvenFill)) {
                     m_selectedTextIds.insert(text.id);
@@ -1798,13 +1856,15 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
         expandLassoSelection();
         if (!hasLassoSelection()) {
             const double tapTol = 8.0 / zoom;
-            for (auto it = shapes.crbegin(); it != shapes.crend(); ++it) {
-                if (it->kind != ShapeKind::ShadedRegion && hitTestShape(*it, world, tapTol)) {
-                    m_selectedShapeId = it->id;
-                    break;
+            if (filter.shapes) {
+                for (auto it = shapes.crbegin(); it != shapes.crend(); ++it) {
+                    if (it->kind != ShapeKind::ShadedRegion && hitTestShape(*it, world, tapTol)) {
+                        m_selectedShapeId = it->id;
+                        break;
+                    }
                 }
             }
-            if (m_selectedShapeId.isEmpty()) {
+            if (filter.media && m_selectedShapeId.isEmpty()) {
                 for (qsizetype i = images.size(); i-- > 0;) {
                     if (!images.at(i).isPdfPage && images.at(i).rect.contains(world)) {
                         m_selectedImageId = images.at(i).id;
@@ -1904,12 +1964,7 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
                 m_activeShape.bounds = bounds;
                 shapes.append(m_activeShape);
                 attachNewShape(shapes);
-                if (m_activeShape.kind == ShapeKind::Line
-                    && m_activeShape.linePattern != LinePattern::Dimension) {
-                    m_selectedShapeId.clear();
-                } else {
-                    m_selectedShapeId = m_activeShape.id;
-                }
+                m_selectedShapeId = m_activeShape.id;
             } else {
                 m_selectedShapeId.clear();
             }
@@ -1936,7 +1991,8 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
             const StrokePoint end = inputPoint(world, last.pressure, last.tiltX, last.tiltY);
             if (mods.testFlag(Qt::ShiftModifier) || m_holdSnappedToShape) {
                 m_activeStroke.points = {m_rawStartPoint, snappedPoint(m_rawStartPoint, end)};
-            } else if (m_activeStroke.tool == ToolType::Highlighter && m_activeStroke.tipStyle == 2) {
+            } else if (m_activeStroke.tool == ToolType::Highlighter
+                       && (m_activeStroke.tipStyle == 2 || m_hlStraightenOnRelease)) {
                 m_activeStroke.points = {m_rawStartPoint, end};
             } else if (pointDistance({last.x, last.y}, {end.x, end.y}) > 0.001) {
                 m_activeStroke.points.append(end);
@@ -1947,11 +2003,12 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
             && (m_activeStroke.tool == ToolType::Pen || m_activeStroke.tool == ToolType::Ballpoint)) {
             trimPenHooks(m_activeStroke, zoom);
         }
-        if (m_activeStroke.tool == ToolType::Pen && m_activeStroke.tipStyle == 1
+        if (m_fountainFlickEnabled && m_activeStroke.tool == ToolType::Pen && m_activeStroke.tipStyle == 1
             && !mods.testFlag(Qt::ShiftModifier)) {
             taperPenFlick(m_activeStroke, zoom);
         }
-        if (m_activeStroke.tool == ToolType::Highlighter && m_activeStroke.tipStyle == 2
+        if (m_activeStroke.tool == ToolType::Highlighter
+            && (m_activeStroke.tipStyle == 2 || m_hlStraightenOnRelease)
             && m_activeStroke.points.size() >= 2) {
             m_activeStroke.points = {m_activeStroke.points.front(), m_activeStroke.points.back()};
         }
@@ -1987,7 +2044,7 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
             m_pendingBeautifyIds.insert(m_activeStroke.id);
             m_pendingBeautifyBox = m_pendingBeautifyBox.isEmpty() ? nb : m_pendingBeautifyBox.united(nb);
             if (m_beautifyTimer) {
-                m_beautifyTimer->start(650);
+                m_beautifyTimer->start(m_beautifyPauseMs);
             }
         }
         skipFullRepaint = appendStrokeToStaticCache(m_activeStroke);
@@ -2153,7 +2210,8 @@ void CanvasWidget::triggerHoldToShape() {
     // 1. Mantener presionado un punto sobre una arista -> abrir mini-barra rápida de marcas.
     if (total * vp.zoom < 16.0) {
         QPointF edgePt;
-        if (isPointNearGeometryEdge(m_holdLastWorld, m_doc.shapes(), vp.zoom, 22.0, &edgePt)) {
+        if (m_gestureOptions.holdEdgeMenu
+            && isPointNearGeometryEdge(m_holdLastWorld, m_doc.shapes(), vp.zoom, 22.0, &edgePt)) {
             m_hasActiveStroke = false;
             m_liveInk.reset(m_liveInkLayer);
             m_lastLiveDirtyRect = {};
@@ -2166,28 +2224,38 @@ void CanvasWidget::triggerHoldToShape() {
         return;
     }
 
-    if (const auto autoAngle = trySnapAngleArcAtVertex(m_activeStroke, m_doc.shapes(), vp.zoom)) {
-        pushUndoSnapshot(currentSnapshot());
-        m_doc.shapes().append(*autoAngle);
-        attachNewShape(m_doc.shapes());
-        emit toastRequested(QStringLiteral("Ángulo ✓"));
-        finishAutoGeometry(*autoAngle);
-        return;
+    if (m_gestureOptions.angleArc || m_gestureOptions.rightAngle) {
+        if (auto autoAngle = trySnapAngleArcAtVertex(m_activeStroke, m_doc.shapes(), vp.zoom,
+                                                     m_gestureOptions.angleArc,
+                                                     m_gestureOptions.rightAngle)) {
+            if (m_showAutoMeasurements && isAutoVertexAngle(*autoAngle)) {
+                autoAngle->label.clear();
+                autoAngle->bounds = computeShapeBounds(*autoAngle);
+            }
+            pushUndoSnapshot(currentSnapshot());
+            m_doc.shapes().append(*autoAngle);
+            attachNewShape(m_doc.shapes());
+            emit toastRequested(QStringLiteral("Ángulo ✓"));
+            finishAutoGeometry(*autoAngle);
+            return;
+        }
     }
 
     if (total * vp.zoom < 25.0) {
         return;
     }
 
-    if (const auto mark = trySnapCongruenceStrokeOnEdge(m_activeStroke, m_doc.shapes(), vp.zoom, true)) {
-        pushUndoSnapshot(currentSnapshot());
-        m_doc.shapes().append(*mark);
-        emit toastRequested(edgeMarkToast(parseEdgeMark(mark->label)));
-        finishAutoGeometry(*mark);
-        return;
+    if (m_gestureOptions.edgeMarks) {
+        if (const auto mark = trySnapCongruenceStrokeOnEdge(m_activeStroke, m_doc.shapes(), vp.zoom, true)) {
+            pushUndoSnapshot(currentSnapshot());
+            m_doc.shapes().append(*mark);
+            emit toastRequested(edgeMarkToast(parseEdgeMark(mark->label)));
+            finishAutoGeometry(*mark);
+            return;
+        }
     }
 
-    const auto recognized = recognizeFreehandShape(m_activeStroke);
+    const auto recognized = recognizeFreehandShape(m_activeStroke, m_autoShapeOptions);
     if (!recognized) {
         return;
     }
@@ -2214,14 +2282,16 @@ void CanvasWidget::triggerHoldToShape() {
         const QPointF oldEnd = points.back();
         const QPointF rawStart(m_rawStartPoint.x, m_rawStartPoint.y);
         const auto start =
-            snapPointWithGuides(rawStart, std::nullopt, m_doc.shapes(), m_activeShape.id, vp.zoom, false);
+            snapPointWithGuides(rawStart, std::nullopt, m_doc.shapes(), m_activeShape.id, vp.zoom,
+                                false, m_smartGuideOptions);
         const auto end = snapPointWithGuides(m_holdLastWorld, start.point, m_doc.shapes(),
-                                             m_activeShape.id, vp.zoom, false);
+                                             m_activeShape.id, vp.zoom, false, m_smartGuideOptions);
         if (end.contact) {
             points.back() = end.point;
         }
         const auto reverse =
-            snapPointWithGuides(rawStart, points.back(), m_doc.shapes(), m_activeShape.id, vp.zoom, false);
+            snapPointWithGuides(rawStart, points.back(), m_doc.shapes(), m_activeShape.id, vp.zoom,
+                                false, m_smartGuideOptions);
         if (reverse.contact) {
             points.front() = reverse.point;
         }
@@ -2258,7 +2328,9 @@ void CanvasWidget::applyEraseAt(const QPointF& worldPos, bool trimToIntersection
     const double radius = m_eraserSize / 2.0;
 
     for (const auto& stroke : m_doc.strokes()) {
-        if (m_eraserOnlyHighlight && stroke.tool != ToolType::Highlighter) {
+        const bool isHighlight = (stroke.tool == ToolType::Highlighter);
+        const bool canEraseStroke = isHighlight ? m_eraserTargets.highlighter : m_eraserTargets.ink;
+        if (!canEraseStroke) {
             nextStrokes.append(stroke);
             continue;
         }
@@ -2307,20 +2379,10 @@ void CanvasWidget::applyEraseAt(const QPointF& worldPos, bool trimToIntersection
         }
     };
 
-    if (m_eraserOnlyHighlight) {
-        if (changed) {
-            m_doc.strokes() = std::move(nextStrokes);
-            pruneSelections(removedStrokeIds, {}, {});
-            m_erasedAnything = true;
-            invalidateStaticCache();
-        }
-        return;
-    }
-
     auto shapes = m_doc.shapes();
     QSet<QString> removedShapeIds;
     auto eraseShapes = [&](bool shading) {
-        if (m_eraserPreserveShapes && !shading) {
+        if (!m_eraserTargets.shapes) {
             return;
         }
         if (!shading && (m_eraserMode == EraserMode::Partial || trimToIntersections)) {
@@ -2371,18 +2433,20 @@ void CanvasWidget::applyEraseAt(const QPointF& worldPos, bool trimToIntersection
 
     eraseShapes(false);
 
-    const QRectF eraserRect(worldPos - QPointF(radius, radius), QSizeF(m_eraserSize, m_eraserSize));
     QSet<QString> removedTextIds;
-    auto& texts = m_doc.texts();
-    const auto removedTexts = texts.removeIf([&](const TextItem& item) {
-        if (!item.locked && item.bounds.intersects(eraserRect)) {
-            removedTextIds.insert(item.id);
-            return true;
+    if (m_eraserTargets.ink) {
+        const QRectF eraserRect(worldPos - QPointF(radius, radius), QSizeF(m_eraserSize, m_eraserSize));
+        auto& texts = m_doc.texts();
+        const auto removedTexts = texts.removeIf([&](const TextItem& item) {
+            if (!item.locked && item.bounds.intersects(eraserRect)) {
+                removedTextIds.insert(item.id);
+                return true;
+            }
+            return false;
+        });
+        if (removedTexts > 0) {
+            changed = true;
         }
-        return false;
-    });
-    if (removedTexts > 0) {
-        changed = true;
     }
 
     if (!changed) {

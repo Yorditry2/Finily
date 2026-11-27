@@ -13,6 +13,7 @@ class QVBoxLayout;
 
 namespace finily {
 
+class SidebarBrandBadge;
 class SidebarDivider;
 class SidebarIconButton;
 class SidebarNavRow;
@@ -87,6 +88,7 @@ private:
     bool m_updateDotVisible = false;
     int m_panelWidth = tokens::space::SidebarWidth;
 
+    SidebarBrandBadge* m_brandBadge = nullptr;
     SidebarIconButton* m_collapseBtn = nullptr;
     SidebarNavRow* m_docsRow = nullptr;
     SidebarNavRow* m_favsRow = nullptr;

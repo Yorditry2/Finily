@@ -1258,4 +1258,305 @@ bool CanvasWidget::exportToPdf(const QString& path) {
     return saved;
 }
 
+ShapeFamily CanvasWidget::selectedShapeFamily(int* outVariant) const {
+    if (outVariant)
+        *outVariant = 0;
+    const QString id = singleSelectedShapeId(m_selectedShapeId, m_selectedShapeIds);
+    const ShapeItem* shape = id.isEmpty() ? nullptr : findShapeById(id);
+    return shape ? classifyShapeFamily(*shape, outVariant) : ShapeFamily::None;
+}
+
+bool CanvasWidget::applySelectedShapeVariant(ShapeFamily family, int variant) {
+    if (m_mode != InteractionMode::None || m_polylineActive)
+        return false;
+    const QString id = singleSelectedShapeId(m_selectedShapeId, m_selectedShapeIds);
+    if (id.isEmpty())
+        return false;
+    auto& shapes = m_doc.shapes();
+    qsizetype found = -1;
+    for (qsizetype i = 0; i < shapes.size(); ++i) {
+        if (shapes.at(i).id == id) {
+            found = i;
+            break;
+        }
+    }
+    if (found < 0 || shapes.at(found).locked)
+        return false;
+    ShapeItem updated = shapes.at(found);
+    if (!morphShapeToVariant(updated, family, variant))
+        return false;
+    const DocumentSnapshot before = currentSnapshot();
+    shapes[found] = std::move(updated);
+    updateShapeLinks(shapes, before.shapes, {id});
+    pushUndoSnapshot(before);
+    m_lassoBounds = lassoSelectionBounds();
+    invalidateStaticCache();
+    saveAutosave();
+    emit stateChanged();
+    return true;
+}
+
+bool CanvasWidget::setSelectedShapeFillColor(const QColor& color) {
+    if (m_mode != InteractionMode::None || m_polylineActive)
+        return false;
+    if (selectedItemIds().isEmpty())
+        return false;
+    SelectionStyle style;
+    if (!color.isValid() || color.alpha() == 0) {
+        style.filled = false;
+    } else {
+        style.filled = true;
+        style.fillColor = color;
+        if (!selectionStyle().fillPattern)
+            style.fillPattern = m_shadePattern;
+    }
+    setSelectionStyle(style);
+    return true;
+}
+
+bool CanvasWidget::toggleSelectedShapeAngles() {
+    if (m_mode != InteractionMode::None || m_polylineActive)
+        return false;
+    const QString id = singleSelectedShapeId(m_selectedShapeId, m_selectedShapeIds);
+    const ShapeItem* base = id.isEmpty() ? nullptr : findShapeById(id);
+    if (!base || base->locked)
+        return false;
+
+    QVector<QPointF> poly = base->vertices;
+    if (base->kind == ShapeKind::Rectangle && poly.size() == 2) {
+        const QRectF r = QRectF(poly[0], poly[1]).normalized();
+        poly = {r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()};
+    }
+    if (poly.size() < 3)
+        return false;
+
+    const double tol = 6.0 / std::max(0.25, m_doc.viewport().zoom);
+    QSet<QString> existingIds;
+    for (const ShapeItem& s : m_doc.shapes()) {
+        if (!isAutoVertexAngle(s) || s.vertices.isEmpty())
+            continue;
+        for (const QPointF& v : poly) {
+            if (pointDistance(s.vertices.front(), v) <= tol) {
+                existingIds.insert(s.id);
+                break;
+            }
+        }
+    }
+
+    if (!existingIds.isEmpty()) {
+        pushUndoSnapshot(currentSnapshot());
+        m_doc.shapes().removeIf([&](const ShapeItem& s) { return existingIds.contains(s.id); });
+        m_selectedShapeIds.subtract(existingIds);
+        invalidateStaticCache();
+        saveAutosave();
+        emit stateChanged();
+        return true;
+    }
+
+    QVector<ShapeItem> added;
+    const qsizetype n = poly.size();
+    for (qsizetype i = 0; i < n; ++i) {
+        const QPointF prev = poly[(i - 1 + n) % n];
+        const QPointF curr = poly[i];
+        const QPointF next = poly[(i + 1) % n];
+        const double l1 = pointDistance(curr, prev);
+        const double l2 = pointDistance(curr, next);
+        if (l1 < 1e-3 || l2 < 1e-3)
+            continue;
+        const double arm = std::min({42.0 / std::max(0.25, m_doc.viewport().zoom), l1 * 0.45, l2 * 0.45});
+        ShapeItem marker;
+        marker.id = freshId();
+        marker.kind = ShapeKind::AngleMarker;
+        marker.label = autoVertexAngleLabel();
+        marker.closed = false;
+        marker.color = base->color;
+        marker.size = std::clamp(base->size * 0.85, 1.4, 3.2);
+        marker.opacity = base->opacity;
+        marker.vertices = {
+            curr,
+            curr + ((prev - curr) / l1) * arm,
+            curr + ((next - curr) / l2) * arm
+        };
+        marker.bounds = computeShapeBounds(marker);
+        added.append(std::move(marker));
+    }
+    if (added.isEmpty())
+        return false;
+    pushUndoSnapshot(currentSnapshot());
+    m_doc.shapes().append(added);
+    invalidateStaticCache();
+    saveAutosave();
+    emit stateChanged();
+    return true;
+}
+
+double CanvasWidget::selectedImageOpacity() const {
+    const QString targetId = !m_selectedImageId.isEmpty()
+        ? m_selectedImageId
+        : (m_selectedImageIds.size() == 1 ? *m_selectedImageIds.cbegin() : QString());
+    if (targetId.isEmpty())
+        return 1.0;
+    for (const ImageItem& img : m_doc.images()) {
+        if (img.id == targetId)
+            return std::clamp(img.opacity, 0.1, 1.0);
+    }
+    return 1.0;
+}
+
+bool CanvasWidget::setSelectedImageOpacity(double opacity) {
+    const QString targetId = !m_selectedImageId.isEmpty()
+        ? m_selectedImageId
+        : (m_selectedImageIds.size() == 1 ? *m_selectedImageIds.cbegin() : QString());
+    if (targetId.isEmpty())
+        return false;
+    const double clamped = std::clamp(opacity, 0.1, 1.0);
+    for (ImageItem& img : m_doc.images()) {
+        if (img.id == targetId && !img.isPdfPage) {
+            if (img.locked)
+                return false;
+            if (std::abs(img.opacity - clamped) < 1e-3)
+                return true;
+            pushUndoSnapshot(currentSnapshot());
+            img.opacity = clamped;
+            invalidateStaticCache();
+            saveAutosave();
+            emit stateChanged();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CanvasWidget::cropSelectedImageToRect(const QRectF& normalizedRect) {
+    const QString targetId = !m_selectedImageId.isEmpty()
+        ? m_selectedImageId
+        : (m_selectedImageIds.size() == 1 ? *m_selectedImageIds.cbegin() : QString());
+    if (targetId.isEmpty())
+        return false;
+    const QRectF norm = normalizedRect.normalized().intersected(QRectF(0.0, 0.0, 1.0, 1.0));
+    if (norm.width() < 0.02 || norm.height() < 0.02)
+        return false;
+    for (ImageItem& img : m_doc.images()) {
+        if (img.id == targetId && !img.isPdfPage) {
+            if (img.locked || img.image.isNull())
+                return false;
+            const int iw = img.image.width();
+            const int ih = img.image.height();
+            const int x = std::clamp(int(std::floor(norm.left() * iw)), 0, std::max(0, iw - 2));
+            const int y = std::clamp(int(std::floor(norm.top() * ih)), 0, std::max(0, ih - 2));
+            const int cw = std::clamp(int(std::lround(norm.width() * iw)), 2, iw - x);
+            const int ch = std::clamp(int(std::lround(norm.height() * ih)), 2, ih - y);
+            const QRect pxRect(x, y, cw, ch);
+            QImage cropped = img.image.copy(pxRect);
+            if (cropped.isNull())
+                return false;
+            const QRectF newRect(
+                img.rect.left() + (double(x) / std::max(1, iw)) * img.rect.width(),
+                img.rect.top() + (double(y) / std::max(1, ih)) * img.rect.height(),
+                (double(cw) / std::max(1, iw)) * img.rect.width(),
+                (double(ch) / std::max(1, ih)) * img.rect.height());
+            pushUndoSnapshot(currentSnapshot());
+            img.image = std::move(cropped);
+            img.rect = newRect;
+            m_lassoBounds = lassoSelectionBounds();
+            invalidateStaticCache();
+            saveAutosave();
+            emit stateChanged();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CanvasWidget::cropSelectedImageInteractiveOrRatio(double aspectRatio) {
+    const QString targetId = !m_selectedImageId.isEmpty()
+        ? m_selectedImageId
+        : (m_selectedImageIds.size() == 1 ? *m_selectedImageIds.cbegin() : QString());
+    if (targetId.isEmpty())
+        return false;
+    for (const ImageItem& img : m_doc.images()) {
+        if (img.id != targetId || img.isPdfPage || img.locked || img.image.isNull())
+            continue;
+        if (aspectRatio <= 0.0)
+            return cropSelectedImageToRect(QRectF(0.08, 0.08, 0.84, 0.84));
+        const double curAspect = double(img.image.width()) / std::max(1, img.image.height());
+        if (curAspect > aspectRatio) {
+            const double nw = std::clamp(aspectRatio / curAspect, 0.05, 1.0);
+            return cropSelectedImageToRect(QRectF((1.0 - nw) * 0.5, 0.0, nw, 1.0));
+        }
+        const double nh = std::clamp(curAspect / aspectRatio, 0.05, 1.0);
+        return cropSelectedImageToRect(QRectF(0.0, (1.0 - nh) * 0.5, 1.0, nh));
+    }
+    return false;
+}
+
+InlineTextState CanvasWidget::inlineTextState() const {
+    InlineTextState st;
+    if (m_textEditor) {
+        st.active = true;
+        st.fontFamilyIndex = m_textEditor->draft.fontFamilyIndex;
+        st.fontSize = m_textEditor->draft.fontSize;
+        st.bold = m_textEditor->draft.bold;
+        st.italic = m_textEditor->draft.italic;
+        st.screenRect = m_textEditor->geometry();
+        return st;
+    }
+    const QString tid = !m_selectedTextId.isEmpty()
+        ? m_selectedTextId
+        : (m_selectedTextIds.size() == 1 ? *m_selectedTextIds.cbegin() : QString());
+    if (!tid.isEmpty()) {
+        for (const TextItem& item : m_doc.texts()) {
+            if (item.id == tid) {
+                st.active = false;
+                st.fontFamilyIndex = item.fontFamilyIndex;
+                st.fontSize = item.fontSize;
+                st.bold = item.bold;
+                st.italic = item.italic;
+                return st;
+            }
+        }
+    }
+    return st;
+}
+
+bool CanvasWidget::setInlineTextStyle(int familyIdx, double fontSize, bool bold, bool italic) {
+    const int fam = std::clamp(familyIdx, 0, 2);
+    const double sz = std::clamp(fontSize, 9.0, 96.0);
+    if (m_textEditor) {
+        m_textEditor->draft.fontFamilyIndex = fam;
+        m_textEditor->draft.fontSize = sz;
+        m_textEditor->draft.bold = bold;
+        m_textEditor->draft.italic = italic;
+        const ThemeConfig theme = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground());
+        m_textEditor->applyTextStyle(m_doc.viewport().zoom, m_textEditor->draft.color, theme.accent);
+        emit inlineTextEditorChanged(true, m_textEditor->geometry());
+        return true;
+    }
+    QSet<QString> ids = m_selectedTextIds;
+    if (!m_selectedTextId.isEmpty())
+        ids.insert(m_selectedTextId);
+    if (ids.isEmpty())
+        return false;
+    bool touched = false;
+    DocumentSnapshot before = currentSnapshot();
+    for (TextItem& item : m_doc.texts()) {
+        if (!ids.contains(item.id) || item.locked)
+            continue;
+        item.fontFamilyIndex = fam;
+        item.fontSize = sz;
+        item.bold = bold;
+        item.italic = italic;
+        item.bounds = textBounds(item);
+        touched = true;
+    }
+    if (!touched)
+        return false;
+    pushUndoSnapshot(before);
+    m_lassoBounds = lassoSelectionBounds();
+    invalidateStaticCache();
+    saveAutosave();
+    emit stateChanged();
+    return true;
+}
+
 } // namespace finily

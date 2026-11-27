@@ -430,6 +430,43 @@ protected:
 };
 
 // Divisor horizontal de 1 px pintado directamente (inmune a estilos del sistema).
+class SidebarBrandBadge : public QWidget {
+public:
+    explicit SidebarBrandBadge(QWidget* parent = nullptr)
+        : QWidget(parent) {
+        setFixedSize(24, 24);
+        setAttribute(Qt::WA_StyledBackground, false);
+    }
+
+    void setDark(bool dark) {
+        m_dark = dark;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const QRectF r(rect());
+        QLinearGradient grad(r.topLeft(), r.bottomRight());
+        if (m_dark) {
+            grad.setColorAt(0.0, QColor(255, 255, 255));
+            grad.setColorAt(1.0, QColor(228, 228, 231));
+        } else {
+            grad.setColorAt(0.0, QColor(39, 39, 44));
+            grad.setColorAt(1.0, QColor(20, 20, 23));
+        }
+        p.setPen(Qt::NoPen);
+        p.setBrush(grad);
+        p.drawRoundedRect(r, 6.5, 6.5);
+        const QColor fg = m_dark ? QColor(20, 21, 26) : QColor(255, 255, 255);
+        paintUiIcon(&p, QRectF(3.5, 3.5, 17.0, 17.0), QStringLiteral("brand-mark"), fg);
+    }
+
+private:
+    bool m_dark = false;
+};
+
 class SidebarDivider : public QWidget {
 public:
     explicit SidebarDivider(QWidget* parent = nullptr)
@@ -459,7 +496,10 @@ HomeSidebar::HomeSidebar(QWidget* parent)
     col->setSpacing(2);
 
     auto* head = new QHBoxLayout();
-    head->setContentsMargins(8, 2, 4, 14);
+    head->setContentsMargins(6, 2, 4, 14);
+    head->setSpacing(8);
+    m_brandBadge = new SidebarBrandBadge(this);
+    head->addWidget(m_brandBadge, 0, Qt::AlignVCenter);
     auto* brand = new QLabel(QStringLiteral("Finily"), this);
     brand->setObjectName(QStringLiteral("finilyBrandTitle"));
     brand->setMinimumWidth(0);
@@ -787,6 +827,9 @@ void HomeSidebar::applyTheme(const HomePalette& pal, bool dark) {
     m_pal = pal;
     m_dark = dark;
     const tokens::Palette tk = tokens::paletteFor(dark);
+
+    if (m_brandBadge)
+        m_brandBadge->setDark(dark);
 
     for (SidebarNavRow* row : {m_docsRow, m_favsRow, m_foldersRow, m_tagsHeaderRow, m_draftRow, m_trashRow})
         row->setTheme(pal, dark);

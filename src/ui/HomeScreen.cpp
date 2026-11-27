@@ -1049,6 +1049,27 @@ void HomeScreen::selectFilter(int index) {
     refreshLibrary();
 }
 
+void HomeScreen::revealNotebookPath(const QString& filePath) {
+    leaveSettings();
+    const QFileInfo fi(filePath);
+    if (!filePath.isEmpty()) {
+        const QString absDir = QDir::cleanPath(fi.absolutePath());
+        for (const QString& root : LibraryStore::libraryDirectories()) {
+            const QDir rootDir(QDir::cleanPath(root));
+            const QString rel = rootDir.relativeFilePath(absDir);
+            if (rel == QLatin1String(".")) {
+                selectFilter(HomeSidebar::NavDocs);
+                return;
+            }
+            if (!rel.isEmpty() && !rel.startsWith(QLatin1String(".."))) {
+                openFolder(rel, false);
+                return;
+            }
+        }
+    }
+    selectFilter(HomeSidebar::NavDocs);
+}
+
 void HomeScreen::runAnimatedFolderTransition(const QPointF& pivotInViewport, bool entering,
                                              const std::function<void()>& applyState) {
     if (!m_scroll || !m_scroll->viewport()->isVisible() || m_settingsOpen) {

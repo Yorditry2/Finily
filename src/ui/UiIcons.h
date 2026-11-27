@@ -20,4 +20,10 @@ void paintUiIcon(QPainter* painter, const QRectF& rect, const QString& name,
 QIcon uiIcon(const QString& name, const QColor& color, int logicalSize = 16,
              const QString& pack = QStringLiteral("ui"));
 
+// Íconos de herramientas con color activo integrado (punta de pluma / trazo resaltador).
+void paintDynamicPenIcon(QPainter* painter, const QRectF& rect,
+                         const QColor& strokeColor, const QColor& nibColor);
+void paintDynamicHighlighterIcon(QPainter* painter, const QRectF& rect,
+                                 const QColor& strokeColor, const QColor& barColor);
+
 } // namespace finily

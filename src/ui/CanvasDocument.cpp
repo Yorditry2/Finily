@@ -39,6 +39,7 @@ void CanvasWidget::applyDocumentToolSettings(const NotebookDocument::DocumentToo
     m_shapeKind = settings.shapeKind;
     m_holdToShapeEnabled = settings.holdToShapeEnabled;
     m_smartGuidesEnabled = settings.smartGuidesEnabled;
+    m_smartGuideOptions.enabled = m_smartGuidesEnabled;
     m_swapPenButtons = settings.swapPenButtons;
     m_pressureProfile = settings.pressureProfile;
 }
@@ -68,6 +69,8 @@ void CanvasWidget::afterPageLoaded(bool structureChanged) {
     m_holdTimer->stop();
     m_laserTimer->stop();
     m_laserTrail.clear();
+    m_laserDotFading = false;
+    m_laserDotReleaseMs = 0;
     m_lastLaserRect = {};
     m_mode = InteractionMode::None;
     m_tabletActive = false;
@@ -258,6 +261,7 @@ void CanvasWidget::newDocument() {
     if (m_polylineActive)
         cancelActivePolyline();
     m_doc.resetNew(fittedSheetViewport(m_doc.pageFormat(), size()));
+    refreshActiveColorFromTheme();
     afterPageLoaded(true);
 }
 
@@ -280,7 +284,7 @@ bool CanvasWidget::createNotebook(const QString& path, ThemeId theme, Background
     cancelPendingBeautify();
     if (m_polylineActive)
         cancelActivePolyline();
-    m_color = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground()).defaultInk;
+    refreshActiveColorFromTheme();
     afterPageLoaded(true);
     return true;
 }
@@ -296,7 +300,7 @@ void CanvasWidget::startEphemeralDocument(ThemeId theme, BackgroundTemplate back
         cancelActivePolyline();
     m_doc.configureBlank(theme, background, format, templateScale, cover,
                          fittedSheetViewport(format, size()), customBackground);
-    m_color = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground()).defaultInk;
+    refreshActiveColorFromTheme();
     afterPageLoaded(true);
     m_autosaveTimer->stop();
 }
@@ -423,7 +427,7 @@ void CanvasWidget::loadAutosave() {
     if (m_polylineActive)
         cancelActivePolyline();
     applyDocumentToolSettings(ts);
-    m_color = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground()).defaultInk;
+    refreshActiveColorFromTheme();
     afterPageLoaded(true);
     m_autosaveTimer->stop();
 }
@@ -445,7 +449,7 @@ bool CanvasWidget::loadFromFile(const QString& path) {
     if (m_polylineActive)
         cancelActivePolyline();
     applyDocumentToolSettings(ts);
-    m_color = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground()).defaultInk;
+    refreshActiveColorFromTheme();
     afterPageLoaded(true);
     return true;
 }
@@ -462,13 +466,29 @@ void CanvasWidget::importSession(const NotebookSession& session) {
     if (m_polylineActive)
         cancelActivePolyline();
     m_doc.importSession(session);
-    m_color = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground()).defaultInk;
+    refreshActiveColorFromTheme();
     afterPageLoaded(true);
     update();
 }
 
 QImage CanvasWidget::pageThumbnail(int index, const QSize& size) const {
     return m_doc.pageThumbnail(index, size, templateScale());
+}
+
+QImage CanvasWidget::renderCurrentPageImage(const QSize& targetSize) const {
+    const PageFormat fmt = m_doc.pageFormat();
+    const bool landscape = (fmt == PageFormat::A4Landscape || fmt == PageFormat::Slide16x9
+                            || fmt == PageFormat::A5Landscape || fmt == PageFormat::LetterLandscape
+                            || fmt == PageFormat::LegalLandscape);
+    const QSize sz = targetSize.isEmpty() ? (landscape ? QSize(2260, 1600) : QSize(1600, 2260)) : targetSize;
+    return pageThumbnail(m_doc.currentPageIndex(), sz);
+}
+
+bool CanvasWidget::exportCurrentPageToPng(const QString& filePath, const QSize& targetSize) const {
+    if (filePath.isEmpty())
+        return false;
+    const QImage img = renderCurrentPageImage(targetSize);
+    return !img.isNull() && img.save(filePath, "PNG");
 }
 
 } // namespace finily

@@ -10,25 +10,17 @@
 
 #include <QApplication>
 #include <QCloseEvent>
-#include <QComboBox>
 #include <QDesktopServices>
-#include <QDialog>
-#include <QDialogButtonBox>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QFormLayout>
 #include <QKeySequence>
-#include <QLabel>
-#include <QLineEdit>
-#include <QMessageBox>
 #include <QProcess>
-#include <QProgressDialog>
-#include <QPushButton>
 #include <QShortcut>
 #include <QStackedWidget>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
 #include <QWidget>
@@ -55,15 +47,6 @@ QString normalizedFilePath(const QString& path) {
     return canon.isEmpty() ? info.absoluteFilePath() : canon;
 }
 
-void closeProgressDialog(QPointer<QProgressDialog>& dialog) {
-    if (QProgressDialog* dlg = dialog) {
-        dialog.clear();
-        dlg->disconnect();
-        dlg->close();
-        dlg->deleteLater();
-    }
-}
-
 } // namespace
 
 MainWindow::MainWindow() {
@@ -75,6 +58,7 @@ MainWindow::MainWindow() {
     setupHomeConnections();
     setupToolbarConnections();
     installShortcuts();
+    reloadPadActions();
 #ifdef Q_OS_LINUX
     setupWacomPadListener();
 #endif
@@ -167,8 +151,8 @@ void MainWindow::setupHomeConnections() {
         if (!openNotebookInTab(path, false)) {
             if (m_stack && m_stack->currentWidget() == m_homeScreen && m_homeScreen)
                 m_homeScreen->showErrorToast(tr("No se pudo abrir el cuaderno."));
-            else
-                QMessageBox::warning(this, tr("Abrir cuaderno"), tr("No se pudo abrir el cuaderno."));
+            else if (m_toolbar)
+                m_toolbar->showToast(tr("No se pudo abrir el cuaderno."));
         }
     });
 
@@ -276,6 +260,19 @@ void MainWindow::setupToolbarConnections() {
     connect(m_toolbar, &FloatingToolbar::newTabRequested, this, &MainWindow::openNewBlankTab);
     connect(m_toolbar, &FloatingToolbar::switchTabRequested, this, &MainWindow::switchToTab);
     connect(m_toolbar, &FloatingToolbar::closeTabRequested, this, &MainWindow::closeTab);
+    connect(m_toolbar, &FloatingToolbar::duplicateTabRequested, this, &MainWindow::duplicateTab);
+    connect(m_toolbar, &FloatingToolbar::revealInLibraryRequested, this, &MainWindow::revealTabInLibrary);
+    connect(m_toolbar, &FloatingToolbar::exportPageImageRequested, this, &MainWindow::exportCurrentPageImage);
+    connect(m_toolbar, &FloatingToolbar::fullscreenToggled, this, [this] {
+        if (isFullScreen())
+            showNormal();
+        else
+            showFullScreen();
+    });
+    connect(m_toolbar, &FloatingToolbar::padActionsChanged, this, &MainWindow::reloadPadActions);
+    if (m_canvas) {
+        connect(m_canvas, &CanvasWidget::tabletActionTriggered, this, &MainWindow::executeTabletAction);
+    }
 
     // Botón 'Inicio' de la pill: guardar y volver a la biblioteca.
     connect(m_toolbar, &FloatingToolbar::homeRequested, this, [this] {
@@ -365,15 +362,16 @@ void MainWindow::setupVisionCallbacks() {
     if (m_toolbar) {
         connect(m_toolbar, &FloatingToolbar::vectorizeSelectedImageRequested, this,
                 &MainWindow::vectorizeSelectedImage);
-        connect(m_toolbar, &FloatingToolbar::configureAiApiRequested, this,
-                &MainWindow::configureAiApiDialog);
+        connect(m_toolbar, &FloatingToolbar::configureAiApiRequested, this, [this] {
+            if (m_toolbar)
+                m_toolbar->openSettingsModal(QStringLiteral("ia"));
+        });
         connect(m_toolbar, &FloatingToolbar::extractSelectedImageRequested, this,
                 &MainWindow::startImageExtraction);
     }
 
     connect(m_visionExtractor, &VisionExtractor::extractionFinished, this,
             [this](const ExtractedContent& content) {
-                closeProgressDialog(m_visionProgress);
                 const QString targetTabId = m_visionTargetTabId;
                 const int targetPageIndex = m_visionTargetPageIndex;
                 m_visionTargetTabId.clear();
@@ -411,10 +409,10 @@ void MainWindow::setupVisionCallbacks() {
             });
 
     connect(m_visionExtractor, &VisionExtractor::extractionFailed, this, [this](const QString& error) {
-        closeProgressDialog(m_visionProgress);
         m_visionTargetTabId.clear();
         m_visionTargetPageIndex = -1;
-        QMessageBox::warning(this, tr("Extraer figuras y texto (IA)"), error);
+        if (m_toolbar)
+            m_toolbar->showToast(tr("IA: %1").arg(error));
     });
 }
 
@@ -451,22 +449,9 @@ void MainWindow::setupUpdateCallbacks() {
                     m_homeScreen->showInfoToast(
                         tr("Nueva versión Finily v%1 disponible").arg(info.version),
                         QStringLiteral("info"));
-                } else if (manual && !onHome) {
-                    QMessageBox box(this);
-                    box.setWindowTitle(tr("Actualización disponible"));
-                    box.setIcon(QMessageBox::Information);
-                    box.setText(tr("Hay una nueva versión disponible: Finily v%1 (tienes v%2).")
-                                    .arg(info.version, QApplication::applicationVersion()));
-                    QPushButton* primaryBtn = box.addButton(
-                        canDirect ? tr("Actualizar ahora") : tr("Abrir página de descargas"),
-                        QMessageBox::AcceptRole);
-                    QPushButton* notesBtn = box.addButton(tr("Ver cambios"), QMessageBox::ActionRole);
-                    box.addButton(tr("Más tarde"), QMessageBox::RejectRole);
-                    box.exec();
-                    if (box.clickedButton() == primaryBtn)
-                        startUpdateInstall();
-                    else if (box.clickedButton() == notesBtn)
-                        QDesktopServices::openUrl(QUrl(info.releaseUrl));
+                } else if (manual && !onHome && m_toolbar) {
+                    m_toolbar->showToast(
+                        tr("Nueva versión Finily v%1 disponible").arg(info.version));
                 }
             });
 
@@ -475,25 +460,20 @@ void MainWindow::setupUpdateCallbacks() {
             return;
         const QString msg = tr("Finily v%1 está actualizado ✓").arg(QApplication::applicationVersion());
         const bool onHome = (m_stack && m_stack->currentWidget() == m_homeScreen);
-        if (m_stack && m_stack->currentWidget() == m_container && m_toolbar)
-            m_toolbar->showToast(msg);
-        else if (onHome && m_homeScreen)
+        if (onHome && m_homeScreen)
             m_homeScreen->showInfoToast(msg, QStringLiteral("check"));
-        else
-            QMessageBox::information(this, tr("Buscar actualizaciones"), msg);
+        else if (m_toolbar)
+            m_toolbar->showToast(msg);
     });
 
     connect(m_updater, &UpdateManager::checkFailed, this, [this](const QString& error, bool manual) {
         if (!manual)
             return;
-        const QString msg = tr("No se pudo comprobar actualizaciones: %1").arg(error);
         const bool onHome = (m_stack && m_stack->currentWidget() == m_homeScreen);
-        if (m_stack && m_stack->currentWidget() == m_container && m_toolbar)
-            m_toolbar->showToast(tr("No se pudo comprobar actualizaciones"));
-        else if (onHome && m_homeScreen)
+        if (onHome && m_homeScreen)
             m_homeScreen->showErrorToast(tr("No se pudo comprobar actualizaciones"));
-        else
-            QMessageBox::warning(this, tr("Buscar actualizaciones"), msg);
+        else if (m_toolbar)
+            m_toolbar->showToast(tr("No se pudo comprobar actualizaciones: %1").arg(error));
     });
 
     if (m_homeScreen) {
@@ -542,39 +522,30 @@ void MainWindow::setupUpdateCallbacks() {
         const int percent = total > 0 ? int((received * 100) / total) : 0;
         if (m_homeScreen)
             m_homeScreen->setUpdateDownloadProgress(percent);
-        if (m_updateProgress) {
-            if (total > 0) {
-                m_updateProgress->setRange(0, 100);
-                m_updateProgress->setValue(std::clamp(percent, 0, 100));
-            } else {
-                m_updateProgress->setRange(0, 0);
-            }
-        }
     });
 
     connect(m_updater, &UpdateManager::downloadCancelled, this, [this] {
-        closeProgressDialog(m_updateProgress);
         m_pendingInstallerPath.clear();
         if (m_homeScreen)
             m_homeScreen->resetUpdateBannerState();
     });
 
     connect(m_updater, &UpdateManager::downloadFailed, this, [this](const QString& error) {
-        closeProgressDialog(m_updateProgress);
         m_pendingInstallerPath.clear();
         const bool onHome = (m_stack && m_stack->currentWidget() == m_homeScreen);
-        if (onHome && m_homeScreen)
+        if (onHome && m_homeScreen) {
             m_homeScreen->showUpdateError(error);
-        else {
+        } else {
             if (m_homeScreen)
                 m_homeScreen->resetUpdateBannerState();
-            QMessageBox::warning(this, tr("Error al descargar actualización"), error);
+            if (m_toolbar)
+                m_toolbar->showToast(tr("Error al descargar actualización: %1").arg(error));
         }
     });
 
     connect(m_updater, &UpdateManager::installerReady, this,
             [this](const QString& installerPath, const UpdateInfo& info) {
-                closeProgressDialog(m_updateProgress);
+                Q_UNUSED(info);
                 const bool onHome = (m_stack && m_stack->currentWidget() == m_homeScreen);
                 if (onHome && m_homeScreen) {
                     m_pendingInstallerPath = installerPath;
@@ -586,12 +557,8 @@ void MainWindow::setupUpdateCallbacks() {
                 saveAllDirtyTabsBeforeExit();
                 if (QProcess::startDetached(installerPath, {})) {
                     QApplication::quit();
-                } else {
-                    QMessageBox::warning(
-                        this, tr("Actualizar Finily"),
-                        tr("No se pudo iniciar el instalador descargado en:\n%1\n"
-                           "Puedes abrirlo manualmente o visitar:\n%2")
-                            .arg(installerPath, info.releaseUrl));
+                } else if (m_toolbar) {
+                    m_toolbar->showToast(tr("Instalador guardado en: %1").arg(installerPath));
                 }
             });
 
@@ -745,8 +712,8 @@ void MainWindow::launchNewDocument(const NewDocumentSpec& spec) {
                            "el espacio libre y los permisos de la carpeta.");
     if (m_stack && m_stack->currentWidget() == m_homeScreen && m_homeScreen)
         m_homeScreen->showErrorToast(err);
-    else
-        QMessageBox::warning(this, tr("Crear documento"), err);
+    else if (m_toolbar)
+        m_toolbar->showToast(err);
 }
 
 void MainWindow::updateOpenTabsForPathMapping(
@@ -896,21 +863,8 @@ void MainWindow::startUpdateInstall() {
         const bool onHome = (m_stack && m_stack->currentWidget() == m_homeScreen);
         if (onHome && m_homeScreen) {
             m_homeScreen->setUpdateDownloadProgress(0);
-        } else {
-            closeProgressDialog(m_updateProgress);
-            m_updateProgress = new QProgressDialog(
-                tr("Descargando Finily v%1…").arg(m_availableUpdate.version),
-                tr("Cancelar"), 0, 100, this);
-            m_updateProgress->setWindowTitle(tr("Actualizar Finily"));
-            m_updateProgress->setWindowModality(Qt::WindowModal);
-            m_updateProgress->setAutoClose(false);
-            m_updateProgress->setAutoReset(false);
-            m_updateProgress->setValue(0);
-            connect(m_updateProgress, &QProgressDialog::canceled, this, [this] {
-                if (m_updater)
-                    m_updater->cancelDownload();
-            });
-            m_updateProgress->show();
+        } else if (m_toolbar) {
+            m_toolbar->showToast(tr("Descargando Finily v%1…").arg(m_availableUpdate.version));
         }
         m_updater->downloadUpdate(m_availableUpdate);
         return;
@@ -940,6 +894,48 @@ MainWindow::~MainWindow() {
 
 void MainWindow::applyStartupPreference() {
 #ifdef FINILY_DEV_SNAPSHOTS
+    const QString edScene = qEnvironmentVariable("FINILY_SNAPSHOT_EDITOR");
+    if (!edScene.isEmpty()) {
+        const ThemeId th = qEnvironmentVariableIntValue("FINILY_SNAPSHOT_DARK") == 1
+            ? ThemeId::DarkBoard
+            : ThemeId::PaperLight;
+        const bool isPageDoc = (edScene == QLatin1String("paper")
+                                || edScene == QLatin1String("pages")
+                                || edScene == QLatin1String("elements"));
+        NewDocumentSpec spec;
+        spec.kind = isPageDoc ? DocumentKind::Notebook : DocumentKind::Board;
+        spec.title = QStringLiteral("Clase de Física");
+        spec.theme = th;
+        spec.tpl = BackgroundTemplate::Grid;
+        spec.format = isPageDoc ? PageFormat::A4 : PageFormat::Infinite;
+        spec.ephemeralIfEmpty = true;
+        launchNewDocument(spec);
+        if (edScene == QLatin1String("top") || edScene == QLatin1String("left")
+            || edScene == QLatin1String("float")) {
+            NotebookSession tab2;
+            tab2.id = freshId();
+            tab2.pages = {PageData{}};
+            tab2.themeId = th;
+            tab2.tpl = BackgroundTemplate::Blank;
+            tab2.pageFormat = PageFormat::A4;
+            tab2.ephemeralIfEmpty = true;
+            tab2.pendingTitle = QStringLiteral("Guía de Problemas");
+            m_tabs.append(std::move(tab2));
+            m_lastTabBarSig.clear();
+            syncTabBarUi();
+        } else if (edScene == QLatin1String("capsule") && m_canvas) {
+            m_canvas->createTableShape(3, 3);
+            m_canvas->setTool(ToolType::Select);
+        }
+        showEditorPage();
+        QTimer::singleShot(150, this, [this, edScene] {
+            if (m_toolbar) {
+                m_toolbar->refreshFromCanvas();
+                m_toolbar->applySnapshotScene(edScene);
+            }
+        });
+        return;
+    }
     if (!qEnvironmentVariableIsEmpty("FINILY_SNAPSHOT")
         || !qEnvironmentVariableIsEmpty("FINILY_SNAPSHOT_SHEET")
         || !qEnvironmentVariableIsEmpty("FINILY_SNAPSHOT_FOLDER")) {
@@ -974,7 +970,8 @@ void MainWindow::openInitialFile(const QString& path) {
     const QString suffix = info.suffix().toLower();
     if (suffix == QLatin1String("pdf")) {
         if (!m_canvas->importPdfFile(info.absoluteFilePath(), true)) {
-            QMessageBox::warning(this, tr("Importar PDF"), tr("No se pudo importar el PDF."));
+            if (m_homeScreen)
+                m_homeScreen->showErrorToast(tr("No se pudo importar el PDF."));
             return;
         }
         syncActiveTabFromCanvas();
@@ -984,7 +981,8 @@ void MainWindow::openInitialFile(const QString& path) {
         m_canvas->setFocus();
     } else if (suffix == QLatin1String("finily")) {
         if (!openNotebookInTab(info.absoluteFilePath())) {
-            QMessageBox::warning(this, tr("Abrir cuaderno"), tr("No se pudo abrir el cuaderno."));
+            if (m_homeScreen)
+                m_homeScreen->showErrorToast(tr("No se pudo abrir el cuaderno."));
             return;
         }
     }
@@ -1097,29 +1095,87 @@ void MainWindow::onWacomPadReadable() {
         if ((!isActiveWindow() && !(m_canvas && m_canvas->hasFocus())) || !m_canvas || !m_toolbar)
             continue;
 
-        // 4 botones físicos del Pad Wacom Intuos BT S (izquierda -> derecha):
-        // 0: Deshacer | 1: Rehacer | 2: Lazo (Seleccionar) | 3: Polilínea (Figuras continuas)
-        switch (ev.number) {
-            case 0:
-                m_canvas->undo();
-                m_toolbar->refreshFromCanvas();
-                break;
-            case 1:
-                m_canvas->redo();
-                m_toolbar->refreshFromCanvas();
-                break;
-            case 2:
-                m_toolbar->selectTool(ToolType::Lasso);
-                break;
-            case 3:
-                m_toolbar->selectTool(ToolType::Polyline);
-                break;
-            default:
-                break;
-        }
+        if (ev.number < m_padActions.size())
+            executeTabletAction(m_padActions[ev.number]);
     }
 }
 #endif
+
+void MainWindow::reloadPadActions() {
+    constexpr TabletAction defaults[4] = {
+        TabletAction::Undo,
+        TabletAction::Redo,
+        TabletAction::Lasso,
+        TabletAction::RadialMenu,
+    };
+    for (int i = 0; i < 4; ++i) {
+        const int raw = readAppSetting(QStringLiteral("tablet/padButton%1").arg(i), int(defaults[i])).toInt();
+        m_padActions[i] = TabletAction(raw);
+    }
+}
+
+void MainWindow::executeTabletAction(TabletAction action, const QPointF& screenPos) {
+    if (!m_canvas || !m_toolbar)
+        return;
+    switch (action) {
+    case TabletAction::None:
+        return;
+    case TabletAction::Undo:
+        m_canvas->undo();
+        m_toolbar->refreshFromCanvas();
+        return;
+    case TabletAction::Redo:
+        m_canvas->redo();
+        m_toolbar->refreshFromCanvas();
+        return;
+    case TabletAction::Pen:
+        m_toolbar->selectTool(ToolType::Pen);
+        return;
+    case TabletAction::Highlighter:
+        m_toolbar->selectTool(ToolType::Highlighter);
+        return;
+    case TabletAction::Eraser:
+    case TabletAction::HoldEraser:
+        m_toolbar->selectTool(ToolType::Eraser);
+        return;
+    case TabletAction::LastWriteTool:
+        m_toolbar->selectTool(ToolType::Pen);
+        return;
+    case TabletAction::RightClickMenu:
+    case TabletAction::RadialMenu:
+        m_toolbar->openRadialColorPicker(screenPos);
+        return;
+    case TabletAction::Lasso:
+        m_toolbar->selectTool(ToolType::Lasso);
+        return;
+    case TabletAction::Select:
+        m_toolbar->selectTool(ToolType::Select);
+        return;
+    case TabletAction::Shapes:
+        m_toolbar->selectTool(ToolType::Shape);
+        return;
+    case TabletAction::Polyline:
+        m_toolbar->selectTool(ToolType::Polyline);
+        return;
+    case TabletAction::Hand:
+        m_toolbar->selectTool(ToolType::Hand);
+        return;
+    case TabletAction::Laser:
+        m_toolbar->selectTool(ToolType::Laser);
+        return;
+    case TabletAction::ToggleCleanUi:
+        m_toolbar->toggleCleanUi();
+        return;
+    case TabletAction::NextPage:
+        m_canvas->nextPage();
+        m_toolbar->refreshFromCanvas();
+        return;
+    case TabletAction::PrevPage:
+        m_canvas->prevPage();
+        m_toolbar->refreshFromCanvas();
+        return;
+    }
+}
 
 void MainWindow::layoutChildren() {
     if (!m_container)
@@ -1214,11 +1270,18 @@ void MainWindow::installShortcuts() {
     addShortcut(QKeySequence("K"), [this] { m_toolbar->selectTool(ToolType::Laser); });
     addShortcut(QKeySequence("E"), [this] { m_toolbar->selectTool(ToolType::Eraser); });
     addShortcut(QKeySequence("F"), [this] { m_toolbar->selectTool(ToolType::Fill); });
+    addShortcut(QKeySequence("G"), [this] { m_toolbar->selectTool(ToolType::Fill); });
     addShortcut(QKeySequence("U"), [this] { m_toolbar->selectTool(ToolType::Select); });
+    addShortcut(QKeySequence("V"), [this] { m_toolbar->selectTool(ToolType::Select); });
 
-    // Figuras y polilínea
+    // Figuras, polilínea y renombrar pestaña
     addShortcut(QKeySequence("S"), [this] { m_toolbar->selectTool(ToolType::Shape); });
-    addShortcut(QKeySequence("L"), [this] { m_toolbar->selectTool(ToolType::Polyline); });
+    addShortcut(QKeySequence("L"), [this] { m_toolbar->selectTool(ToolType::Lasso); });
+    addShortcut(QKeySequence("Shift+L"), [this] { m_toolbar->selectTool(ToolType::Polyline); });
+    addShortcut(QKeySequence("F2"), [this] {
+        if (m_toolbar)
+            m_toolbar->startInlineRenameActiveTab();
+    });
     addShortcut(QKeySequence("R"), [this] {
         m_canvas->setShapeKind(ShapeKind::Radical);
         m_toolbar->selectTool(ToolType::Shape);
@@ -1331,50 +1394,6 @@ void MainWindow::installShortcuts() {
     addShortcut(QKeySequence("Backspace"), deleteSelection);
 }
 
-bool MainWindow::configureAiApiDialog() {
-    QDialog dlg(this);
-    dlg.setWindowTitle(tr("Configurar IA de extracción (Gemini)"));
-    dlg.setMinimumWidth(440);
-    auto* form = new QFormLayout(&dlg);
-
-    auto* info = new QLabel(
-        tr("Introduce tu clave API personal de Google Gemini (gratis en "
-           "<a href=\"https://aistudio.google.com/apikey\">aistudio.google.com/apikey</a>).<br>"
-           "Tu clave se guarda únicamente de forma local en este equipo."),
-        &dlg);
-    info->setWordWrap(true);
-    info->setOpenExternalLinks(true);
-    form->addRow(info);
-
-    auto* keyEdit = new QLineEdit(VisionExtractor::apiKey(), &dlg);
-    keyEdit->setEchoMode(QLineEdit::PasswordEchoOnEdit);
-    keyEdit->setPlaceholderText(QStringLiteral("AIza..."));
-    form->addRow(tr("Clave API:"), keyEdit);
-
-    auto* modelBox = new QComboBox(&dlg);
-    modelBox->setEditable(true);
-    modelBox->addItems(VisionExtractor::supportedModels());
-    modelBox->setCurrentText(VisionExtractor::model());
-    form->addRow(tr("Modelo:"), modelBox);
-
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    buttons->button(QDialogButtonBox::Ok)->setText(tr("Guardar"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(tr("Cancelar"));
-    form->addRow(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-
-    if (dlg.exec() != QDialog::Accepted)
-        return false;
-
-    const QString key = keyEdit->text().trimmed();
-    VisionExtractor::setApiKey(key);
-    VisionExtractor::setModel(modelBox->currentText().trimmed());
-    if (m_toolbar)
-        m_toolbar->showToast(key.isEmpty() ? tr("Clave API eliminada") : tr("IA configurada ✓"));
-    return !key.isEmpty();
-}
-
 void MainWindow::vectorizeSelectedImage() {
     if (!m_canvas)
         return;
@@ -1413,8 +1432,11 @@ void MainWindow::startImageExtraction() {
         return;
     }
     if (VisionExtractor::apiKey().isEmpty()) {
-        if (!configureAiApiDialog())
-            return;
+        if (m_toolbar) {
+            m_toolbar->openSettingsModal(QStringLiteral("ia"));
+            m_toolbar->showToast(tr("Configura tu clave API en Ajustes › IA"));
+        }
+        return;
     }
     if (m_tabs.isEmpty())
         syncActiveTabFromCanvas();
@@ -1423,20 +1445,8 @@ void MainWindow::startImageExtraction() {
     m_visionTargetPageIndex = m_canvas->currentPageIndex();
 
     const QRectF targetRect = img->rect.translated(img->rect.width() + 28.0, 0.0);
-    closeProgressDialog(m_visionProgress);
-    m_visionProgress = new QProgressDialog(
-        tr("Analizando imagen con %1…").arg(VisionExtractor::model()), tr("Cancelar"), 0, 0, this);
-    m_visionProgress->setWindowTitle(tr("Extraer figuras y texto (IA)"));
-    m_visionProgress->setWindowModality(Qt::NonModal);
-    m_visionProgress->setMinimumDuration(0);
-    connect(m_visionProgress, &QProgressDialog::canceled, this, [this] {
-        closeProgressDialog(m_visionProgress);
-        m_visionTargetTabId.clear();
-        m_visionTargetPageIndex = -1;
-        if (m_visionExtractor)
-            m_visionExtractor->cancel();
-    });
-    m_visionProgress->show();
+    if (m_toolbar)
+        m_toolbar->showToast(tr("Analizando imagen con %1…").arg(VisionExtractor::model()));
     m_visionExtractor->extractFromImage(img->image, targetRect, m_canvas->inkColor(),
                                         m_canvas->strokeSize());
 }
@@ -1491,13 +1501,98 @@ void MainWindow::syncTabBarUi() {
             ? QFileInfo(s.filePath).completeBaseName()
             : (!s.pendingTitle.isEmpty() ? s.pendingTitle : tr("Sin título"));
         const bool dirty = (i == m_activeTab) ? m_canvas->hasUnsavedChanges() : s.dirty;
-        entries.append({title, dirty, i == m_activeTab});
-        sig += QStringLiteral("|%1:%2").arg(title).arg(dirty ? 1 : 0);
+        const PageFormat fmt = (i == m_activeTab) ? m_canvas->pageFormat() : s.pageFormat;
+        const bool isBoard = (fmt == PageFormat::Infinite);
+        const bool isPdf = (i == m_activeTab)
+            ? (m_canvas->documentPdfPageCount() > 0)
+            : std::any_of(s.pages.cbegin(), s.pages.cend(), [](const PageData& page) {
+                  return std::any_of(page.images.cbegin(), page.images.cend(),
+                                     [](const ImageItem& img) { return img.isPdfPage; });
+              });
+        entries.append({title, dirty, i == m_activeTab, isBoard, isPdf});
+        sig += QStringLiteral("|%1:%2:%3:%4")
+                   .arg(title)
+                   .arg(dirty ? 1 : 0)
+                   .arg(isBoard ? 1 : 0)
+                   .arg(isPdf ? 1 : 0);
     }
     if (sig != m_lastTabBarSig) {
         m_lastTabBarSig = sig;
         m_toolbar->setNotebookTabs(entries);
     }
+}
+
+void MainWindow::duplicateTab(int index) {
+    if (!m_canvas || index < 0 || index >= m_tabs.size())
+        return;
+    materializeEphemeralTabIfNeeded();
+    syncActiveTabFromCanvas();
+    const NotebookSession src = m_tabs.at(index);
+    if (!src.filePath.isEmpty() && QFileInfo::exists(src.filePath)) {
+        if (index == m_activeTab && m_canvas->hasUnsavedChanges())
+            m_canvas->saveToFile(src.filePath);
+        QString dupPath;
+        QString err;
+        if (LibraryStore::duplicateNotebook(src.filePath, &dupPath, &err) && !dupPath.isEmpty()) {
+            openNotebookInTab(dupPath, true);
+            if (m_toolbar)
+                m_toolbar->showToast(tr("Pestaña duplicada ✓"));
+            return;
+        }
+        if (m_toolbar && !err.isEmpty())
+            m_toolbar->showToast(err);
+        return;
+    }
+    NotebookSession copy = src;
+    copy.id = freshId();
+    copy.filePath.clear();
+    const QString baseTitle = !src.pendingTitle.isEmpty() ? src.pendingTitle : tr("Sin título");
+    copy.pendingTitle = baseTitle + tr(" (copia)");
+    copy.dirty = true;
+    copy.ephemeralIfEmpty = false;
+    m_tabs.append(std::move(copy));
+    switchToTab(int(m_tabs.size()) - 1);
+    if (m_toolbar)
+        m_toolbar->showToast(tr("Pestaña duplicada ✓"));
+}
+
+void MainWindow::revealTabInLibrary(int index) {
+    if (!m_canvas || !m_homeScreen || index < 0 || index >= m_tabs.size())
+        return;
+    materializeEphemeralTabIfNeeded();
+    if (index == m_activeTab && !m_canvas->currentFilePath().isEmpty() && m_canvas->hasUnsavedChanges())
+        m_canvas->saveToFile(m_canvas->currentFilePath());
+    const QString path = (index == m_activeTab) ? m_canvas->currentFilePath() : m_tabs.at(index).filePath;
+    if (path.isEmpty()) {
+        if (m_toolbar)
+            m_toolbar->showToast(tr("Guarda primero el documento para verlo en la biblioteca"));
+        return;
+    }
+    m_homeScreen->revealNotebookPath(path);
+    showHomePage();
+}
+
+void MainWindow::exportCurrentPageImage() {
+    if (!m_canvas || !m_toolbar)
+        return;
+    QString baseName = QFileInfo(m_canvas->currentFilePath()).completeBaseName();
+    if (baseName.isEmpty() && !m_tabs.isEmpty())
+        baseName = m_tabs.at(std::clamp(m_activeTab, 0, int(m_tabs.size()) - 1)).pendingTitle;
+    if (baseName.isEmpty())
+        baseName = tr("Finily");
+    const QString docsDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString suggested = QDir(docsDir.isEmpty() ? QDir::homePath() : docsDir)
+                                  .filePath(QStringLiteral("%1-pag-%2.png")
+                                                .arg(baseName)
+                                                .arg(m_canvas->currentPageIndex() + 1));
+    const QString outPath = QFileDialog::getSaveFileName(
+        this, tr("Exportar página como PNG"), suggested, tr("Imagen PNG (*.png)"));
+    if (outPath.isEmpty())
+        return;
+    if (m_canvas->exportCurrentPageToPng(outPath))
+        m_toolbar->showToast(tr("Página exportada como PNG ✓"));
+    else
+        m_toolbar->showToast(tr("No se pudo exportar la imagen PNG"));
 }
 
 void MainWindow::switchToTab(int index) {

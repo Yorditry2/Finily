@@ -5,11 +5,10 @@
 #include "engine/VisionExtractor.h"
 
 #include <QMainWindow>
-#include <QPointer>
 
+#include <array>
 #include <functional>
 
-class QProgressDialog;
 class QShortcut;
 #ifdef Q_OS_LINUX
 class QSocketNotifier;
@@ -61,6 +60,8 @@ private:
     void closeOpenTabsMatching(const std::function<bool(const QString&)>& predicate);
 
     void installShortcuts();
+    void reloadPadActions();
+    void executeTabletAction(TabletAction action, const QPointF& screenPos = {});
 #ifdef Q_OS_LINUX
     void setupWacomPadListener();
     void onWacomPadReadable();
@@ -70,13 +71,15 @@ private:
     void showEditorPage();
     void showHomePage();
     void startUpdateInstall();
-    bool configureAiApiDialog();
     void vectorizeSelectedImage();
     void startImageExtraction();
     void syncActiveTabFromCanvas();
     void syncTabBarUi();
     void switchToTab(int index);
     void openNewBlankTab();
+    void duplicateTab(int index);
+    void revealTabInLibrary(int index);
+    void exportCurrentPageImage();
     void closeTab(int index);
     bool openNotebookInTab(const QString& path, bool forceNewTab = false);
     void applyStartupPreference();
@@ -92,15 +95,15 @@ private:
     bool m_materializingEphemeral = false;
     UpdateManager* m_updater = nullptr;
     VisionExtractor* m_visionExtractor = nullptr;
-    QPointer<QProgressDialog> m_visionProgress;
     QString m_visionTargetTabId;
     int m_visionTargetPageIndex = -1;
     UpdateInfo m_availableUpdate;
     QString m_pendingInstallerPath;
-    QPointer<QProgressDialog> m_updateProgress;
     QVector<QShortcut*> m_presetShortcuts;
     QShortcut* m_pagePrevAltShortcut = nullptr;
     QShortcut* m_pageNextAltShortcut = nullptr;
+    std::array<TabletAction, 4> m_padActions{
+        TabletAction::Undo, TabletAction::Redo, TabletAction::Lasso, TabletAction::RadialMenu};
 #ifdef Q_OS_LINUX
     int m_padFd = -1;
     QSocketNotifier* m_padNotifier = nullptr;

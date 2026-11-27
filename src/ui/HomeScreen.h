@@ -53,6 +53,7 @@ public:
     ~HomeScreen() override;
 
     void refreshLibrary();
+    void revealNotebookPath(const QString& filePath);
     void startPdfImport(const QString& pdfPath, const QString& folderRelativePath);
     void showErrorToast(const QString& text);
     void showInfoToast(const QString& text, const QString& icon = QStringLiteral("check"));
