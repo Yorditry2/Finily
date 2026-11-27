@@ -9,6 +9,7 @@
 #include <QColor>
 #include <QDir>
 #include <QPointF>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QString>
 #include <QTemporaryDir>
@@ -27,19 +28,23 @@ public:
         , m_hadDataHome(qEnvironmentVariableIsSet("XDG_DATA_HOME"))
         , m_prevDataHome(qgetenv("XDG_DATA_HOME"))
         , m_hadConfigHome(qEnvironmentVariableIsSet("XDG_CONFIG_HOME"))
-        , m_prevConfigHome(qgetenv("XDG_CONFIG_HOME")) {
+        , m_prevConfigHome(qgetenv("XDG_CONFIG_HOME"))
+        , m_prevSettingsFormat(QSettings::defaultFormat()) {
         QStandardPaths::setTestModeEnabled(true);
         if (m_dir.isValid()) {
             const QString dataDir = m_dir.filePath(QStringLiteral("data"));
             const QString cfgDir = m_dir.filePath(QStringLiteral("config"));
             QDir().mkpath(dataDir);
             QDir().mkpath(cfgDir);
+            QSettings::setDefaultFormat(QSettings::IniFormat);
+            QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, cfgDir);
             qputenv("XDG_DATA_HOME", dataDir.toUtf8());
             qputenv("XDG_CONFIG_HOME", cfgDir.toUtf8());
         }
     }
 
     ~ScopedTestPaths() {
+        QSettings::setDefaultFormat(m_prevSettingsFormat);
         QStandardPaths::setTestModeEnabled(m_prevTestMode);
         if (m_hadDataHome) {
             qputenv("XDG_DATA_HOME", m_prevDataHome);
@@ -67,6 +72,7 @@ private:
     QByteArray m_prevDataHome;
     bool m_hadConfigHome = false;
     QByteArray m_prevConfigHome;
+    QSettings::Format m_prevSettingsFormat = QSettings::NativeFormat;
 };
 
 inline Stroke makeLineStroke(QPointF from, QPointF to, int steps = 8, double size = 2.5,

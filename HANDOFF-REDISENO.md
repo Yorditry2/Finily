@@ -19,8 +19,9 @@ Lee primero `AGENTS.md` y `DESIGN.md`. Los mockups aprobados están en `mockups/
 - Al terminar: fusionar `redesign/home` en `main`.
 
 ## Cómo verificar sin abrir ventanas
-Ganchos solo de desarrollo (en `src/main.cpp` y `src/ui/HomeScreen.cpp`):
+Los ganchos de desarrollo `FINILY_SNAPSHOT*` (en `src/main.cpp`, `src/ui/MainWindow.cpp` y `src/ui/HomeScreen.cpp`) están **desactivados por defecto** (`FINILY_DEV_SNAPSHOTS=OFF`). Para usarlos, configura CMake con `-DFINILY_DEV_SNAPSHOTS=ON`:
 ```bash
+cmake -B build -G Ninja -DFINILY_DEV_SNAPSHOTS=ON && cmake --build build
 XDG_CONFIG_HOME=<cfg> FINILY_LIBRARY_DIR=<biblioteca> QT_QPA_PLATFORM=offscreen \
 FINILY_SNAPSHOT_FOLDER=Apuntes FINILY_SNAPSHOT_SHEET=<hoja> FINILY_SNAPSHOT=salida.png build/finily
 ```

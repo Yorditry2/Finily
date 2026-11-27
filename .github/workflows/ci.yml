@@ -23,4 +23,65 @@ jobs:
         run: cmake --build build
 
       - name: Run unit tests
-        run: ctest --test-dir build --output-on-failure
+        run: QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
+
+  windows-build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 UCRT64
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qt6-pdf
+
+      - name: Configure and build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ucrt = "${{ steps.msys2.outputs.msys2-location }}\ucrt64"
+          $env:PATH = "$ucrt\bin;$env:PATH"
+          cmake -S . -B build-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DFINILY_BUILD_TESTS=ON "-DCMAKE_PREFIX_PATH=$ucrt" "-DCMAKE_CXX_COMPILER=$ucrt/bin/g++.exe" "-DCMAKE_MAKE_PROGRAM=$ucrt/bin/ninja.exe"
+          cmake --build build-windows
+
+      - name: Run unit tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ucrt = "${{ steps.msys2.outputs.msys2-location }}\ucrt64"
+          $env:PATH = "$ucrt\bin;$env:PATH"
+          $env:QT_PLUGIN_PATH = "$ucrt\share\qt6\plugins"
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          ctest --test-dir build-windows --output-on-failure
+
+      - name: Verify Windows runtime staging
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ucrt = "${{ steps.msys2.outputs.msys2-location }}\ucrt64"
+          $env:PATH = "$ucrt\bin;$env:PATH"
+          cmake --install build-windows --prefix build-windows/stage
+          windeployqt --release --no-translations --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler build-windows/stage/finily.exe
+          cmake "-DSTAGE=build-windows/stage" "-DUCRT=$ucrt" "-DOBJDUMP=$ucrt/bin/objdump.exe" -P windows/Stage-Runtime.cmake
+          foreach ($required in @(
+            'build-windows/stage/finily.exe',
+            'build-windows/stage/Qt6Svg.dll',
+            'build-windows/stage/platforms/qwindows.dll',
+            'build-windows/stage/Licencias/Inter-OFL.txt'
+          )) {
+            if (-not (Test-Path -PathType Leaf $required)) {
+              throw "Missing staged runtime file: $required"
+            }
+          }

@@ -2,7 +2,9 @@
 
 #include <QApplication>
 #include <QFontDatabase>
+#ifdef FINILY_DEV_SNAPSHOTS
 #include <QTimer>
+#endif
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QFont>
@@ -53,6 +55,7 @@ int main(int argc, char* argv[]) {
             window.openInitialFile(path);
     }
 
+#ifdef FINILY_DEV_SNAPSHOTS
     // Solo desarrollo: FINILY_SNAPSHOT=archivo.png guarda una captura de la
     // ventana (sirve también con QT_QPA_PLATFORM=offscreen) y sale.
     const QString snapshotPath = qEnvironmentVariable("FINILY_SNAPSHOT");
@@ -63,6 +66,7 @@ int main(int argc, char* argv[]) {
             QApplication::quit();
         });
     }
+#endif
 
     return QApplication::exec();
 }

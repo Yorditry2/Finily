@@ -24,10 +24,15 @@ QString trashRoot(const QString& root) { return QDir(root).filePath(kTrashDir); 
 
 // Raíz de biblioteca que contiene la ruta (o vacío si está fuera de la biblioteca).
 QString owningRoot(const QString& absPath) {
+#ifdef Q_OS_WIN
+    constexpr Qt::CaseSensitivity kPathCase = Qt::CaseInsensitive;
+#else
+    constexpr Qt::CaseSensitivity kPathCase = Qt::CaseSensitive;
+#endif
     const QString clean = QDir::cleanPath(QFileInfo(absPath).absoluteFilePath());
     for (const QString& root : LibraryStore::libraryDirectories()) {
         const QString r = QDir::cleanPath(QFileInfo(root).absoluteFilePath());
-        if (clean.startsWith(r + QLatin1Char('/')))
+        if (clean.startsWith(r + QLatin1Char('/'), kPathCase))
             return r;
     }
     return {};
@@ -67,7 +72,8 @@ TrashEntry readEntry(const QString& root, const QString& idDir) {
         return e;
     const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
     const QString item = o.value(QStringLiteral("item")).toString();
-    if (item.isEmpty() || item.contains(QLatin1Char('/')))
+    if (item.isEmpty() || item == QLatin1String(".") || item == QLatin1String("..")
+        || item.contains(QLatin1Char('/')) || item.contains(QLatin1Char('\\')))
         return e;
     const QString path = QDir(idDir).filePath(item);
     if (!QFileInfo::exists(path))
@@ -85,7 +91,8 @@ TrashEntry readEntry(const QString& root, const QString& idDir) {
 }
 
 bool findEntry(const QString& id, TrashEntry* out) {
-    if (id.isEmpty() || id.contains(QLatin1Char('/')) || id.startsWith(QLatin1Char('.')))
+    if (id.isEmpty() || id.contains(QLatin1Char('/')) || id.contains(QLatin1Char('\\'))
+        || id.startsWith(QLatin1Char('.')))
         return false;
     for (const QString& root : LibraryStore::libraryDirectories()) {
         const QString dir = QDir(trashRoot(root)).filePath(id);

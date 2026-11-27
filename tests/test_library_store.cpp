@@ -29,10 +29,15 @@ public:
     explicit ScopedLibraryDirEnv(const QString& dir)
         : m_hadPrev(qEnvironmentVariableIsSet("FINILY_LIBRARY_DIR"))
         , m_prev(qgetenv("FINILY_LIBRARY_DIR")) {
-        if (dir.isEmpty())
+        if (dir.isEmpty()) {
             qunsetenv("FINILY_LIBRARY_DIR");
-        else
+        } else {
+#ifdef Q_OS_WIN
+            qputenv("FINILY_LIBRARY_DIR", dir.toLocal8Bit());
+#else
             qputenv("FINILY_LIBRARY_DIR", dir.toUtf8());
+#endif
+        }
     }
 
     ~ScopedLibraryDirEnv() {
@@ -350,7 +355,7 @@ private slots:
         ScopedTestPaths paths;
         QTemporaryDir lib;
         QVERIFY(lib.isValid());
-        qputenv("FINILY_LIBRARY_DIR", lib.path().toUtf8());
+        ScopedLibraryDirEnv env(lib.path());
         const QString root = LibraryStore::libraryDirectories().first();
         QCOMPARE(root, lib.path());
 
@@ -384,6 +389,7 @@ private slots:
         QCOMPARE(LibraryStore::listTrash().size(), 1);
 
         QVERIFY(!LibraryStore::restoreFromTrash(QStringLiteral("../x")));
+        QVERIFY(!LibraryStore::restoreFromTrash(QStringLiteral("..\\x")));
         QCOMPARE(LibraryStore::purgeExpiredTrash(30), 0);
         QCOMPARE(LibraryStore::purgeExpiredTrash(), 0);
 
@@ -409,7 +415,6 @@ private slots:
         LibraryStore::setTrashRetentionDays(30);
         QCOMPARE(LibraryStore::purgeExpiredTrash(), 1);
         QVERIFY(LibraryStore::listTrash().isEmpty());
-        qunsetenv("FINILY_LIBRARY_DIR");
     }
 
     void a5AndLetterPageFormatsRoundTrip() {

@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 option(FINILY_BUILD_TESTS "Build automated unit tests" ON)
+option(FINILY_DEV_SNAPSHOTS "Enable developer FINILY_SNAPSHOT* capture hooks" OFF)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Widgets Pdf Svg)
 
@@ -148,6 +149,9 @@ qt_add_resources(finily "finily_icons"
 )
 
 target_compile_definitions(finily PRIVATE FINILY_VERSION="${PROJECT_VERSION}")
+if(FINILY_DEV_SNAPSHOTS)
+    target_compile_definitions(finily PRIVATE FINILY_DEV_SNAPSHOTS=1)
+endif()
 target_link_libraries(finily PRIVATE finily_engine Qt6::Widgets)
 
 if(WIN32)

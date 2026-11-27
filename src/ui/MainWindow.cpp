@@ -939,11 +939,13 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::applyStartupPreference() {
+#ifdef FINILY_DEV_SNAPSHOTS
     if (!qEnvironmentVariableIsEmpty("FINILY_SNAPSHOT")
         || !qEnvironmentVariableIsEmpty("FINILY_SNAPSHOT_SHEET")
         || !qEnvironmentVariableIsEmpty("FINILY_SNAPSHOT_FOLDER")) {
         return;
     }
+#endif
     const QStringList args = QApplication::arguments();
     if (args.size() > 1 && QFileInfo::exists(args.value(1)))
         return;

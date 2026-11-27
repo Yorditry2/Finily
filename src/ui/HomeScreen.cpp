@@ -36,6 +36,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPalette>
 #include <QParallelAnimationGroup>
 #include <QPauseAnimation>
 #include <QPointer>
@@ -114,6 +115,15 @@ QStringList droppedLocalFiles(const QMimeData* mime) {
     return out;
 }
 
+bool systemPrefersDark() {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    return QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
+#else
+    const QPalette pal = QGuiApplication::palette();
+    return pal.color(QPalette::Window).lightness() < pal.color(QPalette::WindowText).lightness();
+#endif
+}
+
 } // namespace
 
 HomeScreen::HomeScreen(QWidget* parent)
@@ -129,13 +139,15 @@ HomeScreen::HomeScreen(QWidget* parent)
     {
         const int mode = SettingsView::themeMode();
         m_dark = mode == SettingsView::System
-                     ? QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark
+                     ? systemPrefersDark()
                      : mode == SettingsView::Dark;
     }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, [this] {
         if (SettingsView::themeMode() == SettingsView::System)
             applyThemeMode(SettingsView::System);
     });
+#endif
     // La papelera conserva N días configurados en Ajustes; lo vencido se borra al abrir.
     LibraryStore::purgeExpiredTrash();
 
@@ -145,6 +157,7 @@ HomeScreen::HomeScreen(QWidget* parent)
     applyTheme();
     refreshLibrary();
 
+#ifdef FINILY_DEV_SNAPSHOTS
     // Solo desarrollo: con FINILY_SNAPSHOT, FINILY_SNAPSHOT_FOLDER abre esa carpeta.
     const QString snapFolder = qEnvironmentVariable("FINILY_SNAPSHOT_FOLDER");
     if (!snapFolder.isEmpty())
@@ -225,6 +238,7 @@ HomeScreen::HomeScreen(QWidget* parent)
             }
         });
     }
+#endif
 }
 
 HomeScreen::~HomeScreen() {
@@ -668,7 +682,7 @@ void HomeScreen::setDarkMode(bool dark, bool animated) {
 
 void HomeScreen::applyThemeMode(int mode) {
     const bool dark = mode == SettingsView::System
-                          ? QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark
+                          ? systemPrefersDark()
                           : mode == SettingsView::Dark;
     setDarkMode(dark, true);
 }
