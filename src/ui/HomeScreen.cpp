@@ -44,6 +44,11 @@ HomeScreen::HomeScreen(QWidget* parent)
     buildOverlays();
     applyTheme();
     refreshLibrary();
+
+    // Solo desarrollo: con FINILY_SNAPSHOT, FINILY_SNAPSHOT_FOLDER abre esa carpeta.
+    const QString snapFolder = qEnvironmentVariable("FINILY_SNAPSHOT_FOLDER");
+    if (!snapFolder.isEmpty())
+        QTimer::singleShot(300, this, [this, snapFolder] { openFolder(snapFolder); });
 }
 
 void HomeScreen::buildLayout() {
@@ -388,13 +393,17 @@ void HomeScreen::updateHeaderAndEmptyState() {
 void HomeScreen::relayoutGrid() {
     if (!m_gridContent || !m_scroll)
         return;
-    constexpr int spacingX = 18;
-    constexpr int spacingY = 20;
-    constexpr int top = 8;
+    // Rejilla del mockup: columnas iguales, objetos centrados en su columna.
+    constexpr int cardW = ObjectCard::kCardWidth;
+    constexpr int cardH = ObjectCard::kCardHeight;
+    constexpr int minGap = 12;
+    constexpr int rowGap = 18;
+    constexpr int top = 18;
 
-    const int contentWidth = m_scroll->viewport()->width();
-    const int columns =
-        std::max(1, (contentWidth + spacingX) / (NotebookCard::kCardWidth + spacingX));
+    const int contentWidth = m_scroll->viewport()->width() - 14;
+    const int columns = std::max(1, (contentWidth + minGap) / (cardW + minGap));
+    const qreal colWidth = qreal(std::max(contentWidth, cardW)) / columns;
+
     QList<QWidget*> items;
     for (FolderCard* fc : m_folderCards) {
         if (fc && !fc->isHidden())
@@ -409,15 +418,13 @@ void HomeScreen::relayoutGrid() {
     for (QWidget* w : items) {
         const int row = index / columns;
         const int col = index % columns;
-        w->setGeometry(col * (NotebookCard::kCardWidth + spacingX),
-                       top + row * (NotebookCard::kCardHeight + spacingY),
-                       NotebookCard::kCardWidth, NotebookCard::kCardHeight);
+        w->setGeometry(int(col * colWidth + (colWidth - cardW) / 2.0), top + row * (cardH + rowGap), cardW, cardH);
         w->show();
         ++index;
     }
 
     const int rows = std::max(1, (index + columns - 1) / columns);
-    m_gridContent->setMinimumHeight(top + rows * (NotebookCard::kCardHeight + spacingY) + 24);
+    m_gridContent->setMinimumHeight(top + rows * (cardH + rowGap) + 24);
     if (m_emptyState && !m_emptyState->isHidden())
         m_emptyState->setGeometry(0, 72, std::max(0, contentWidth), 110);
 }

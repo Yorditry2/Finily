@@ -302,9 +302,12 @@ void HomeSidebar::setFolders(const QVector<FolderMeta>& folders) {
         connect(row, &SidebarNavRow::renameRequested, this, &HomeSidebar::renameFolderRequested);
         connect(row, &SidebarNavRow::deleteRequested, this, &HomeSidebar::deleteFolderRequested);
         m_treeLayout->addWidget(row);
+        // Visibles ya: si no, el layout las ignora al medir el alto del árbol.
+        row->show();
         m_folderRows.append(row);
     }
     // El árbol ocupa solo su alto natural; si no cabe, aparece la barra de desplazamiento.
+    m_treeLayout->activate();
     m_treeBox->adjustSize();
     m_treeScroll->setMaximumHeight(m_treeBox->sizeHint().height() + 2);
     setTreeOpen(m_treeOpen);

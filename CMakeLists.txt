@@ -91,6 +91,10 @@ add_executable(finily
     src/ui/home/HomeSidebar.cpp
     src/ui/home/HomeHeader.h
     src/ui/home/HomeHeader.cpp
+    src/ui/home/LibraryObjects.h
+    src/ui/home/LibraryObjects.cpp
+    src/ui/home/ObjectCard.h
+    src/ui/home/ObjectCard.cpp
     src/ui/home/FolderCards.h
     src/ui/home/FolderCards.cpp
     src/ui/home/NotebookCards.h

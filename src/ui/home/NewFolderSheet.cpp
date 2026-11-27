@@ -1,5 +1,7 @@
 #include "ui/home/NewFolderSheet.h"
 
+#include "ui/home/LibraryObjects.h"
+
 #include <QAbstractButton>
 #include <QButtonGroup>
 #include <QLabel>
@@ -29,9 +31,11 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        const QRectF r = QRectF(rect()).adjusted(6.0, 4.0, -6.0, -6.0);
-        paintSoftShadow(painter, r, 12.0, 2.0, m_dark);
-        paintEditorialFolder(painter, r, coverColors().at(m_colorIdx), m_iconIdx, m_dark);
+        // Misma carpeta que en la rejilla, reducida al tamaño del héroe.
+        const qreal s = (width() - 4.0) / 148.0;
+        painter.translate(width() / 2.0, height() - 4.0);
+        painter.scale(s, s);
+        libobj::paintFolder(painter, QPointF(0, 0), m_colorIdx, m_iconIdx, 0.0, m_dark);
     }
 
 private:

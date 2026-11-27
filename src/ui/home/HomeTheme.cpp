@@ -120,18 +120,19 @@ QToolButton#finilyUpdateClose:hover { color: %2; }
 }
 
 const QVector<QColor>& coverColors() {
+    // Tapas de cuaderno (mockup 00); mismo orden que tokens::folderColor().
     static const QVector<QColor> colors = {
-        QColor("#5b67d6"), QColor("#4d8b6f"), QColor("#c96f4b"), QColor("#3d7ea6"),
-        QColor("#8360a8"), QColor("#c26d82"), QColor("#c69c53"), QColor("#343946"),
+        QColor("#E799AE"), QColor("#DDBB9C"), QColor("#8FBCA6"), QColor("#94B6DD"),
+        QColor("#B3A2DC"), QColor("#EDA984"), QColor("#E3D27C"), QColor("#3A3D47"),
     };
     return colors;
 }
 
 const QStringList& coverColorNames() {
     static const QStringList names = {
-        QStringLiteral("Índigo"), QStringLiteral("Salvia"), QStringLiteral("Terracota"),
-        QStringLiteral("Océano"), QStringLiteral("Ciruela"), QStringLiteral("Rosa humo"),
-        QStringLiteral("Arena"), QStringLiteral("Grafito"),
+        QStringLiteral("Rosa"), QStringLiteral("Arena"), QStringLiteral("Salvia"),
+        QStringLiteral("Cielo"), QStringLiteral("Lavanda"), QStringLiteral("Durazno"),
+        QStringLiteral("Limón"), QStringLiteral("Grafito"),
     };
     return names;
 }
