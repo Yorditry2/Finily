@@ -70,19 +70,18 @@ HomePalette homePaletteFor(bool dark) {
 QString homeScreenStylesheet(const HomePalette& pal, bool) {
     return QStringLiteral(R"(
 QLabel { color: %1; background: transparent; }
-QLabel#finilyBrandTitle { color: %2; font-size: 16px; font-weight: 800; }
-QLabel#finilySectionTitle { color: %2; font-size: 24px; font-weight: 800; }
+QLabel#finilyBrandTitle { color: %2; font-size: 14px; font-weight: 700; }
+QLabel#finilySectionTitle { color: %2; font-size: 16px; font-weight: 600; }
 QLabel#finilyCountPill { color: %1; font-size: 12.5px; }
 QLabel#finilyEmpty { color: %1; font-size: 14px; line-height: 1.5; }
 QLabel#finilySidebarGroup { color: %1; font-size: 10.5px; font-weight: 700; letter-spacing: 0.7px; }
 QLineEdit#finilySearch {
-    background: %6; border: 1px solid %5; border-radius: 18px;
-    color: %2; padding: 0px 12px 0px 4px; font-size: 13px;
+    background: transparent; border: none;
+    color: %2; padding: 0px; font-size: 13.5px;
     selection-background-color: %3; selection-color: %9;
 }
-QLineEdit#finilySearch:focus { border: 1px solid %3; }
 QToolButton { background: transparent; border: none; color: %2; font-size: 13px; }
-QToolButton#finilyCrumbBtn { color: %1; font-size: 20px; font-weight: 700; padding: 0px 2px; border-radius: 6px; }
+QToolButton#finilyCrumbBtn { color: %1; font-size: 16px; font-weight: 500; padding: 2px 4px; border-radius: 6px; }
 QToolButton#finilyCrumbBtn:hover { color: %2; background: %8; }
 QToolButton#finilyCardAction { background: %7; border: 1px solid %5; border-radius: 14px; }
 QToolButton#finilyCardAction:hover { border: 1px solid %3; }

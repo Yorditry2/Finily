@@ -82,6 +82,8 @@ add_executable(finily
     src/ui/popovers/ThumbnailPanel.h
     src/ui/popovers/ThumbnailPanel.cpp
     src/ui/DesignTokens.h
+    src/ui/UiIcons.h
+    src/ui/UiIcons.cpp
     src/ui/home/HomeTheme.h
     src/ui/home/HomeTheme.cpp
     src/ui/home/HomeIcons.cpp
@@ -115,6 +117,12 @@ add_executable(finily
 qt_add_resources(finily "finily_fonts"
     PREFIX "/"
     FILES resources/fonts/InterVariable.ttf
+)
+file(GLOB FINILY_ICON_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/*/*.svg")
+qt_add_resources(finily "finily_icons"
+    PREFIX "/"
+    FILES ${FINILY_ICON_FILES}
 )
 
 target_compile_definitions(finily PRIVATE FINILY_VERSION="${PROJECT_VERSION}")

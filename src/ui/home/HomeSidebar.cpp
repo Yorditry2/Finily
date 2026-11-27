@@ -1,5 +1,9 @@
 #include "ui/home/HomeSidebar.h"
 
+#include "core/Utils.h"
+#include "ui/DesignTokens.h"
+#include "ui/UiIcons.h"
+
 #include <QContextMenuEvent>
 #include <QFontMetrics>
 #include <QHBoxLayout>
@@ -8,144 +12,49 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollArea>
-#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
 
 namespace finily {
 
-class SidebarItemButton : public QWidget {
+// Fila de navegación (.nav del mockup): ícono 16 px o punto de color,
+// texto 12.5 px y un ícono final opcional (chevron).
+class SidebarNavRow : public QWidget {
     Q_OBJECT
 
 public:
-    explicit SidebarItemButton(QString glyphKind, QString label, QWidget* parent = nullptr)
+    SidebarNavRow(QString icon, QString label, QWidget* parent = nullptr)
         : QWidget(parent)
-        , m_glyph(std::move(glyphKind))
+        , m_icon(std::move(icon))
         , m_label(std::move(label)) {
-        setFixedHeight(35);
+        setFixedHeight(30);
         setCursor(Qt::PointingHandCursor);
         setFocusPolicy(Qt::NoFocus);
         setAttribute(Qt::WA_Hover, true);
     }
 
-    void setGlyphAndLabel(const QString& glyphKind, const QString& label) {
-        m_glyph = glyphKind;
-        m_label = label;
-        update();
+    // Variante de árbol: punto de color de la carpeta, fila más baja.
+    void makeTreeItem(const FolderMeta& meta) {
+        m_meta = meta;
+        m_isFolder = true;
+        m_dot = tokens::folderColor(meta.colorIndex).body2;
+        setFixedHeight(26);
     }
+    const FolderMeta& meta() const { return m_meta; }
+    bool isFolder() const { return m_isFolder; }
 
+    void setTrailing(const QString& icon) { m_trailing = icon; update(); }
     void setActive(bool active) {
-        if (m_active == active)
-            return;
-        m_active = active;
-        update();
+        if (m_active != active) {
+            m_active = active;
+            update();
+        }
     }
-
-    void setBadgeCount(int count) {
-        if (m_count == count)
-            return;
-        m_count = count;
-        update();
-    }
-
-    void setAccentTone(bool accentTone) {
-        m_accentTone = accentTone;
-        update();
-    }
-
-    void setPalette(const HomePalette& pal) {
-        m_pal = pal;
-        update();
-    }
+    void setPalette(const HomePalette& pal) { m_pal = pal; update(); }
 
 signals:
     void clicked();
-
-protected:
-    void paintEvent(QPaintEvent*) override {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-
-        const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
-        if (m_active) {
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(m_pal.tint);
-            painter.drawRoundedRect(r, 9.0, 9.0);
-        } else if (underMouse()) {
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(m_pal.hover);
-            painter.drawRoundedRect(r, 9.0, 9.0);
-        }
-
-        const QColor fg = (m_active || m_accentTone) ? m_pal.accent : m_pal.text;
-        homeGlyph(m_glyph, fg).paint(&painter, QRect(11, (height() - 18) / 2, 18, 18));
-
-        QFont font = painter.font();
-        font.setPixelSize(13);
-        font.setWeight(m_active || m_accentTone ? QFont::DemiBold : QFont::Medium);
-        painter.setFont(font);
-        painter.setPen(fg);
-
-        const int rightSpace = (m_count >= 0) ? 36 : 10;
-        const QRect textRect(37, 0, std::max(0, width() - 37 - rightSpace), height());
-        painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, m_label);
-
-        if (m_count >= 0) {
-            QFont cf = painter.font();
-            cf.setPixelSize(11);
-            cf.setWeight(QFont::DemiBold);
-            painter.setFont(cf);
-            painter.setPen(m_active ? m_pal.accent : m_pal.muted);
-            painter.drawText(QRect(width() - 34, 0, 24, height()),
-                             Qt::AlignRight | Qt::AlignVCenter, QString::number(m_count));
-        }
-    }
-
-    void enterEvent(QEnterEvent*) override { update(); }
-    void leaveEvent(QEvent*) override { update(); }
-    void mouseReleaseEvent(QMouseEvent* event) override {
-        if (event->button() == Qt::LeftButton && rect().contains(event->pos()))
-            emit clicked();
-        QWidget::mouseReleaseEvent(event);
-    }
-
-private:
-    QString m_glyph;
-    QString m_label;
-    HomePalette m_pal = homePaletteFor(false);
-    bool m_active = false;
-    bool m_accentTone = false;
-    int m_count = -1;
-};
-
-class SidebarFolderButton : public QWidget {
-    Q_OBJECT
-
-public:
-    explicit SidebarFolderButton(const FolderMeta& meta, QWidget* parent = nullptr)
-        : QWidget(parent)
-        , m_meta(meta) {
-        setFixedHeight(32);
-        setCursor(Qt::PointingHandCursor);
-        setFocusPolicy(Qt::NoFocus);
-        setAttribute(Qt::WA_Hover, true);
-    }
-
-    QString relativePath() const { return m_meta.relativePath; }
-    void setActive(bool active) {
-        if (m_active == active)
-            return;
-        m_active = active;
-        update();
-    }
-    void setPalette(const HomePalette& pal) {
-        m_pal = pal;
-        update();
-    }
-
-signals:
-    void clicked(const QString& relPath);
     void newSubfolderRequested(const QString& relPath);
     void editRequested(const finily::FolderMeta& meta);
     void renameRequested(const QString& relPath);
@@ -155,53 +64,50 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
-        if (m_active) {
+        const QRectF r = QRectF(rect());
+        if (m_active || underMouse()) {
             painter.setPen(Qt::NoPen);
-            painter.setBrush(m_pal.tint);
-            painter.drawRoundedRect(r, 8.0, 8.0);
-        } else if (underMouse()) {
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(m_pal.hover);
+            painter.setBrush(m_active ? m_pal.tint : m_pal.hover);
             painter.drawRoundedRect(r, 8.0, 8.0);
         }
 
-        const int indent = 10 + std::min(m_meta.depth, 3) * 14;
-        const QColor folderColor =
-            coverColors().at(std::clamp(m_meta.colorIndex, 0, int(coverColors().size()) - 1));
-        homeGlyph(QStringLiteral("folder"), folderColor)
-            .paint(&painter, QRect(indent, (height() - 16) / 2, 16, 16));
+        const int depthIndent = m_isFolder ? std::min(m_meta.depth, 4) * 12 : 0;
+        const qreal x = 8 + depthIndent;
+        if (m_isFolder) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(m_dot);
+            painter.drawRoundedRect(QRectF(x, (height() - 9) / 2.0, 9, 9), 3, 3);
+        } else {
+            paintUiIcon(&painter, QRectF(x, (height() - 16) / 2.0, 16, 16), m_icon,
+                        m_active ? m_pal.text : m_pal.icon);
+        }
 
         QFont font = painter.font();
-        font.setPixelSize(12);
+        font.setPixelSize(m_isFolder ? 12 : 13);
         font.setWeight(m_active ? QFont::DemiBold : QFont::Medium);
         painter.setFont(font);
-        painter.setPen(m_active ? m_pal.accent : m_pal.text);
-        const int textX = indent + 23;
-        const int textW = std::max(24, width() - textX - 32);
-        const QString elided = QFontMetrics(font).elidedText(m_meta.name, Qt::ElideRight, textW);
-        painter.drawText(QRect(textX, 0, textW, height()), Qt::AlignLeft | Qt::AlignVCenter, elided);
+        painter.setPen(m_active ? m_pal.text : m_pal.icon);
+        const int textX = int(x) + (m_isFolder ? 18 : 25);
+        const int textW = std::max(10, width() - textX - (m_trailing.isEmpty() ? 8 : 28));
+        painter.drawText(QRect(textX, 0, textW, height()), Qt::AlignLeft | Qt::AlignVCenter,
+                         QFontMetrics(font).elidedText(m_label, Qt::ElideRight, textW));
 
-        if (m_meta.documentCount > 0) {
-            QFont cf = painter.font();
-            cf.setPixelSize(10);
-            cf.setWeight(QFont::DemiBold);
-            painter.setFont(cf);
-            painter.setPen(m_active ? m_pal.accent : m_pal.muted);
-            painter.drawText(QRect(width() - 32, 0, 22, height()),
-                             Qt::AlignRight | Qt::AlignVCenter,
-                             QString::number(m_meta.documentCount));
-        }
+        if (!m_trailing.isEmpty())
+            paintUiIcon(&painter, QRectF(width() - 21, (height() - 13) / 2.0, 13, 13), m_trailing,
+                        m_pal.faint);
     }
 
     void enterEvent(QEnterEvent*) override { update(); }
     void leaveEvent(QEvent*) override { update(); }
     void mouseReleaseEvent(QMouseEvent* event) override {
         if (event->button() == Qt::LeftButton && rect().contains(event->pos()))
-            emit clicked(m_meta.relativePath);
+            emit clicked();
         QWidget::mouseReleaseEvent(event);
     }
+    // Provisional hasta la fase 5 (menú contextual propio, mockup 07).
     void contextMenuEvent(QContextMenuEvent* event) override {
+        if (!m_isFolder)
+            return;
         QMenu menu(this);
         menu.setStyleSheet(QStringLiteral(
             "QMenu { background: %1; border: 1px solid %2; border-radius: 12px; padding: 6px; }"
@@ -210,211 +116,219 @@ protected:
             "QMenu::separator { height: 1px; background: %2; margin: 5px 8px; }")
                                .arg(m_pal.surface.name(), m_pal.border.name(QColor::HexArgb),
                                     m_pal.text.name(), m_pal.tint.name(QColor::HexArgb)));
-        menu.addAction(QStringLiteral("Nueva subcarpeta…"), this,
-                       [this] { emit newSubfolderRequested(m_meta.relativePath); });
-        menu.addAction(QStringLiteral("Editar carpeta…"), this,
-                       [this] { emit editRequested(m_meta); });
-        menu.addAction(QStringLiteral("Renombrar…"), this,
-                       [this] { emit renameRequested(m_meta.relativePath); });
+        const QString rel = m_meta.relativePath;
+        menu.addAction(QStringLiteral("Nueva subcarpeta…"), this, [this, rel] { emit newSubfolderRequested(rel); });
+        menu.addAction(QStringLiteral("Editar carpeta…"), this, [this] { emit editRequested(m_meta); });
+        menu.addAction(QStringLiteral("Renombrar…"), this, [this, rel] { emit renameRequested(rel); });
         menu.addSeparator();
-        menu.addAction(QStringLiteral("Eliminar"), this,
-                       [this] { emit deleteRequested(m_meta.relativePath); });
+        menu.addAction(QStringLiteral("Eliminar"), this, [this, rel] { emit deleteRequested(rel); });
         menu.exec(event->globalPos());
     }
 
 private:
+    QString m_icon;
+    QString m_label;
+    QString m_trailing;
     FolderMeta m_meta;
-    HomePalette m_pal = homePaletteFor(false);
+    QColor m_dot;
+    bool m_isFolder = false;
     bool m_active = false;
+    HomePalette m_pal = homePaletteFor(false);
+};
+
+// Botón cuadrado de ícono (.sb-btn del mockup, 26 px).
+class SidebarIconButton : public QWidget {
+    Q_OBJECT
+
+public:
+    SidebarIconButton(QString icon, const QString& tip, QWidget* parent = nullptr)
+        : QWidget(parent)
+        , m_icon(std::move(icon)) {
+        setFixedSize(28, 28);
+        setToolTip(tip);
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::NoFocus);
+        setAttribute(Qt::WA_Hover, true);
+    }
+    void setIcon(const QString& icon) { m_icon = icon; update(); }
+    void setPalette(const HomePalette& pal) { m_pal = pal; update(); }
+
+signals:
+    void clicked();
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        if (underMouse()) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(m_pal.hover);
+            painter.drawRoundedRect(QRectF(rect()), 8, 8);
+        }
+        paintUiIcon(&painter, QRectF((width() - 16) / 2.0, (height() - 16) / 2.0, 16, 16), m_icon,
+                    m_pal.icon);
+    }
+    void enterEvent(QEnterEvent*) override { update(); }
+    void leaveEvent(QEvent*) override { update(); }
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton && rect().contains(event->pos()))
+            emit clicked();
+    }
+
+private:
+    QString m_icon;
+    HomePalette m_pal = homePaletteFor(false);
+};
+
+// Contenedor del árbol: dibuja la guía vertical fina a la izquierda.
+class SidebarTreeBox : public QWidget {
+public:
+    using QWidget::QWidget;
+    QColor guide;
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.fillRect(QRectF(15, 2, 1, std::max(0, height() - 4)), guide);
+    }
 };
 
 HomeSidebar::HomeSidebar(QWidget* parent)
     : QWidget(parent) {
-    setFixedWidth(226);
+    setFixedWidth(tokens::space::SidebarWidth);
     setAttribute(Qt::WA_StyledBackground, false);
-    setAutoFillBackground(false);
+    m_treeOpen = readAppSetting(QStringLiteral("home/foldersOpen"), true).toBool();
 
     auto* col = new QVBoxLayout(this);
-    col->setContentsMargins(14, 22, 14, 16);
-    col->setSpacing(6);
+    col->setContentsMargins(10, 14, 10, 12);
+    col->setSpacing(1);
 
-    auto* brandRow = new QHBoxLayout();
-    brandRow->setContentsMargins(6, 0, 6, 0);
-    brandRow->setSpacing(10);
-    m_badge = new FinilyBadge(this);
-    brandRow->addWidget(m_badge, 0, Qt::AlignVCenter);
-    auto* brandLabel = new QLabel(QStringLiteral("Finily"), this);
-    brandLabel->setObjectName(QStringLiteral("finilyBrandTitle"));
-    brandRow->addWidget(brandLabel, 1, Qt::AlignVCenter);
-    col->addLayout(brandRow);
-    col->addSpacing(14);
+    auto* head = new QHBoxLayout();
+    head->setContentsMargins(6, 2, 4, 12);
+    auto* brand = new QLabel(QStringLiteral("Finily"), this);
+    brand->setObjectName(QStringLiteral("finilyBrandTitle"));
+    head->addWidget(brand, 1, Qt::AlignVCenter);
+    m_collapseBtn = new SidebarIconButton(QStringLiteral("side"), QStringLiteral("Ocultar barra lateral"), this);
+    connect(m_collapseBtn, &SidebarIconButton::clicked, this, &HomeSidebar::collapseRequested);
+    head->addWidget(m_collapseBtn, 0, Qt::AlignVCenter);
+    col->addLayout(head);
 
-    m_allBtn = new SidebarItemButton(QStringLiteral("all"), QStringLiteral("Todos"), this);
-    m_allBtn->setActive(true);
-    m_allBtn->setBadgeCount(0);
-    connect(m_allBtn, &SidebarItemButton::clicked, this, [this] {
+    m_docsRow = new SidebarNavRow(QStringLiteral("docs"), QStringLiteral("Documentos"), this);
+    connect(m_docsRow, &SidebarNavRow::clicked, this, [this] {
         setSelectedFilter(0);
         emit filterSelected(0);
     });
-    col->addWidget(m_allBtn);
+    col->addWidget(m_docsRow);
 
-    m_recentBtn = new SidebarItemButton(QStringLiteral("recent"), QStringLiteral("Recientes"), this);
-    m_recentBtn->setBadgeCount(0);
-    connect(m_recentBtn, &SidebarItemButton::clicked, this, [this] {
-        setSelectedFilter(1);
-        emit filterSelected(1);
-    });
-    col->addWidget(m_recentBtn);
+    m_foldersRow = new SidebarNavRow(QStringLiteral("folder"), QStringLiteral("Carpetas"), this);
+    connect(m_foldersRow, &SidebarNavRow::clicked, this, [this] { setTreeOpen(!m_treeOpen); });
+    col->addWidget(m_foldersRow);
 
-    col->addSpacing(6);
-    m_midLine = new QWidget(this);
-    m_midLine->setFixedHeight(1);
-    col->addWidget(m_midLine);
-    col->addSpacing(4);
+    m_treeScroll = new QScrollArea(this);
+    m_treeScroll->setWidgetResizable(true);
+    m_treeScroll->setFrameShape(QFrame::NoFrame);
+    m_treeScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_treeScroll->viewport()->setAutoFillBackground(false);
+    m_treeScroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; }"));
+    m_treeBox = new SidebarTreeBox;
+    m_treeBox->setAutoFillBackground(false);
+    m_treeLayout = new QVBoxLayout(m_treeBox);
+    m_treeLayout->setContentsMargins(25, 1, 0, 1);
+    m_treeLayout->setSpacing(1);
+    m_treeScroll->setWidget(m_treeBox);
+    col->addWidget(m_treeScroll);
+    col->addStretch(1);
 
-    auto* foldersHeader = new QHBoxLayout();
-    foldersHeader->setContentsMargins(8, 0, 2, 0);
-    m_foldersLabel = new QLabel(QStringLiteral("CARPETAS"), this);
-    m_foldersLabel->setObjectName(QStringLiteral("finilySidebarGroup"));
-    foldersHeader->addWidget(m_foldersLabel, 1);
+    m_draftRow = new SidebarNavRow(QStringLiteral("restore"), QStringLiteral("Continuar borrador"), this);
+    m_draftRow->setToolTip(QStringLiteral("Recuperar la última sesión autoguardada"));
+    m_draftRow->hide();
+    connect(m_draftRow, &SidebarNavRow::clicked, this, &HomeSidebar::continueDraftRequested);
+    col->addWidget(m_draftRow);
 
-    m_addFolderBtn = new QToolButton(this);
-    m_addFolderBtn->setFixedSize(24, 24);
-    m_addFolderBtn->setIconSize(QSize(14, 14));
-    m_addFolderBtn->setToolTip(QStringLiteral("Nueva carpeta"));
-    m_addFolderBtn->setCursor(Qt::PointingHandCursor);
-    m_addFolderBtn->setFocusPolicy(Qt::NoFocus);
-    connect(m_addFolderBtn, &QToolButton::clicked, this, &HomeSidebar::createRootFolderRequested);
-    foldersHeader->addWidget(m_addFolderBtn);
-    col->addLayout(foldersHeader);
+    col->addSpacing(7);
+    m_footLine = new QWidget(this);
+    m_footLine->setFixedHeight(1);
+    col->addWidget(m_footLine);
+    col->addSpacing(7);
 
-    m_folderScroll = new QScrollArea(this);
-    m_folderScroll->setWidgetResizable(true);
-    m_folderScroll->setFrameShape(QFrame::NoFrame);
-    m_folderScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_folderScroll->viewport()->setAutoFillBackground(false);
-    m_folderScroll->viewport()->setAttribute(Qt::WA_StyledBackground, false);
+    auto* icons = new QHBoxLayout();
+    icons->setContentsMargins(4, 0, 4, 0);
+    icons->setSpacing(4);
+    m_themeBtn = new SidebarIconButton(QStringLiteral("moon"), QStringLiteral("Modo oscuro"), this);
+    connect(m_themeBtn, &SidebarIconButton::clicked, this, [this] { emit darkModeToggled(!m_dark); });
+    icons->addWidget(m_themeBtn);
+    icons->addStretch(1);
+    col->addLayout(icons);
 
-    m_folderContainer = new QWidget;
-    m_folderContainer->setObjectName(QStringLiteral("finilySidebarTree"));
-    m_folderContainer->setAutoFillBackground(false);
-    m_folderLayout = new QVBoxLayout(m_folderContainer);
-    m_folderLayout->setContentsMargins(0, 2, 0, 2);
-    m_folderLayout->setSpacing(2);
-    m_folderLayout->addStretch(1);
-    m_folderScroll->setWidget(m_folderContainer);
-    col->addWidget(m_folderScroll, 1);
-
-    m_footerLine = new QWidget(this);
-    m_footerLine->setFixedHeight(1);
-    col->addWidget(m_footerLine);
-    col->addSpacing(4);
-
-    m_draftBtn = new SidebarItemButton(QStringLiteral("restore"), QStringLiteral("Continuar borrador"), this);
-    m_draftBtn->setAccentTone(true);
-    m_draftBtn->setToolTip(QStringLiteral("Recuperar la última sesión autoguardada"));
-    m_draftBtn->hide();
-    connect(m_draftBtn, &SidebarItemButton::clicked, this, &HomeSidebar::continueDraftRequested);
-    col->addWidget(m_draftBtn);
-
-    m_openBtn = new SidebarItemButton(QStringLiteral("folder"), QStringLiteral("Abrir archivo…"), this);
-    m_openBtn->setToolTip(QStringLiteral("Abrir un cuaderno .finily desde el disco"));
-    connect(m_openBtn, &SidebarItemButton::clicked, this, &HomeSidebar::openExternalFileRequested);
-    col->addWidget(m_openBtn);
-
-    m_themeBtn = new SidebarItemButton(QStringLiteral("moon"), QStringLiteral("Modo oscuro"), this);
-    connect(m_themeBtn, &SidebarItemButton::clicked, this, [this] { emit darkModeToggled(!m_dark); });
-    col->addWidget(m_themeBtn);
+    setTreeOpen(m_treeOpen);
 }
 
-void HomeSidebar::setSelectedFilter(int filterIndex) {
-    m_selectedFilter = (filterIndex == 1) ? 1 : 0;
+void HomeSidebar::setTreeOpen(bool open) {
+    m_treeOpen = open;
+    writeAppSetting(QStringLiteral("home/foldersOpen"), open);
+    m_foldersRow->setTrailing(open ? QStringLiteral("chevD") : QStringLiteral("chevR"));
+    m_treeScroll->setVisible(open && !m_folderRows.isEmpty());
+}
+
+void HomeSidebar::refreshActive() {
+    m_docsRow->setActive(m_selectedFilter == 0);
+    for (SidebarNavRow* row : m_folderRows)
+        row->setActive(m_selectedFilter < 0 && row->meta().relativePath == m_selectedFolder);
+}
+
+void HomeSidebar::setSelectedFilter(int) {
+    m_selectedFilter = 0;
     m_selectedFolder.clear();
-    if (m_allBtn)
-        m_allBtn->setActive(m_selectedFilter == 0);
-    if (m_recentBtn)
-        m_recentBtn->setActive(m_selectedFilter == 1);
-    for (SidebarFolderButton* fb : m_folderBtns) {
-        if (fb)
-            fb->setActive(false);
-    }
+    refreshActive();
 }
 
 void HomeSidebar::setSelectedFolder(const QString& relativePath) {
     m_selectedFilter = -1;
     m_selectedFolder = relativePath;
-    if (m_allBtn)
-        m_allBtn->setActive(false);
-    if (m_recentBtn)
-        m_recentBtn->setActive(false);
-    for (SidebarFolderButton* fb : m_folderBtns) {
-        if (fb)
-            fb->setActive(fb->relativePath() == m_selectedFolder);
-    }
-}
-
-void HomeSidebar::setCounts(int totalCount, int recentCount) {
-    if (m_allBtn)
-        m_allBtn->setBadgeCount(totalCount);
-    if (m_recentBtn)
-        m_recentBtn->setBadgeCount(recentCount);
+    refreshActive();
 }
 
 void HomeSidebar::setFolders(const QVector<FolderMeta>& folders) {
-    for (SidebarFolderButton* fb : m_folderBtns) {
-        if (fb) {
-            m_folderLayout->removeWidget(fb);
-            fb->deleteLater();
-        }
-    }
-    m_folderBtns.clear();
-
+    qDeleteAll(m_folderRows);
+    m_folderRows.clear();
     for (const FolderMeta& meta : folders) {
-        auto* btn = new SidebarFolderButton(meta, m_folderContainer);
-        btn->setPalette(m_pal);
-        btn->setActive(m_selectedFilter < 0 && meta.relativePath == m_selectedFolder);
-        connect(btn, &SidebarFolderButton::clicked, this, &HomeSidebar::folderSelected);
-        connect(btn, &SidebarFolderButton::newSubfolderRequested, this,
-                &HomeSidebar::createSubfolderRequested);
-        connect(btn, &SidebarFolderButton::editRequested, this, &HomeSidebar::editFolderRequested);
-        connect(btn, &SidebarFolderButton::renameRequested, this, &HomeSidebar::renameFolderRequested);
-        connect(btn, &SidebarFolderButton::deleteRequested, this, &HomeSidebar::deleteFolderRequested);
-        m_folderLayout->insertWidget(m_folderLayout->count() - 1, btn);
-        m_folderBtns.append(btn);
+        auto* row = new SidebarNavRow(QString(), meta.name, m_treeBox);
+        row->makeTreeItem(meta);
+        row->setPalette(m_pal);
+        const QString rel = meta.relativePath;
+        connect(row, &SidebarNavRow::clicked, this, [this, rel] { emit folderSelected(rel); });
+        connect(row, &SidebarNavRow::newSubfolderRequested, this, &HomeSidebar::createSubfolderRequested);
+        connect(row, &SidebarNavRow::editRequested, this, &HomeSidebar::editFolderRequested);
+        connect(row, &SidebarNavRow::renameRequested, this, &HomeSidebar::renameFolderRequested);
+        connect(row, &SidebarNavRow::deleteRequested, this, &HomeSidebar::deleteFolderRequested);
+        m_treeLayout->addWidget(row);
+        m_folderRows.append(row);
     }
+    // El árbol ocupa solo su alto natural; si no cabe, aparece la barra de desplazamiento.
+    m_treeBox->adjustSize();
+    m_treeScroll->setMaximumHeight(m_treeBox->sizeHint().height() + 2);
+    setTreeOpen(m_treeOpen);
+    refreshActive();
 }
 
 void HomeSidebar::setDraftVisible(bool visible) {
-    if (m_draftBtn)
-        m_draftBtn->setVisible(visible);
+    m_draftRow->setVisible(visible);
 }
 
 void HomeSidebar::applyTheme(const HomePalette& pal, bool dark) {
     m_pal = pal;
     m_dark = dark;
-    if (m_badge)
-        m_badge->setDark(dark);
-    for (auto* btn : {m_allBtn, m_recentBtn, m_draftBtn, m_openBtn, m_themeBtn}) {
-        if (btn)
-            btn->setPalette(pal);
-    }
-    for (SidebarFolderButton* fb : m_folderBtns) {
-        if (fb)
-            fb->setPalette(pal);
-    }
-    if (m_addFolderBtn)
-        m_addFolderBtn->setIcon(homeGlyph(QStringLiteral("plus"), pal.muted));
-    if (m_themeBtn) {
-        m_themeBtn->setGlyphAndLabel(dark ? QStringLiteral("sun") : QStringLiteral("moon"),
-                                     dark ? QStringLiteral("Modo claro") : QStringLiteral("Modo oscuro"));
-    }
-    const QString lineQss = QStringLiteral("background: %1;").arg(pal.sidebarBorder.name(QColor::HexArgb));
-    if (m_midLine)
-        m_midLine->setStyleSheet(lineQss);
-    if (m_footerLine)
-        m_footerLine->setStyleSheet(lineQss);
-    if (m_folderScroll)
-        m_folderScroll->viewport()->setAutoFillBackground(false);
+    for (SidebarNavRow* row : {m_docsRow, m_foldersRow, m_draftRow})
+        row->setPalette(pal);
+    for (SidebarNavRow* row : m_folderRows)
+        row->setPalette(pal);
+    for (SidebarIconButton* btn : {m_collapseBtn, m_themeBtn})
+        btn->setPalette(pal);
+    m_themeBtn->setIcon(dark ? QStringLiteral("sun") : QStringLiteral("moon"));
+    m_themeBtn->setToolTip(dark ? QStringLiteral("Modo claro") : QStringLiteral("Modo oscuro"));
+    static_cast<SidebarTreeBox*>(m_treeBox)->guide = tokens::paletteFor(dark).guide;
+    m_treeBox->update();
+    m_footLine->setStyleSheet(QStringLiteral("background: %1;").arg(pal.sidebarBorder.name(QColor::HexArgb)));
     update();
 }
 

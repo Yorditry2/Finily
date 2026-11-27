@@ -5,36 +5,53 @@
 #include <QString>
 #include <QWidget>
 
-class QAction;
 class QHBoxLayout;
 class QLabel;
 class QLineEdit;
 
 namespace finily {
 
+class HeaderIconButton;
+class HeaderNewButton;
+class HeaderSearchField;
+
+// Cabecera de una fila (mockup 00): [reabrir sidebar] título o migas ·
+// buscar · + Nuevo. Al buscar, el título se cambia por el campo de búsqueda.
 class HomeHeader : public QWidget {
     Q_OBJECT
 
 public:
     explicit HomeHeader(QWidget* parent = nullptr);
 
-    void setSectionTitle(const QString& title, const QString& subtitle);
-    void setFolderBreadcrumb(const QString& relativePath, const QString& subtitle);
+    void setSectionTitle(const QString& title);
+    void setFolderBreadcrumb(const QString& relativePath);
+    void setSidebarCollapsed(bool collapsed);
     QString searchText() const;
+    QRect newButtonGeometry() const; // en coordenadas de la cabecera
     void applyTheme(const HomePalette& pal, bool dark);
 
 signals:
     void searchTextChanged(const QString& text);
     void breadcrumbClicked(const QString& relativePath);
+    void newRequested();
+    void reopenSidebarRequested();
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-    void clearBreadcrumb();
+    void clearCrumbs();
+    void setSearchOpen(bool open);
 
+    HomePalette m_pal = homePaletteFor(false);
+    HeaderIconButton* m_reopenBtn = nullptr;
+    QWidget* m_titleBox = nullptr;
     QHBoxLayout* m_crumbRow = nullptr;
-    QLabel* m_titleLabel = nullptr;
-    QLabel* m_subtitleLabel = nullptr;
+    HeaderSearchField* m_searchField = nullptr;
     QLineEdit* m_search = nullptr;
-    QAction* m_searchAction = nullptr;
+    HeaderIconButton* m_searchBtn = nullptr;
+    HeaderNewButton* m_newBtn = nullptr;
 };
 
 } // namespace finily

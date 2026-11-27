@@ -6,17 +6,16 @@
 #include <QVector>
 #include <QWidget>
 
-class QLabel;
 class QScrollArea;
-class QToolButton;
 class QVBoxLayout;
 
 namespace finily {
 
-class SidebarItemButton;
-class SidebarFolderButton;
-class FinilyBadge;
+class SidebarNavRow;
+class SidebarIconButton;
 
+// Barra lateral del Inicio (mockup 00): marca + colapsar, Documentos,
+// Carpetas con árbol desplegable y pie con borrador y tema.
 class HomeSidebar : public QWidget {
     Q_OBJECT
 
@@ -25,7 +24,6 @@ public:
 
     void setSelectedFilter(int filterIndex);
     void setSelectedFolder(const QString& relativePath);
-    void setCounts(int totalCount, int recentCount);
     void setFolders(const QVector<FolderMeta>& folders);
     void setDraftVisible(bool visible);
     void applyTheme(const HomePalette& pal, bool dark);
@@ -33,39 +31,38 @@ public:
 signals:
     void filterSelected(int filterIndex);
     void folderSelected(const QString& relativePath);
-    void createRootFolderRequested();
     void createSubfolderRequested(const QString& parentRelativePath);
     void editFolderRequested(const finily::FolderMeta& meta);
     void renameFolderRequested(const QString& relativePath);
     void deleteFolderRequested(const QString& relativePath);
-    void openExternalFileRequested();
     void continueDraftRequested();
     void darkModeToggled(bool dark);
+    void collapseRequested();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
 
 private:
+    void setTreeOpen(bool open);
+    void refreshActive();
+
     HomePalette m_pal = homePaletteFor(false);
     bool m_dark = false;
+    bool m_treeOpen = true;
     int m_selectedFilter = 0;
     QString m_selectedFolder;
 
-    SidebarItemButton* m_allBtn = nullptr;
-    SidebarItemButton* m_recentBtn = nullptr;
-    QLabel* m_foldersLabel = nullptr;
-    QToolButton* m_addFolderBtn = nullptr;
-    QScrollArea* m_folderScroll = nullptr;
-    QWidget* m_folderContainer = nullptr;
-    QVBoxLayout* m_folderLayout = nullptr;
-    QVector<SidebarFolderButton*> m_folderBtns;
-    FinilyBadge* m_badge = nullptr;
+    SidebarIconButton* m_collapseBtn = nullptr;
+    SidebarNavRow* m_docsRow = nullptr;
+    SidebarNavRow* m_foldersRow = nullptr;
+    QScrollArea* m_treeScroll = nullptr;
+    QWidget* m_treeBox = nullptr;
+    QVBoxLayout* m_treeLayout = nullptr;
+    QVector<SidebarNavRow*> m_folderRows;
 
-    SidebarItemButton* m_draftBtn = nullptr;
-    SidebarItemButton* m_openBtn = nullptr;
-    SidebarItemButton* m_themeBtn = nullptr;
-    QWidget* m_midLine = nullptr;
-    QWidget* m_footerLine = nullptr;
+    SidebarNavRow* m_draftRow = nullptr;
+    QWidget* m_footLine = nullptr;
+    SidebarIconButton* m_themeBtn = nullptr;
 };
 
 } // namespace finily

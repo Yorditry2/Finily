@@ -12,7 +12,6 @@ class QScrollArea;
 namespace finily {
 
 class CreateMenu;
-class CreateTileCard;
 class FolderCard;
 class HomeHeader;
 class HomeSidebar;
@@ -61,6 +60,8 @@ private:
     void buildLayout();
     void buildOverlays();
     void openCreateMenu();
+    QRect createMenuAnchor() const;
+    void setSidebarCollapsed(bool collapsed);
     void launchQuickNote();
     void selectFilter(int index);
     void openFolder(const QString& relativePath);
@@ -85,7 +86,6 @@ private:
 
     QScrollArea* m_scroll = nullptr;
     QWidget* m_gridContent = nullptr;
-    CreateTileCard* m_createCard = nullptr;
     QWidget* m_emptyState = nullptr;
     QLabel* m_emptyLabel = nullptr;
     QVector<FolderCard*> m_folderCards;

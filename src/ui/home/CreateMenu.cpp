@@ -101,7 +101,11 @@ void CreateMenu::updateCardGeometry(const QRect& anchorInParent, bool grabBackdr
 
     int x = anchorInParent.right() + 12;
     int y = anchorInParent.top() + 8;
-    if (x + kMenuWidth > width() - 14) {
+    if (anchorInParent.height() < 60) {
+        // Botón «+ Nuevo» de la cabecera: el menú cae debajo, alineado a su borde derecho.
+        x = anchorInParent.right() - kMenuWidth;
+        y = anchorInParent.bottom() + 8;
+    } else if (x + kMenuWidth > width() - 14) {
         const int leftSide = anchorInParent.left() - kMenuWidth - 12;
         x = (leftSide >= 14) ? leftSide : std::clamp(anchorInParent.left(), 14, std::max(14, width() - kMenuWidth - 14));
         if (leftSide < 14 && anchorInParent.bottom() + 8 + totalH <= height() - 14)

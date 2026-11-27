@@ -59,6 +59,29 @@ inline Palette darkPalette() {
 
 inline Palette paletteFor(bool dark) { return dark ? darkPalette() : lightPalette(); }
 
+// Carpetas de 2 tonos (paquete por defecto; el índice se guarda en la carpeta).
+struct FolderColor {
+    QColor body1;  // cuerpo, arriba
+    QColor body2;  // cuerpo, abajo
+    QColor flap;   // solapa trasera
+    QColor ink;    // símbolo sobre la carpeta
+};
+
+inline const FolderColor& folderColor(int index) {
+    static const FolderColor colors[] = {
+        {QColor("#F2A4B9"), QColor("#E78FA8"), QColor("#D57892"), QColor("#8C3952")}, // rosa
+        {QColor("#EDD1B8"), QColor("#E1C0A2"), QColor("#CCA887"), QColor("#7A5739")}, // arena
+        {QColor("#A6CEBB"), QColor("#92BFA9"), QColor("#77A38E"), QColor("#315C48")}, // salvia
+        {QColor("#A9C7E8"), QColor("#92B5DD"), QColor("#7499C6"), QColor("#2F5482")}, // cielo
+        {QColor("#C5B7E6"), QColor("#B3A2DC"), QColor("#9682C6"), QColor("#4F3D85")}, // lavanda
+        {QColor("#F5BFA0"), QColor("#EDA984"), QColor("#D98B64"), QColor("#8A4526")}, // durazno
+        {QColor("#EDE09A"), QColor("#E3D27C"), QColor("#C9B65C"), QColor("#6B5B17")}, // limón
+        {QColor("#B9BCC6"), QColor("#A3A7B3"), QColor("#868B99"), QColor("#363A45")}, // grafito
+    };
+    constexpr int count = int(sizeof(colors) / sizeof(colors[0]));
+    return colors[((index % count) + count) % count];
+}
+
 namespace radius {
 inline constexpr qreal Card = 18.0;      // tarjetas flotantes, diálogos
 inline constexpr qreal Popover = 16.0;   // popover de color

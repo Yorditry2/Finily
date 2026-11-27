@@ -54,9 +54,6 @@ void HomeScreen::buildLayout() {
     m_sidebar = new HomeSidebar(this);
     connect(m_sidebar, &HomeSidebar::filterSelected, this, &HomeScreen::selectFilter);
     connect(m_sidebar, &HomeSidebar::folderSelected, this, &HomeScreen::openFolder);
-    connect(m_sidebar, &HomeSidebar::createRootFolderRequested, this, [this] {
-        m_folderSheet->openCreate(QString(), homePaletteFor(m_dark), m_dark);
-    });
     connect(m_sidebar, &HomeSidebar::createSubfolderRequested, this, [this](const QString& parentRel) {
         m_folderSheet->openCreate(parentRel, homePaletteFor(m_dark), m_dark);
     });
@@ -65,8 +62,7 @@ void HomeScreen::buildLayout() {
     });
     connect(m_sidebar, &HomeSidebar::renameFolderRequested, this, &HomeScreen::renameFolderByPath);
     connect(m_sidebar, &HomeSidebar::deleteFolderRequested, this, &HomeScreen::deleteFolderByPath);
-    connect(m_sidebar, &HomeSidebar::openExternalFileRequested, this,
-            &HomeScreen::openExternalFileRequested);
+    connect(m_sidebar, &HomeSidebar::collapseRequested, this, [this] { setSidebarCollapsed(true); });
     connect(m_sidebar, &HomeSidebar::continueDraftRequested, this,
             &HomeScreen::continueDraftRequested);
     connect(m_sidebar, &HomeSidebar::darkModeToggled, this, &HomeScreen::setDarkMode);
@@ -75,7 +71,7 @@ void HomeScreen::buildLayout() {
     auto* mainPane = new QWidget(this);
     mainPane->setAttribute(Qt::WA_StyledBackground, false);
     auto* mainCol = new QVBoxLayout(mainPane);
-    mainCol->setContentsMargins(34, 22, 34, 0);
+    mainCol->setContentsMargins(0, 0, 0, 0);
     mainCol->setSpacing(0);
 
     m_header = new HomeHeader(mainPane);
@@ -86,16 +82,24 @@ void HomeScreen::buildLayout() {
         else
             openFolder(rel);
     });
+    connect(m_header, &HomeHeader::newRequested, this, &HomeScreen::openCreateMenu);
+    connect(m_header, &HomeHeader::reopenSidebarRequested, this, [this] { setSidebarCollapsed(false); });
     mainCol->addWidget(m_header);
+
+    // Banner y rejilla van con el margen del contenido (26/28 del mockup).
+    auto* body = new QVBoxLayout();
+    body->setContentsMargins(28, 0, 14, 0);
+    body->setSpacing(0);
+    mainCol->addLayout(body, 1);
 
     m_updateBanner = new UpdateBanner(this);
     connect(m_updateBanner, &UpdateBanner::installRequested, this, &HomeScreen::updateInstallRequested);
     connect(m_updateBanner, &UpdateBanner::cancelRequested, this, &HomeScreen::updateCancelRequested);
     connect(m_updateBanner, &UpdateBanner::releaseNotesRequested, this, &HomeScreen::updateReleaseNotesRequested);
     connect(m_updateBanner, &UpdateBanner::dismissed, this, &HomeScreen::updateDismissed);
-    mainCol->addSpacing(12);
-    mainCol->addWidget(m_updateBanner);
-    mainCol->addSpacing(14);
+    body->addSpacing(12);
+    body->addWidget(m_updateBanner);
+    body->addSpacing(8);
 
     m_scroll = new QScrollArea(mainPane);
     m_scroll->setObjectName(QStringLiteral("finilyHomeScroll"));
@@ -110,10 +114,7 @@ void HomeScreen::buildLayout() {
     m_gridContent->setAutoFillBackground(false);
     m_gridContent->setAttribute(Qt::WA_StyledBackground, false);
     m_scroll->setWidget(m_gridContent);
-    mainCol->addWidget(m_scroll, 1);
-
-    m_createCard = new CreateTileCard(m_gridContent);
-    connect(m_createCard, &CreateTileCard::createClicked, this, &HomeScreen::openCreateMenu);
+    body->addWidget(m_scroll, 1);
 
     m_emptyState = new QWidget(m_gridContent);
     m_emptyState->setAttribute(Qt::WA_StyledBackground, false);
@@ -127,6 +128,16 @@ void HomeScreen::buildLayout() {
     m_emptyState->hide();
 
     root->addWidget(mainPane, 1);
+    setSidebarCollapsed(readAppSetting(QStringLiteral("home/sidebarCollapsed"), false).toBool());
+}
+
+void HomeScreen::setSidebarCollapsed(bool collapsed) {
+    writeAppSetting(QStringLiteral("home/sidebarCollapsed"), collapsed);
+    if (m_sidebar)
+        m_sidebar->setVisible(!collapsed);
+    if (m_header)
+        m_header->setSidebarCollapsed(collapsed);
+    QTimer::singleShot(0, this, &HomeScreen::relayoutGrid);
 }
 
 void HomeScreen::buildOverlays() {
@@ -201,8 +212,6 @@ void HomeScreen::applyTheme() {
         m_header->applyTheme(pal, m_dark);
     if (m_createMenu)
         m_createMenu->applyTheme(pal, m_dark);
-    if (m_createCard)
-        m_createCard->setPalette(pal, m_dark);
     for (FolderCard* fc : m_folderCards) {
         if (fc)
             fc->setPalette(pal, m_dark);
@@ -229,10 +238,8 @@ void HomeScreen::paintEvent(QPaintEvent*) {
 
 void HomeScreen::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
-    if (m_createMenu && m_createMenu->isVisible() && m_createCard) {
-        const QPoint p = m_createCard->mapTo(this, QPoint(0, 0));
-        m_createMenu->reposition(QRect(p, m_createCard->size()));
-    }
+    if (m_createMenu && m_createMenu->isVisible())
+        m_createMenu->reposition(createMenuAnchor());
     for (auto* sheet : {static_cast<GlassSheet*>(m_folderSheet),
                         static_cast<GlassSheet*>(m_boardSheet),
                         static_cast<GlassSheet*>(m_notebookSheet)}) {
@@ -254,12 +261,6 @@ void HomeScreen::refreshLibrary() {
 
     m_allFolders = LibraryStore::listAllFoldersTree();
     const QVector<NotebookMeta> allDocs = LibraryStore::listAllNotebooksRecursive();
-    const QDateTime now = QDateTime::currentDateTime();
-    int recentCount = 0;
-    for (const NotebookMeta& m : allDocs) {
-        if (m.modified.daysTo(now) <= 7)
-            ++recentCount;
-    }
 
     if (m_viewMode == ViewMode::Folder) {
         const bool exists = std::any_of(m_allFolders.cbegin(), m_allFolders.cend(),
@@ -271,7 +272,6 @@ void HomeScreen::refreshLibrary() {
     }
 
     if (m_sidebar) {
-        m_sidebar->setCounts(int(allDocs.size()), recentCount);
         m_sidebar->setFolders(m_allFolders);
         if (m_viewMode == ViewMode::Folder)
             m_sidebar->setSelectedFolder(m_currentFolder);
@@ -364,28 +364,23 @@ void HomeScreen::updateHeaderAndEmptyState() {
         if (card && !card->isHidden()) ++visibleDocs;
     }
     const int totalVisible = visibleFolders + visibleDocs;
-    const QString subtitle = (totalVisible == 0) ? QStringLiteral("Sin elementos")
-        : (totalVisible == 1)                  ? QStringLiteral("1 elemento")
-                                               : QStringLiteral("%1 elementos").arg(totalVisible);
     if (m_header) {
-        if (m_viewMode == ViewMode::Folder) {
-            m_header->setFolderBreadcrumb(m_currentFolder, subtitle);
-        } else {
-            m_header->setSectionTitle(
-                m_viewMode == ViewMode::Recientes ? QStringLiteral("Recientes")
-                                                  : QStringLiteral("Todos"),
-                subtitle);
-        }
+        if (m_viewMode == ViewMode::Folder)
+            m_header->setFolderBreadcrumb(m_currentFolder);
+        else
+            m_header->setSectionTitle(QStringLiteral("Documentos"));
     }
 
+    // Estados vacíos provisionales; el diseño completo (mockup 08) llega en la fase 6.
     const bool searching = m_header && !m_header->searchText().trimmed().isEmpty();
     if (m_emptyState) {
-        const bool showEmpty = (totalVisible == 0) && (searching || m_viewMode == ViewMode::Recientes);
-        m_emptyState->setHidden(!showEmpty);
+        m_emptyState->setHidden(totalVisible != 0);
         if (m_emptyLabel) {
             m_emptyLabel->setText(
                 searching ? QStringLiteral("No hay elementos que coincidan con la búsqueda")
-                          : QStringLiteral("Nada editado en los últimos 7 días"));
+                : m_viewMode == ViewMode::Folder
+                    ? QStringLiteral("Esta carpeta está vacía. Usa «Nuevo» para crear algo aquí.")
+                    : QStringLiteral("Tu biblioteca está vacía. Empieza con «Nuevo»."));
         }
     }
 }
@@ -400,15 +395,7 @@ void HomeScreen::relayoutGrid() {
     const int contentWidth = m_scroll->viewport()->width();
     const int columns =
         std::max(1, (contentWidth + spacingX) / (NotebookCard::kCardWidth + spacingX));
-    const bool searching = m_header && !m_header->searchText().trimmed().isEmpty();
-    const bool showCreate = (m_viewMode != ViewMode::Recientes) && !searching;
-
     QList<QWidget*> items;
-    if (m_createCard) {
-        m_createCard->setHidden(!showCreate);
-        if (showCreate)
-            items.append(m_createCard);
-    }
     for (FolderCard* fc : m_folderCards) {
         if (fc && !fc->isHidden())
             items.append(fc);
@@ -436,17 +423,23 @@ void HomeScreen::relayoutGrid() {
 }
 
 void HomeScreen::openCreateMenu() {
-    if (!m_createMenu || !m_createCard)
+    if (!m_createMenu)
         return;
     if (m_createMenu->isVisible()) {
         m_createMenu->closeMenu();
         return;
     }
-    const QPoint topLeft = m_createCard->mapTo(this, QPoint(0, 0));
     const QString folderName = (m_viewMode == ViewMode::Folder)
         ? QFileInfo(m_currentFolder).fileName()
         : QString();
-    m_createMenu->openAnchoredTo(QRect(topLeft, m_createCard->size()), folderName);
+    m_createMenu->openAnchoredTo(createMenuAnchor(), folderName);
+}
+
+QRect HomeScreen::createMenuAnchor() const {
+    if (!m_header)
+        return {};
+    const QRect r = m_header->newButtonGeometry();
+    return QRect(m_header->mapTo(this, r.topLeft()), r.size());
 }
 
 void HomeScreen::launchQuickNote() {
