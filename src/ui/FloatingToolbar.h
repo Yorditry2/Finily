@@ -4,6 +4,7 @@
 #include "ui/editor/EditorTheme.h"
 
 #include <QColor>
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QRegion>
 #include <QString>
@@ -24,8 +25,6 @@ class EditorEraserPanel;
 class EditorFillPanel;
 class EditorFineWidthPopover;
 class EditorHighlighterPanel;
-class EditorInlineTextBar;
-class EditorLaserPanel;
 class EditorLassoPanel;
 class EditorLibraryModal;
 class EditorLibraryPickerModal;
@@ -144,7 +143,7 @@ private:
     void applyThemeToAll(bool dark);
     void openToolPanel(ToolType tool, const QRect& anchorRect);
     void openPaperPanel(const QRect& anchorRect);
-    void openColorPopover(ToolType tool, const QRect& anchorRect, bool isShapeFill = false, bool isSheetBg = false);
+    void openColorPopover(ToolType tool, const QRect& anchorRect, bool isShapeFill = false, bool isSheetBg = false, bool isSelectionColor = false);
     void openFineWidthPopover(ToolType tool, const QRect& anchorRect);
     void openDropdown(QWidget* anchor, const QVector<EditorDropdownItem>& items, std::function<void(int)> cb);
     void showExportMenu(const QRect& anchorRect);
@@ -169,6 +168,9 @@ private:
     bool m_elementsRight = false;
     bool m_shapeFillMode = false;
     bool m_sheetColorMode = false;
+    bool m_selectionColorMode = false;
+    bool m_swallowNextCanvasRelease = false;
+    QElapsedTimer m_swallowTimer;
     ToolType m_colorTargetTool = ToolType::Pen;
     ToolType m_widthTargetTool = ToolType::Pen;
     QRect m_lastColorAnchor;
@@ -193,7 +195,6 @@ private:
     EditorFillPanel* m_fillPanel = nullptr;
     EditorLassoPanel* m_lassoPanel = nullptr;
     EditorShapesPanel* m_shapesPanel = nullptr;
-    EditorLaserPanel* m_laserPanel = nullptr;
     EditorPaperPanel* m_paperPanel = nullptr;
 
     EditorElementsPanel* m_elementsPanel = nullptr;
@@ -201,7 +202,6 @@ private:
 
     EditorContextCapsule* m_contextCapsule = nullptr;
     EditorEdgeMarkCapsule* m_edgeMarkCapsule = nullptr;
-    EditorInlineTextBar* m_inlineTextBar = nullptr;
 
     EditorDropdownMenu* m_dropdownMenu = nullptr;
     EditorToast* m_toast = nullptr;

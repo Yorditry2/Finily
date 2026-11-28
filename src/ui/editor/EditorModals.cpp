@@ -277,14 +277,13 @@ EditorSettingsModal::EditorSettingsModal(QWidget* parent)
     m_navHost->setGeometry(0, 0, 176, 560);
 
     struct NavDef { const char* key; const char* title; const char* icon; const char* pack; };
-    const NavDef defs[9] = {
+    const NavDef defs[8] = {
         {"escritura", "Escritura", "pen", "ui"},
-        {"resaltador", "Resaltador", "wand", "editor"},
         {"figuras", "Figuras", "shapes", "ui"},
         {"laser", "Láser", "laser", "ui"},
         {"paneles", "Paneles", "sliders", "editor"},
         {"paginas", "Páginas", "pages", "ui"},
-        {"tableta", "Tableta y táctil", "stylus", "editor"},
+        {"tableta", "Tableta", "stylus", "editor"},
         {"ia", "IA", "sparkle", "ui"},
         {"atajos", "Gestos y atajos", "keyboard", "editor"},
     };
@@ -421,15 +420,6 @@ void EditorSettingsModal::buildSectionContent() {
             }
         });
 
-        auto* profSeg = new EditorSegControl(m_bodyHost);
-        profSeg->setOptions({QStringLiteral("Ligera"), QStringLiteral("Normal"), QStringLiteral("Firme")});
-        profSeg->setCurrentIndex(m_canvas ? int(m_canvas->pressureProfile()) : 0);
-        profSeg->applyEditorTheme(m_dark);
-        connect(profSeg, &EditorSegControl::currentIndexChanged, this, [this](int idx) {
-            if (m_canvas) m_canvas->setPressureProfile(PressureProfile(idx));
-        });
-        m_bodyLayout->addWidget(makeSettingRow(QStringLiteral("Perfil de presión"), profSeg, m_pal, m_bodyHost));
-
         const int stabLevel = m_canvas ? std::clamp(qRound(m_canvas->stabilizer() * 9.0), 0, 9) : 2;
         auto* stabSeg = new EditorSegControl(m_bodyHost);
         stabSeg->setOptions({QStringLiteral("Bajo"), QStringLiteral("Medio"), QStringLiteral("Alto"), QStringLiteral("Pers.")});
@@ -473,17 +463,6 @@ void EditorSettingsModal::buildSectionContent() {
             if (m_canvas) m_canvas->setBeautifyPauseMs(qRound(v));
         });
         m_bodyLayout->addWidget(makeSettingRow(QStringLiteral("Tiempo de pausa (ms)"), pauseSlider, m_pal, m_bodyHost));
-    } else if (key == QStringLiteral("resaltador")) {
-        m_bodyLayout->addWidget(makeSectionHeading(QStringLiteral("Resaltador"), m_pal, m_bodyHost));
-        addSwitchRow(QStringLiteral("Pintar detrás de la escritura"),
-                     m_canvas ? m_canvas->highlighterDrawBehindInk() : true,
-                     [this](bool on) { if (m_canvas) m_canvas->setHighlighterDrawBehindInk(on); });
-        addSwitchRow(QStringLiteral("Enderezar al soltar"),
-                     m_canvas ? m_canvas->highlighterStraightenOnRelease() : false,
-                     [this](bool on) { if (m_canvas) m_canvas->setHighlighterStraightenOnRelease(on); });
-        addSwitchRow(QStringLiteral("Punta redonda"),
-                     m_canvas ? m_canvas->highlighterRoundTip() : false,
-                     [this](bool on) { if (m_canvas) m_canvas->setHighlighterRoundTip(on); });
     } else if (key == QStringLiteral("figuras")) {
         m_bodyLayout->addWidget(makeSectionHeading(QStringLiteral("Figuras"), m_pal, m_bodyHost));
         addSwitchRow(QStringLiteral("Figura perfecta al mantener"),
@@ -543,16 +522,6 @@ void EditorSettingsModal::buildSectionContent() {
                 [](GeometryGestureOptions& o, bool v) { o.angleArc = v; });
         addGest(QStringLiteral("Ángulo recto"), QStringLiteral("Una escuadrita marca 90°"), go.rightAngle,
                 [](GeometryGestureOptions& o, bool v) { o.rightAngle = v; });
-        addGest(QStringLiteral("Flecha"), QStringLiteral("Línea con punta en un solo trazo"), go.freehandArrow,
-                [](GeometryGestureOptions& o, bool v) { o.freehandArrow = v; });
-        addGest(QStringLiteral("Punta de flecha"), QStringLiteral("Dibujar «>» al final de una línea"), go.attachArrowhead,
-                [](GeometryGestureOptions& o, bool v) { o.attachArrowhead = v; });
-        addGest(QStringLiteral("Punto divisor"), QStringLiteral("Un puntito sobre un lado"), go.dividerDot,
-                [](GeometryGestureOptions& o, bool v) { o.dividerDot = v; });
-        addGest(QStringLiteral("Marcas de lado"), QStringLiteral("Rayitas de igualdad a mano"), go.edgeMarks,
-                [](GeometryGestureOptions& o, bool v) { o.edgeMarks = v; });
-        addGest(QStringLiteral("Mantener sobre un lado"), QStringLiteral("Abre la cápsula de marcas"), go.holdEdgeMenu,
-                [](GeometryGestureOptions& o, bool v) { o.holdEdgeMenu = v; });
 
         m_bodyLayout->addWidget(makeKicker(QStringLiteral("GUÍAS E IMÁN"), m_pal, m_bodyHost));
         SmartGuideOptions so = m_canvas ? m_canvas->smartGuideOptions() : SmartGuideOptions{};
@@ -710,12 +679,6 @@ void EditorSettingsModal::buildSectionContent() {
                          if (m_canvas) m_canvas->setSwapPenButtons(on);
                          refreshDiagram();
                      });
-        addSwitchRow(QStringLiteral("Goma trasera del lápiz"),
-                     m_canvas ? m_canvas->stylusEraserTipEnabled() : true,
-                     [this, refreshDiagram](bool on) {
-                         if (m_canvas) m_canvas->setStylusEraserTipEnabled(on);
-                         refreshDiagram();
-                     });
 
         m_bodyLayout->addWidget(makeKicker(QStringLiteral("BOTONES DEL PAD"), m_pal, m_bodyHost));
         const TabletAction padDefaults[4] = {
@@ -738,22 +701,9 @@ void EditorSettingsModal::buildSectionContent() {
             m_bodyLayout->addWidget(makeSettingRow(QStringLiteral("Botón %1").arg(b + 1), padBtn, m_pal, m_bodyHost));
         }
 
-        auto* ptrSeg = new EditorSegControl(m_bodyHost);
-        ptrSeg->setOptions({QStringLiteral("Lapicito"), QStringLiteral("Aro"), QStringLiteral("Cruz")});
-        ptrSeg->setCurrentIndex(m_canvas ? std::clamp(m_canvas->cursorStyle(), 0, 2) : 0);
-        ptrSeg->applyEditorTheme(m_dark);
-        connect(ptrSeg, &EditorSegControl::currentIndexChanged, this, [this, refreshDiagram](int idx) {
-            if (m_canvas) m_canvas->setCursorStyle(idx);
-            refreshDiagram();
-        });
-        m_bodyLayout->addWidget(makeSettingRow(QStringLiteral("Estilo de puntero"), ptrSeg, m_pal, m_bodyHost));
-
-        addSwitchRow(QStringLiteral("Rueda radial de colores"),
+        addSwitchRow(QStringLiteral("Rueda radial rápida"),
                      m_canvas ? m_canvas->radialMenuEnabled() : true,
                      [this](bool on) { if (m_canvas) m_canvas->setRadialMenuEnabled(on); });
-        addSwitchRow(QStringLiteral("Ignorar la palma (rechazo táctil)"),
-                     m_canvas ? m_canvas->palmRejectionEnabled() : true,
-                     [this](bool on) { if (m_canvas) m_canvas->setPalmRejectionEnabled(on); });
     } else if (key == QStringLiteral("ia")) {
         m_bodyLayout->addWidget(makeSectionHeading(QStringLiteral("IA"), m_pal, m_bodyHost));
         auto* keyEdit = new EditorLineEdit(m_bodyHost);
@@ -1085,10 +1035,10 @@ void EditorLibraryModal::buildSectionContent() {
         m_bodyLayout->addWidget(makeSectionHeading(QStringLiteral("Paletas de colores"), m_pal, m_bodyHost));
         struct PalSpec { const char* name; ToolType tool; QVector<QColor> cols; };
         const QVector<PalSpec> pals = {
-            {"Estudio Tinta (Pluma)", ToolType::Pen, {QColor("#18181B"), QColor("#2563EB"), QColor("#DC2626"), QColor("#16A34A"), QColor("#D97706"), QColor("#7C3AED")}},
-            {"Clásica Escolar (Pluma)", ToolType::Pen, {QColor("#0F172A"), QColor("#1D4ED8"), QColor("#B91C1C"), QColor("#15803D"), QColor("#9333EA"), QColor("#EA580C")}},
-            {"Pastel (Resaltador)", ToolType::Highlighter, {QColor("#FACC15"), QColor("#86EFAC"), QColor("#93C5FD"), QColor("#F9A8D4"), QColor("#FDBA74"), QColor("#C4B5FD")}},
-            {"Alta Visibilidad (Láser)", ToolType::Laser, {QColor("#EF4444"), QColor("#22C55E"), QColor("#3B82F6"), QColor("#F59E0B"), QColor("#EC4899"), QColor("#8B5CF6")}},
+            {"Estudio Tinta (Pluma)", ToolType::Pen, {QColor("#18181B"), QColor("#2563EB"), QColor("#DC2626"), QColor("#16A34A"), QColor("#D97706"), QColor("#7C3AED"), QColor("#0EA5E9"), QColor("#EC4899"), QColor("#14B8A6"), QColor("#78716C")}},
+            {"Clásica Escolar (Pluma)", ToolType::Pen, {QColor("#0F172A"), QColor("#1D4ED8"), QColor("#B91C1C"), QColor("#15803D"), QColor("#9333EA"), QColor("#EA580C"), QColor("#0284C7"), QColor("#DB2777"), QColor("#0D9488"), QColor("#64748B")}},
+            {"Pastel (Resaltador)", ToolType::Highlighter, {QColor("#FACC15"), QColor("#86EFAC"), QColor("#93C5FD"), QColor("#F9A8D4"), QColor("#FDBA74"), QColor("#C4B5FD"), QColor("#67E8F9"), QColor("#BEF264"), QColor("#FDA4AF"), QColor("#CBD5E1")}},
+            {"Alta Visibilidad (Láser)", ToolType::Laser, {QColor("#EF4444"), QColor("#22C55E"), QColor("#3B82F6"), QColor("#F59E0B"), QColor("#EC4899"), QColor("#8B5CF6"), QColor("#06B6D4"), QColor("#F97316")}},
         };
         for (const auto& ps : pals) {
             auto* btn = new EditorChipButton(QStringLiteral("Aplicar"), m_bodyHost);

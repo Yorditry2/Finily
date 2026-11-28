@@ -11,6 +11,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QTabletEvent>
+#include <QVariantAnimation>
 
 #include <algorithm>
 #include <cmath>
@@ -35,7 +36,7 @@ EditorPalette editorPaletteFor(bool dark) {
         pal.text = QColor("#F4F4F5");
         pal.muted = QColor("#9397A5");
         pal.icon = QColor("#D4D4D8");
-        pal.hover = QColor(244, 244, 245, 20);
+        pal.hover = QColor(255, 255, 255, 15);
         pal.danger = QColor("#F87171");
         pal.glassHi = QColor(255, 255, 255, 22);
     } else {
@@ -72,6 +73,14 @@ QFont editorFont(qreal px, int weight) {
     return f;
 }
 
+QFont editorTabularFont(qreal px, int weight) {
+    QFont f = editorFont(px, weight);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    f.setFeature(QFont::Tag("tnum"), 1);
+#endif
+    return f;
+}
+
 QColor resolveAdaptableInkColor(const QColor& stored, bool sheetDark) {
     const QString hex = stored.name(QColor::HexRgb).toLower();
     if (sheetDark && (hex == QLatin1String("#18181b") || hex == QLatin1String("#0f172a")))
@@ -81,16 +90,32 @@ QColor resolveAdaptableInkColor(const QColor& stored, bool sheetDark) {
     return stored;
 }
 
+QEasingCurve editorEasingOut() {
+    QEasingCurve c(QEasingCurve::BezierSpline);
+    c.addCubicBezierSegment(QPointF(0.22, 1.0), QPointF(0.36, 1.0), QPointF(1.0, 1.0));
+    return c;
+}
+
+QEasingCurve editorEasingIn() {
+    QEasingCurve c(QEasingCurve::BezierSpline);
+    c.addCubicBezierSegment(QPointF(0.4, 0.0), QPointF(1.0, 1.0), QPointF(1.0, 1.0));
+    return c;
+}
+
+QEasingCurve editorEasingSpring() {
+    QEasingCurve c(QEasingCurve::BezierSpline);
+    c.addCubicBezierSegment(QPointF(0.34, 1.45), QPointF(0.64, 1.0), QPointF(1.0, 1.0));
+    return c;
+}
+
 void paintEditorSwatch(QPainter& p, const QRectF& circleRect, const QColor& color,
                        bool active, const EditorPalette& pal) {
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
     if (active) {
-        p.setPen(QPen(pal.text, 1.5));
+        p.setPen(QPen(pal.text, 2.0));
         p.setBrush(Qt::NoBrush);
-        p.drawEllipse(circleRect.adjusted(-2.5, -2.5, 2.5, 2.5));
-        p.setPen(QPen(pal.surfaceSolid, 2.0));
-        p.drawEllipse(circleRect.adjusted(-0.8, -0.8, 0.8, 0.8));
+        p.drawEllipse(circleRect.adjusted(-3.0, -3.0, 3.0, 3.0));
     }
     p.setPen(QPen(QColor(15, 23, 42, 36), 1.0));
     p.setBrush(color);
@@ -103,9 +128,9 @@ void paintEditorRainbowSwatch(QPainter& p, const QRectF& circleRect, bool active
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
     if (active) {
-        p.setPen(QPen(pal.text, 1.5));
+        p.setPen(QPen(pal.text, 2.0));
         p.setBrush(Qt::NoBrush);
-        p.drawEllipse(circleRect.adjusted(-2.5, -2.5, 2.5, 2.5));
+        p.drawEllipse(circleRect.adjusted(-3.0, -3.0, 3.0, 3.0));
     }
     QConicalGradient grad(circleRect.center(), 90.0);
     grad.setColorAt(0.00, QColor("#E5484D"));
@@ -148,15 +173,17 @@ void paintEditorSubChevron(QPainter& p, const QRectF& btnRect, const QColor& col
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
     QColor c = color;
-    c.setAlphaF(0.52);
-    p.setPen(QPen(c, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    const qreal cx = btnRect.right() - 5.5;
-    const qreal cy = btnRect.bottom() - 5.0;
-    QPainterPath path;
-    path.moveTo(cx - 2.2, cy - 1.2);
-    path.lineTo(cx, cy + 1.2);
-    path.lineTo(cx + 2.2, cy - 1.2);
-    p.drawPath(path);
+    c.setAlphaF(0.35);
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    const qreal r = btnRect.right() - 3.5;
+    const qreal b = btnRect.bottom() - 3.5;
+    QPainterPath tri;
+    tri.moveTo(r, b);
+    tri.lineTo(r - 3.5, b);
+    tri.lineTo(r, b - 3.5);
+    tri.closeSubpath();
+    p.drawPath(tri);
     p.restore();
 }
 
@@ -164,17 +191,148 @@ void paintEditorFamilyCorner(QPainter& p, const QRectF& btnRect, const QColor& c
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
     QColor c = color;
-    c.setAlphaF(0.55);
+    c.setAlphaF(0.50);
     p.setPen(Qt::NoPen);
     p.setBrush(c);
     QPainterPath tri;
-    const qreal r = btnRect.right() - 4.0;
-    const qreal b = btnRect.bottom() - 4.0;
+    const qreal r = btnRect.right() - 5.0;
+    const qreal b = btnRect.bottom() - 5.0;
     tri.moveTo(r, b);
-    tri.lineTo(r - 4.5, b);
-    tri.lineTo(r, b - 4.5);
+    tri.lineTo(r - 5.0, b);
+    tri.lineTo(r, b - 5.0);
     tri.closeSubpath();
     p.drawPath(tri);
+    p.restore();
+}
+
+void paintShapeVariantGlyph(QPainter& p, const QRectF& box, ShapeFamily family,
+                            int variant, const QColor& color) {
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    QColor fillCol = color;
+    fillCol.setAlphaF(0.14);
+    QPen strokePen(color, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+
+    auto drawNormalizedPoly = [&](const QVector<QPointF>& pts) {
+        if (pts.isEmpty())
+            return;
+        qreal minX = pts[0].x(), maxX = pts[0].x();
+        qreal minY = pts[0].y(), maxY = pts[0].y();
+        for (const auto& pt : pts) {
+            minX = std::min(minX, pt.x());
+            maxX = std::max(maxX, pt.x());
+            minY = std::min(minY, pt.y());
+            maxY = std::max(maxY, pt.y());
+        }
+        const qreal w = std::max<qreal>(1e-4, maxX - minX);
+        const qreal h = std::max<qreal>(1e-4, maxY - minY);
+        const qreal avail = std::max<qreal>(4.0, std::min(box.width(), box.height()) - 5.0);
+        const qreal s = avail / std::max(w, h);
+        const qreal ox = box.center().x() - (w * s) * 0.5;
+        const qreal oy = box.center().y() - (h * s) * 0.5;
+
+        QPainterPath path;
+        for (int i = 0; i < pts.size(); ++i) {
+            const QPointF sp(ox + (pts[i].x() - minX) * s, oy + (pts[i].y() - minY) * s);
+            if (i == 0) path.moveTo(sp);
+            else path.lineTo(sp);
+        }
+        path.closeSubpath();
+        p.setPen(strokePen);
+        p.setBrush(fillCol);
+        p.drawPath(path);
+    };
+
+    if (family == ShapeFamily::Quad) {
+        switch (variant) {
+        case 1: // Cuadrado
+            drawNormalizedPoly({{380, 140}, {520, 140}, {520, 280}, {380, 280}});
+            break;
+        case 2: // Rombo
+            drawNormalizedPoly({{450, 125}, {565, 215}, {450, 305}, {335, 215}});
+            break;
+        case 3: // Paralelogramo
+            drawNormalizedPoly({{380, 150}, {590, 150}, {530, 290}, {320, 290}});
+            break;
+        case 4:
+        case 5: // Trapecio
+            drawNormalizedPoly({{395, 150}, {505, 150}, {585, 290}, {315, 290}});
+            break;
+        case 6: // Trapezoide
+            drawNormalizedPoly({{370, 160}, {545, 130}, {590, 290}, {330, 275}});
+            break;
+        default: // 0 Rectángulo
+            drawNormalizedPoly({{330, 150}, {570, 150}, {570, 290}, {330, 290}});
+            break;
+        }
+    } else if (family == ShapeFamily::Triangle) {
+        switch (variant) {
+        case 1: // Isósceles
+            drawNormalizedPoly({{340, 295}, {560, 295}, {450, 125}});
+            break;
+        case 2: // Rectángulo
+            drawNormalizedPoly({{360, 295}, {570, 295}, {360, 140}});
+            break;
+        case 3: // Equilátero
+            drawNormalizedPoly({{355, 300}, {545, 300}, {450, 135.5}});
+            break;
+        default: // 0 Libre
+            drawNormalizedPoly({{335, 290}, {575, 290}, {420, 135}});
+            break;
+        }
+    } else if (family == ShapeFamily::Polygon) {
+        const int n = std::clamp(variant, 3, 12);
+        QVector<QPointF> pts;
+        pts.reserve(n);
+        for (int i = 0; i < n; ++i) {
+            const double a = i * 2.0 * 3.14159265358979 / double(n);
+            pts.append(QPointF(std::sin(a) * 10.0, -std::cos(a) * 10.0));
+        }
+        drawNormalizedPoly(pts);
+    } else if (family == ShapeFamily::Circle) {
+        const qreal unit = std::min(box.width(), box.height()) / 24.0;
+        const QPointF c = box.center();
+        p.setPen(strokePen);
+        p.setBrush(fillCol);
+        if (variant == 3) {
+            p.drawEllipse(c, 10.0 * unit, 6.5 * unit);
+        } else {
+            p.drawEllipse(c, 8.5 * unit, 8.5 * unit);
+        }
+        p.setPen(Qt::NoPen);
+        p.setBrush(color);
+        p.drawEllipse(c, 1.3 * unit, 1.3 * unit);
+    }
+
+    p.restore();
+}
+
+void paintLineEndingGlyph(QPainter& p, const QRectF& box, int endingVariant, const QColor& color) {
+    // 0 = Sin punta, 1 = Flecha, 2 = Doble flecha, 3 = Cota
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    const qreal u = std::min(box.width(), box.height()) / 24.0;
+    const qreal ox = box.center().x() - 12.0 * u;
+    const qreal oy = box.center().y() - 12.0 * u;
+    auto pt = [&](qreal x, qreal y) { return QPointF(ox + x * u, oy + y * u); };
+
+    p.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.drawLine(pt(3, 12), pt(21, 12));
+
+    if (endingVariant == 1 || endingVariant == 2 || endingVariant == 3) {
+        p.drawLine(pt(21, 12), pt(16, 8));
+        p.drawLine(pt(21, 12), pt(16, 16));
+    }
+    if (endingVariant == 2 || endingVariant == 3) {
+        p.drawLine(pt(3, 12), pt(8, 8));
+        p.drawLine(pt(3, 12), pt(8, 16));
+    }
+    if (endingVariant == 3) {
+        p.setPen(QPen(color, 1.6, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(pt(3, 6), pt(3, 18));
+        p.drawLine(pt(21, 6), pt(21, 18));
+    }
     p.restore();
 }
 
@@ -224,6 +382,14 @@ void EditorGlassCard::applyEditorTheme(bool dark) {
     update();
 }
 
+void EditorGlassCard::setRevealProgress(qreal progress) {
+    const qreal clamped = std::clamp(progress, 0.0, 1.0);
+    if (std::abs(clamped - m_reveal) < 1e-4)
+        return;
+    m_reveal = clamped;
+    update();
+}
+
 void EditorGlassCard::clearBackdrop() {
     m_blurredBackdrop = QImage();
     update();
@@ -251,6 +417,8 @@ void EditorGlassCard::refreshBackdrop(QWidget* canvasSource) {
 void EditorGlassCard::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
+    if (m_reveal < 0.999)
+        p.setOpacity(m_reveal);
 
     const QRectF frame = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
     if (frame.isEmpty())
@@ -499,13 +667,21 @@ EditorSegControl::EditorSegControl(QWidget* parent)
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
     setFocusPolicy(Qt::NoFocus);
-    setFixedHeight(30);
+    setFixedHeight(34);
     m_pal = editorPaletteFor(false);
+    m_slideAnim = new QVariantAnimation(this);
+    m_slideAnim->setDuration(200);
+    m_slideAnim->setEasingCurve(editorEasingSpring());
+    connect(m_slideAnim, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
+        m_animPos = v.toReal();
+        update();
+    });
 }
 
 void EditorSegControl::setOptions(const QStringList& labels) {
     m_labels = labels;
     m_current = std::clamp(m_current, 0, std::max(0, int(m_labels.size()) - 1));
+    m_animPos = qreal(m_current);
     updateGeometry();
     update();
 }
@@ -516,8 +692,18 @@ void EditorSegControl::setCurrentIndex(int index) {
     const int clamped = (index < 0) ? -1 : std::clamp(index, 0, int(m_labels.size()) - 1);
     if (m_current == clamped)
         return;
+    const qreal from = (m_current >= 0) ? m_animPos : qreal(std::max(0, clamped));
     m_current = clamped;
-    update();
+    if (clamped >= 0 && !tokens::reducedMotion() && isVisible()) {
+        m_slideAnim->stop();
+        m_slideAnim->setStartValue(from);
+        m_slideAnim->setEndValue(qreal(clamped));
+        m_slideAnim->start();
+    } else {
+        m_slideAnim->stop();
+        m_animPos = qreal(std::max(0, clamped));
+        update();
+    }
 }
 
 void EditorSegControl::applyEditorTheme(bool dark) {
@@ -552,30 +738,33 @@ void EditorSegControl::paintEvent(QPaintEvent*) {
 
     const QRectF track(rect());
     p.setPen(Qt::NoPen);
-    p.setBrush(m_pal.subtle);
-    p.drawRoundedRect(track, 9.0, 9.0);
+    p.setBrush(m_dark ? QColor("#12141A") : m_pal.subtle);
+    p.drawRoundedRect(track, 12.0, 12.0);
 
     if (m_labels.isEmpty())
         return;
 
-    const qreal cellW = (track.width() - 4.0) / qreal(m_labels.size());
-    p.setFont(editorFont(11.0, QFont::DemiBold));
+    const qreal pad = 3.0;
+    const qreal cellW = (track.width() - pad * 2.0) / qreal(m_labels.size());
 
+    // Indicador deslizante con curva spring
+    if (m_current >= 0) {
+        const QRectF ind(pad + m_animPos * cellW, pad, cellW, track.height() - pad * 2.0);
+        p.setBrush(m_dark ? QColor("#2A2E38") : m_pal.surfaceSolid);
+        p.drawRoundedRect(ind, 9.0, 9.0);
+    }
+
+    p.setFont(editorFont(12.5, QFont::Medium));
     for (int i = 0; i < m_labels.size(); ++i) {
-        const QRectF cell(2.0 + i * cellW, 2.0, cellW, track.height() - 4.0);
+        const QRectF cell(pad + i * cellW, pad, cellW, track.height() - pad * 2.0);
         const bool on = (i == m_current);
-        if (on) {
-            p.setPen(Qt::NoPen);
-            p.setBrush(QColor(0, 0, 0, m_dark ? 70 : 24));
-            p.drawRoundedRect(cell.translated(0.0, 1.0), 7.0, 7.0);
-            p.setBrush(m_pal.surfaceSolid);
-            p.drawRoundedRect(cell, 7.0, 7.0);
-        } else if (i == m_hovered) {
+        if (!on && i == m_hovered) {
             p.setPen(Qt::NoPen);
             p.setBrush(m_pal.hover);
-            p.drawRoundedRect(cell, 7.0, 7.0);
+            p.drawRoundedRect(cell, 9.0, 9.0);
         }
-        p.setPen(on ? m_pal.text : m_pal.muted);
+        p.setFont(editorFont(12.5, on ? QFont::DemiBold : QFont::Medium));
+        p.setPen(on ? m_pal.text : (m_dark ? QColor("#A1A1AA") : m_pal.muted));
         p.drawText(cell, Qt::AlignCenter, m_labels.at(i));
     }
 }
@@ -598,8 +787,7 @@ void EditorSegControl::mouseReleaseEvent(QMouseEvent* e) {
         return;
     const int idx = indexAt(e->position());
     if (idx >= 0 && idx != m_current) {
-        m_current = idx;
-        update();
+        setCurrentIndex(idx);
         emit currentIndexChanged(idx);
     }
 }
@@ -973,6 +1161,337 @@ void EditorSlider::mouseReleaseEvent(QMouseEvent* e) {
 }
 
 void EditorSlider::tabletEvent(QTabletEvent* e) {
+    e->ignore();
+}
+
+// ---------------- EditorWedgeSlider ----------------
+
+EditorWedgeSlider::EditorWedgeSlider(QWidget* parent)
+    : QWidget(parent) {
+    setFixedSize(130, 28);
+    setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::NoFocus);
+    m_pal = editorPaletteFor(false);
+
+    m_anim = new QVariantAnimation(this);
+    m_anim->setDuration(200);
+    m_anim->setEasingCurve(editorEasingOut());
+    connect(m_anim, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
+        m_displayValue = v.toDouble();
+        update();
+    });
+}
+
+void EditorWedgeSlider::setRange(double minVal, double maxVal, double step) {
+    m_min = minVal;
+    m_max = std::max(minVal + 0.0001, maxVal);
+    m_step = std::max(0.0001, step);
+    m_value = std::clamp(m_value, m_min, m_max);
+    m_displayValue = std::clamp(m_displayValue, m_min, m_max);
+    update();
+}
+
+void EditorWedgeSlider::setValue(double value, bool animated) {
+    const double clamped = std::clamp(value, m_min, m_max);
+    if (std::abs(clamped - m_value) < 1e-6 && std::abs(clamped - m_displayValue) < 1e-6)
+        return;
+    m_value = clamped;
+    if (animated && !m_dragging && !tokens::reducedMotion() && isVisible()) {
+        m_anim->stop();
+        m_anim->setStartValue(m_displayValue);
+        m_anim->setEndValue(m_value);
+        m_anim->start();
+    } else {
+        m_anim->stop();
+        m_displayValue = m_value;
+        update();
+    }
+}
+
+void EditorWedgeSlider::setThumbColor(const QColor& color) {
+    if (m_thumbColor == color)
+        return;
+    m_thumbColor = color;
+    update();
+}
+
+void EditorWedgeSlider::setCompact(bool compact) {
+    if (m_compact == compact)
+        return;
+    m_compact = compact;
+    setFixedSize(compact ? 78 : 130, compact ? 26 : 28);
+    update();
+}
+
+void EditorWedgeSlider::setEraserStyle(bool isEraser) {
+    if (m_eraserStyle == isEraser)
+        return;
+    m_eraserStyle = isEraser;
+    update();
+}
+
+void EditorWedgeSlider::applyEditorTheme(bool dark) {
+    m_dark = dark;
+    m_pal = editorPaletteFor(dark);
+    update();
+}
+
+void EditorWedgeSlider::updateFromX(qreal x) {
+    const qreal left = 4.0;
+    const qreal right = std::max<qreal>(left + 1.0, width() - 4.0);
+    const double t = std::clamp((x - left) / (right - left), 0.0, 1.0);
+    double raw = m_min + t * (m_max - m_min);
+    if (m_step > 0.0)
+        raw = m_min + std::round((raw - m_min) / m_step) * m_step;
+    raw = std::clamp(raw, m_min, m_max);
+    m_anim->stop();
+    m_displayValue = raw;
+    if (std::abs(raw - m_value) >= 1e-6) {
+        m_value = raw;
+        update();
+        emit valueChanged(m_value);
+    } else {
+        update();
+    }
+}
+
+void EditorWedgeSlider::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    const qreal left = 4.0;
+    const qreal right = std::max<qreal>(left + 1.0, width() - 4.0);
+    const qreal cy = height() * 0.5;
+    const qreal t = std::clamp((m_displayValue - m_min) / (m_max - m_min), 0.0, 1.0);
+    const qreal x = left + t * (right - left);
+
+    if (m_compact) {
+        // Cápsula C3 (DESIGN §7.5.2): 78x26, x 4->74, alto 2->18 px, recorrido blanco 55%, resto 13%
+        const qreal hhStart = 1.0;
+        const qreal hhEnd = 9.0;
+        const qreal hhCur = hhStart + t * (hhEnd - hhStart);
+
+        QPainterPath bg;
+        bg.moveTo(left, cy - hhStart);
+        bg.lineTo(right, cy - hhEnd);
+        bg.lineTo(right, cy + hhEnd);
+        bg.lineTo(left, cy + hhStart);
+        bg.closeSubpath();
+
+        QPainterPath fill;
+        fill.moveTo(left, cy - hhStart);
+        fill.lineTo(x, cy - hhCur);
+        fill.lineTo(x, cy + hhCur);
+        fill.lineTo(left, cy + hhStart);
+        fill.closeSubpath();
+
+        p.setPen(Qt::NoPen);
+        p.setBrush(m_dark ? QColor(255, 255, 255, 33) : QColor(15, 23, 42, 30));
+        p.drawPath(bg);
+        p.setBrush(m_dark ? QColor(255, 255, 255, 140) : QColor(15, 23, 42, 115));
+        p.drawPath(fill);
+
+        const qreal diam = 8.0 + t * 10.0; // 8 -> 18 px
+        const qreal r = diam * 0.5;
+        const qreal cx = std::clamp(x, r + 2.0, width() - r - 2.0);
+        p.setPen(QPen(m_dark ? QColor("#FFFFFF") : m_pal.surfaceSolid, 2.0));
+        p.setBrush(m_thumbColor.isValid() ? m_thumbColor : m_pal.text);
+        p.drawEllipse(QPointF(cx, cy), r, r);
+    } else {
+        // Barra superior (04c): 130x28, triángulo M4 14 L126 7 L126 21 Z, relleno acento #7fc4a0
+        const qreal hhMax = 7.0;
+        const qreal hhCur = t * hhMax;
+
+        QPainterPath bg;
+        bg.moveTo(left, cy);
+        bg.lineTo(right, cy - hhMax);
+        bg.lineTo(right, cy + hhMax);
+        bg.closeSubpath();
+
+        QPainterPath fill;
+        fill.moveTo(left, cy);
+        fill.lineTo(x, cy - hhCur);
+        fill.lineTo(x, cy + hhCur);
+        fill.closeSubpath();
+
+        p.setPen(Qt::NoPen);
+        p.setBrush(m_dark ? QColor(255, 255, 255, 36) : QColor(15, 23, 42, 30));
+        p.drawPath(bg);
+        p.setBrush(m_pal.accent);
+        p.drawPath(fill);
+
+        const qreal diam = 10.0 + t * 14.0; // 10 -> 24 px
+        const qreal r = diam * 0.5;
+        const qreal cx = std::clamp(x, r + 2.0, width() - r - 2.0);
+
+        // Anillo exterior blanco 40% + anillo interior del fondo de la barra
+        p.setPen(QPen(m_dark ? QColor(255, 255, 255, 102) : QColor(15, 23, 42, 64), 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(QPointF(cx, cy), r + 1.5, r + 1.5);
+
+        p.setPen(QPen(m_dark ? QColor("#171A22") : m_pal.surfaceSolid, 2.0));
+        if (m_eraserStyle) {
+            p.setBrush(m_dark ? QColor(244, 244, 245, 56) : QColor(24, 24, 27, 36));
+            p.drawEllipse(QPointF(cx, cy), r, r);
+            p.setPen(QPen(m_pal.text, 1.6));
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(QPointF(cx, cy), std::max<qreal>(2.0, r - 1.2), std::max<qreal>(2.0, r - 1.2));
+        } else {
+            p.setBrush(m_thumbColor.isValid() ? m_thumbColor : m_pal.text);
+            p.drawEllipse(QPointF(cx, cy), r, r);
+        }
+    }
+}
+
+void EditorWedgeSlider::mousePressEvent(QMouseEvent* e) {
+    if (e->button() == Qt::LeftButton) {
+        m_dragging = true;
+        emit draggingChanged(true);
+        updateFromX(e->position().x());
+    }
+}
+
+void EditorWedgeSlider::mouseMoveEvent(QMouseEvent* e) {
+    if (m_dragging)
+        updateFromX(e->position().x());
+}
+
+void EditorWedgeSlider::mouseReleaseEvent(QMouseEvent* e) {
+    if (m_dragging && e->button() == Qt::LeftButton) {
+        updateFromX(e->position().x());
+        m_dragging = false;
+        emit draggingChanged(false);
+    }
+}
+
+void EditorWedgeSlider::tabletEvent(QTabletEvent* e) {
+    e->ignore();
+}
+
+// ---------------- EditorOpacitySlider ----------------
+
+EditorOpacitySlider::EditorOpacitySlider(QWidget* parent)
+    : QWidget(parent) {
+    setFixedHeight(28);
+    setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::NoFocus);
+    m_pal = editorPaletteFor(false);
+}
+
+void EditorOpacitySlider::setRange(double minVal, double maxVal, double step) {
+    m_min = minVal;
+    m_max = std::max(minVal + 0.0001, maxVal);
+    m_step = std::max(0.0001, step);
+    m_value = std::clamp(m_value, m_min, m_max);
+    update();
+}
+
+void EditorOpacitySlider::setValue(double value) {
+    const double clamped = std::clamp(value, m_min, m_max);
+    if (std::abs(clamped - m_value) < 1e-6)
+        return;
+    m_value = clamped;
+    update();
+}
+
+void EditorOpacitySlider::setColor(const QColor& color) {
+    if (m_color == color)
+        return;
+    m_color = color;
+    update();
+}
+
+void EditorOpacitySlider::applyEditorTheme(bool dark) {
+    m_dark = dark;
+    m_pal = editorPaletteFor(dark);
+    update();
+}
+
+void EditorOpacitySlider::updateFromX(qreal x) {
+    const qreal left = 8.0;
+    const qreal right = std::max<qreal>(left + 1.0, width() - 8.0);
+    const double t = std::clamp((x - left) / (right - left), 0.0, 1.0);
+    double raw = m_min + t * (m_max - m_min);
+    if (m_step > 0.0)
+        raw = m_min + std::round((raw - m_min) / m_step) * m_step;
+    raw = std::clamp(raw, m_min, m_max);
+    if (std::abs(raw - m_value) >= 1e-6) {
+        m_value = raw;
+        update();
+        emit valueChanged(m_value);
+    }
+}
+
+void EditorOpacitySlider::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    const QRectF track(4.0, (height() - 8.0) * 0.5, std::max<qreal>(8.0, width() - 8.0), 8.0);
+    QPainterPath clip;
+    clip.addRoundedRect(track, 4.0, 4.0);
+
+    // Damero 4x4 + degradado transparente -> color sólido
+    p.save();
+    p.setClipPath(clip);
+    const QColor cA = m_dark ? QColor("#1F222B") : QColor("#FFFFFF");
+    const QColor cB = m_dark ? QColor("#2A2D36") : QColor("#E4E4E7");
+    p.fillRect(track, cA);
+    constexpr qreal cell = 4.0;
+    p.setPen(Qt::NoPen);
+    p.setBrush(cB);
+    for (int row = 0; row < 2; ++row) {
+        for (qreal x = track.left() + (row % 2) * cell; x < track.right(); x += cell * 2.0) {
+            p.drawRect(QRectF(x, track.top() + row * cell, cell, cell));
+        }
+    }
+    QLinearGradient grad(track.left(), 0.0, track.right(), 0.0);
+    QColor c0 = m_color; c0.setAlpha(0);
+    QColor c1 = m_color; c1.setAlpha(255);
+    grad.setColorAt(0.0, c0);
+    grad.setColorAt(1.0, c1);
+    p.fillRect(track, grad);
+    p.restore();
+
+    const qreal t = std::clamp((m_value - m_min) / (m_max - m_min), 0.0, 1.0);
+    const qreal cx = std::clamp(track.left() + 4.0 + t * (track.width() - 8.0), 9.0, width() - 9.0);
+    const qreal cy = height() * 0.5;
+    const qreal r = 8.0; // 16x16 px
+
+    p.setPen(QPen(m_dark ? QColor(255, 255, 255, 102) : QColor(15, 23, 42, 64), 1.5));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QPointF(cx, cy), r + 1.5, r + 1.5);
+
+    p.setPen(QPen(m_dark ? QColor("#171A22") : m_pal.surfaceSolid, 2.0));
+    p.setBrush(m_dark ? QColor("#1F222B") : QColor("#FFFFFF"));
+    p.drawEllipse(QPointF(cx, cy), r, r);
+
+    QColor fillCol = m_color;
+    fillCol.setAlphaF(std::clamp(0.35 + m_value * 0.75, 0.25, 1.0));
+    p.setPen(Qt::NoPen);
+    p.setBrush(fillCol);
+    p.drawEllipse(QPointF(cx, cy), r - 1.0, r - 1.0);
+}
+
+void EditorOpacitySlider::mousePressEvent(QMouseEvent* e) {
+    if (e->button() == Qt::LeftButton) {
+        m_dragging = true;
+        updateFromX(e->position().x());
+    }
+}
+
+void EditorOpacitySlider::mouseMoveEvent(QMouseEvent* e) {
+    if (m_dragging)
+        updateFromX(e->position().x());
+}
+
+void EditorOpacitySlider::mouseReleaseEvent(QMouseEvent* e) {
+    if (m_dragging && e->button() == Qt::LeftButton) {
+        updateFromX(e->position().x());
+        m_dragging = false;
+    }
+}
+
+void EditorOpacitySlider::tabletEvent(QTabletEvent* e) {
     e->ignore();
 }
 

@@ -12,6 +12,8 @@
 #include <QPointer>
 #include <QResizeEvent>
 #include <QTimer>
+#include <QVariantAnimation>
+#include <QWindow>
 
 #include <algorithm>
 #include <cmath>
@@ -40,20 +42,20 @@ const QVector<ToolSpec>& canonicalTools() {
         {ToolType::Shape, "shapes", true, true},
         {ToolType::Text, "text", false, false},
         {ToolType::Select, "el", false, false, true},
-        {ToolType::Laser, "laser", true, false},
+        {ToolType::Laser, "laser", false, false},
     };
     return list;
-}
-
-bool toolUsesWidths(ToolType t) {
-    return t == ToolType::Pen || t == ToolType::Ballpoint || t == ToolType::Highlighter ||
-           t == ToolType::Eraser || t == ToolType::Shape || t == ToolType::Polyline;
 }
 
 bool toolUsesColors(ToolType t) {
     return t == ToolType::Pen || t == ToolType::Ballpoint || t == ToolType::Highlighter ||
            t == ToolType::Fill || t == ToolType::Shape || t == ToolType::Polyline ||
            t == ToolType::Text || t == ToolType::Laser;
+}
+
+bool toolUsesWidth(ToolType t) {
+    return t == ToolType::Pen || t == ToolType::Ballpoint || t == ToolType::Highlighter ||
+           t == ToolType::Eraser || t == ToolType::Shape || t == ToolType::Polyline;
 }
 
 bool isPenGroup(ToolType t) {
@@ -245,7 +247,7 @@ void EditorDropdownMenu::mouseReleaseEvent(QMouseEvent* event) {
 EditorToast::EditorToast(QWidget* parent)
     : EditorGlassCard(parent) {
     setRole(Role::ContextCapsule);
-    setCornerRadius(12.0);
+    setCornerRadius(18.0);
     setMouseTracking(true);
     hide();
     m_timer = new QTimer(this);
@@ -253,6 +255,12 @@ EditorToast::EditorToast(QWidget* parent)
     connect(m_timer, &QTimer::timeout, this, [this] {
         hide();
         emit visibilityChanged();
+    });
+    m_barAnim = new QVariantAnimation(this);
+    m_barAnim->setEasingCurve(QEasingCurve::Linear);
+    connect(m_barAnim, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
+        m_countdown = v.toReal();
+        update();
     });
 }
 
@@ -264,20 +272,31 @@ void EditorToast::showToast(const QString& msg, bool withUndo, int durationMs) {
     m_msg = msg;
     m_withUndo = withUndo;
     m_hoverUndo = false;
-    const QFontMetricsF fm(editorFont(12.0, QFont::Medium));
+    m_countdown = 1.0;
+    const QFontMetricsF fm(editorFont(12.5, QFont::Medium));
     const int textW = int(std::ceil(fm.horizontalAdvance(msg)));
-    const int w = std::clamp(textW + (withUndo ? 114 : 36), 140, 520);
-    setFixedSize(w, 36);
+    const int w = std::clamp(textW + (withUndo ? 116 : 36), 120, 520);
+    setFixedSize(w, withUndo ? 40 : 36);
+    setCornerRadius(withUndo ? 12.0 : 18.0);
     show();
     raise();
     emit visibilityChanged();
     update();
-    if (durationMs > 0)
+    if (m_barAnim)
+        m_barAnim->stop();
+    if (durationMs > 0) {
         m_timer->start(durationMs);
+        if (withUndo && m_barAnim && !tokens::reducedMotion()) {
+            m_barAnim->setDuration(durationMs);
+            m_barAnim->setStartValue(1.0);
+            m_barAnim->setEndValue(0.0);
+            m_barAnim->start();
+        }
+    }
 }
 
 QRectF EditorToast::undoRect() const {
-    return QRectF(width() - 82.0, 5.0, 74.0, height() - 10.0);
+    return QRectF(width() - 84.0, 6.0, 74.0, height() - 14.0);
 }
 
 void EditorToast::paintEvent(QPaintEvent* event) {
@@ -285,19 +304,32 @@ void EditorToast::paintEvent(QPaintEvent* event) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    p.setFont(editorFont(12.0, QFont::Medium));
+    p.setFont(editorFont(12.5, QFont::Medium));
     p.setPen(m_pal.text);
-    const QRectF textR(14.0, 0.0, width() - (m_withUndo ? 102.0 : 28.0), height());
-    p.drawText(textR, Qt::AlignLeft | Qt::AlignVCenter, m_msg);
+    const QRectF textR(14.0, 0.0, width() - (m_withUndo ? 104.0 : 28.0), height() - (m_withUndo ? 4.0 : 0.0));
+    p.drawText(textR, (m_withUndo ? Qt::AlignLeft : Qt::AlignCenter) | Qt::AlignVCenter, m_msg);
 
     if (m_withUndo) {
         const QRectF ur = undoRect();
-        p.setPen(Qt::NoPen);
-        p.setBrush(m_hoverUndo ? m_pal.accent : m_pal.subtle);
-        p.drawRoundedRect(ur, 7.0, 7.0);
-        p.setFont(editorFont(11.5, QFont::DemiBold));
-        p.setPen(m_hoverUndo ? m_pal.accentFg : m_pal.text);
+        if (m_hoverUndo) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(m_pal.hover);
+            p.drawRoundedRect(ur, 8.0, 8.0);
+        }
+        p.setFont(editorFont(12.5, QFont::DemiBold));
+        p.setPen(m_pal.accent);
         p.drawText(ur, Qt::AlignCenter, QStringLiteral("Deshacer"));
+
+        // Barra de cuenta regresiva de 2 px en el borde inferior
+        const QRectF barTrack(10.0, height() - 6.0, width() - 20.0, 2.0);
+        p.setPen(Qt::NoPen);
+        p.setBrush(m_dark ? QColor(255, 255, 255, 26) : QColor(15, 23, 42, 24));
+        p.drawRoundedRect(barTrack, 1.0, 1.0);
+        if (m_countdown > 0.005) {
+            p.setBrush(m_pal.accent);
+            p.drawRoundedRect(QRectF(barTrack.left(), barTrack.top(),
+                                     barTrack.width() * m_countdown, barTrack.height()), 1.0, 1.0);
+        }
     }
 }
 
@@ -466,7 +498,7 @@ EditorTopBar::EditorTopBar(QWidget* parent)
     : EditorGlassCard(parent) {
     setRole(Role::BarGlass);
     setCornerRadius(0.0);
-    setFixedHeight(84);
+    setFixedHeight(98);
     setMouseTracking(true);
 
     m_renameEdit = new EditorLineEdit(this);
@@ -474,6 +506,12 @@ EditorTopBar::EditorTopBar(QWidget* parent)
     m_renameEdit->installEventFilter(this);
     connect(m_renameEdit, &QLineEdit::editingFinished, this, [this] { finishInlineRename(true); });
     connect(m_renameEdit, &QLineEdit::returnPressed, this, [this] { finishInlineRename(true); });
+
+    m_wedgeSlider = new EditorWedgeSlider(this);
+    m_wedgeSlider->hide();
+    connect(m_wedgeSlider, &EditorWedgeSlider::valueChanged, this, [this](double mm) {
+        emit toolWidthChanged(m_activeTool, mm);
+    });
 }
 
 bool EditorTopBar::eventFilter(QObject* watched, QEvent* event) {
@@ -491,6 +529,8 @@ void EditorTopBar::applyEditorTheme(bool dark) {
     EditorGlassCard::applyEditorTheme(dark);
     if (m_renameEdit)
         m_renameEdit->applyEditorTheme(dark);
+    if (m_wedgeSlider)
+        m_wedgeSlider->applyEditorTheme(dark);
 }
 
 void EditorTopBar::setDockMode(ToolbarDockMode mode) {
@@ -498,7 +538,7 @@ void EditorTopBar::setDockMode(ToolbarDockMode mode) {
         return;
     finishInlineRename(false);
     m_dockMode = mode;
-    setFixedHeight(mode == ToolbarDockMode::Top ? 84 : 38);
+    setFixedHeight(mode == ToolbarDockMode::Top ? 98 : 42);
     rebuildHits();
     update();
 }
@@ -542,9 +582,12 @@ void EditorTopBar::syncFromCanvas(CanvasWidget* canvas) {
 
     m_widths = canvas->toolWidths(m_activeTool);
     m_activeWidthSlot = canvas->activeWidthSlot(m_activeTool);
-    m_showWidths = toolUsesWidths(m_activeTool);
+    m_showWidths = false;
+    m_showWedge = toolUsesWidth(m_activeTool);
 
     m_colors = canvas->toolPalette(m_activeTool);
+    if (m_colors.size() > 10)
+        m_colors.resize(10);
     m_activeColorIdx = canvas->activeColorIndex(m_activeTool);
     m_showColors = toolUsesColors(m_activeTool);
 
@@ -560,6 +603,41 @@ void EditorTopBar::syncFromCanvas(CanvasWidget* canvas) {
         ? QColor("#FACC15")
         : hlPal.at(std::clamp(hlIdx, 0, int(hlPal.size()) - 1));
 
+    const auto fillPal = canvas->toolPalette(ToolType::Fill);
+    const int fillIdx = canvas->activeColorIndex(ToolType::Fill);
+    m_fillBarColor = fillPal.isEmpty()
+        ? m_penNibColor
+        : resolveAdaptableInkColor(fillPal.at(std::clamp(fillIdx, 0, int(fillPal.size()) - 1)), m_darkSheet);
+
+    if (m_wedgeSlider) {
+        const int curTip = canvas->penTip();
+        const bool shouldAnim = (m_lastWedgeTool != m_activeTool)
+            || (isPenGroup(m_activeTool) && m_lastPenTip != -1 && m_lastPenTip != curTip);
+        m_lastWedgeTool = m_activeTool;
+        m_lastPenTip = curTip;
+
+        if (m_activeTool == ToolType::Eraser) {
+            m_wedgeSlider->setRange(6.0, 60.0, 1.0);
+            m_wedgeSlider->setEraserStyle(true);
+            m_wedgeSlider->setValue(canvas->eraserSize(), shouldAnim);
+        } else if (m_activeTool == ToolType::Highlighter) {
+            m_wedgeSlider->setRange(4.0, 28.0, 1.0);
+            m_wedgeSlider->setEraserStyle(false);
+            m_wedgeSlider->setThumbColor(m_hlBarColor);
+            m_wedgeSlider->setValue(canvas->strokeSize(), shouldAnim);
+        } else if (isShapeGroup(m_activeTool)) {
+            m_wedgeSlider->setRange(0.5, 12.0, 0.5);
+            m_wedgeSlider->setEraserStyle(false);
+            m_wedgeSlider->setThumbColor(m_penNibColor);
+            m_wedgeSlider->setValue(canvas->strokeSize(), shouldAnim);
+        } else {
+            m_wedgeSlider->setRange(0.3, 8.0, 0.1);
+            m_wedgeSlider->setEraserStyle(false);
+            m_wedgeSlider->setThumbColor(m_penNibColor);
+            m_wedgeSlider->setValue(canvas->penTipWidth(curTip), shouldAnim);
+        }
+    }
+
     rebuildHits();
     update();
 }
@@ -571,6 +649,15 @@ void EditorTopBar::resizeEvent(QResizeEvent* event) {
     rebuildHits();
 }
 
+bool EditorTopBar::showWindowControls() const {
+#ifdef Q_OS_WIN
+    const QWidget* win = window();
+    return !(win && win->isFullScreen());
+#else
+    return false;
+#endif
+}
+
 void EditorTopBar::rebuildHits() {
     m_hits.clear();
     m_row2Dividers.clear();
@@ -578,84 +665,98 @@ void EditorTopBar::rebuildHits() {
     if (W <= 60)
         return;
 
-    // Fila 1 (38 px): Inicio + pestañas + (+) + controles derecha (si Left/Float) + Pantalla completa
-    m_hits.append({QRectF(8, 5, 28, 28), HitKind::Home, 0, ToolType::Pen, false, QStringLiteral("home"), {}});
+    const bool winCtrls = showWindowControls();
 
-    int rightUsed = 40; // fullscreen button on right
+    // Fila 1 (42 px): Inicio + pestañas + (+) + controles derecha (si Left/Float) + Pantalla completa (+ controles de ventana en Windows)
+    m_hits.append({QRectF(8, 4, 34, 34), HitKind::Home, 0, ToolType::Pen, false, QStringLiteral("home"), {}});
+
+    int rightUsed = 46 + (winCtrls ? 108 : 0); // fullscreen button (+ window controls) on right
     if (m_dockMode != ToolbarDockMode::Top) {
-        rightUsed += 28 + 28 + 12; // undo + redo + div
-        rightUsed += 28 + 6 + 26 + 46 + 26 + 6 + 30 + 28 + 12; // paper + zoom(-,%,+) + export + gear + gap
+        rightUsed += 34 + 34 + 12; // undo + redo + div
+        rightUsed += 34 + 8 + 30 + 58 + 30 + 8 + 34 + 34 + 12; // paper + zoom(-,%,+) + export + gear + gap
     }
 
-    const int tabStartX = 44;
-    const int tabMaxEnd = std::max(tabStartX + 120, W - rightUsed - 38);
+    const int tabStartX = 48;
+    const int tabMaxEnd = std::max(tabStartX + 120, W - rightUsed - 42);
     const int nTabs = std::max(1, int(m_tabs.size()));
     const int availForTabs = std::max(60, tabMaxEnd - tabStartX);
-    const int tabW = std::clamp((availForTabs - (nTabs - 1) * 3) / nTabs, 56, 188);
+    const int tabW = std::clamp((availForTabs - (nTabs - 1) * 4) / nTabs, 64, 210);
 
     int tx = tabStartX;
     for (int i = 0; i < m_tabs.size(); ++i) {
-        const QRectF tr(tx, 6, tabW, 32);
+        const QRectF tr(tx, 8, tabW, 34);
         m_hits.append({tr, HitKind::Tab, i, ToolType::Pen, false, {}, m_tabs.at(i).title});
         if (m_tabs.size() > 1)
-            m_hits.append({QRectF(tr.right() - 22, tr.center().y() - 8, 16, 16), HitKind::TabClose, i, ToolType::Pen, false, {}, {}});
-        tx += tabW + 3;
+            m_hits.append({QRectF(tr.right() - 24, tr.center().y() - 9, 18, 18), HitKind::TabClose, i, ToolType::Pen, false, {}, {}});
+        tx += tabW + 4;
     }
-    m_hits.append({QRectF(tx + 3, 5, 28, 28), HitKind::NewTab, 0, ToolType::Pen, false, QStringLiteral("plus"), {}});
+    m_hits.append({QRectF(tx + 4, 4, 34, 34), HitKind::NewTab, 0, ToolType::Pen, false, QStringLiteral("plus"), {}});
 
-    int rx = W - 36;
-    m_hits.append({QRectF(rx, 4, 30, 30), HitKind::Fullscreen, 0, ToolType::Pen, false, QStringLiteral("fit"), {}});
+    if (winCtrls) {
+        m_hits.append({QRectF(W - 108, 6, 30, 30), HitKind::WinMinimize, 0, ToolType::Pen, false, {}, {}});
+        m_hits.append({QRectF(W - 74, 6, 30, 30), HitKind::WinMaximize, 0, ToolType::Pen, false, {}, {}});
+        m_hits.append({QRectF(W - 40, 6, 30, 30), HitKind::WinClose, 0, ToolType::Pen, false, {}, {}});
+    }
+
+    int rx = winCtrls ? (W - 148) : (W - 42);
+    m_hits.append({QRectF(rx, 4, 34, 34), HitKind::Fullscreen, 0, ToolType::Pen, false, QStringLiteral("fit"), {}});
 
     if (m_dockMode != ToolbarDockMode::Top) {
         rx -= 10;
-        rx -= 28; m_hits.append({QRectF(rx, 5, 28, 28), HitKind::Gear, 0, ToolType::Pen, false, QStringLiteral("gear"), {}});
-        rx -= 30; m_hits.append({QRectF(rx, 5, 28, 28), HitKind::Export, 0, ToolType::Pen, false, QStringLiteral("export"), {}});
-        rx -= 6;
-        rx -= 26; m_hits.append({QRectF(rx, 5, 26, 28), HitKind::ZoomIn, 0, ToolType::Pen, false, QStringLiteral("plus"), {}});
-        rx -= 46; m_hits.append({QRectF(rx, 5, 46, 28), HitKind::ZoomReset, 0, ToolType::Pen, false, {}, QStringLiteral("%1 %").arg(m_zoomPercent)});
-        rx -= 26; m_hits.append({QRectF(rx, 5, 26, 28), HitKind::ZoomOut, 0, ToolType::Pen, false, QStringLiteral("minus"), {}});
-        rx -= 6;
-        rx -= 28; m_hits.append({QRectF(rx, 5, 28, 28), HitKind::Paper, 0, ToolType::Pen, false, QStringLiteral("paper"), {}});
+        rx -= 34; m_hits.append({QRectF(rx, 4, 34, 34), HitKind::Gear, 0, ToolType::Pen, false, QStringLiteral("gear"), {}});
+        rx -= 36; m_hits.append({QRectF(rx, 4, 34, 34), HitKind::Export, 0, ToolType::Pen, false, QStringLiteral("export"), {}});
+        rx -= 8;
+        rx -= 30; m_hits.append({QRectF(rx, 4, 30, 34), HitKind::ZoomIn, 0, ToolType::Pen, false, QStringLiteral("plus"), {}});
+        rx -= 58; m_hits.append({QRectF(rx, 5, 56, 32), HitKind::ZoomReset, 0, ToolType::Pen, false, {}, QStringLiteral("%1 %").arg(m_zoomPercent)});
+        rx -= 30; m_hits.append({QRectF(rx, 4, 30, 34), HitKind::ZoomOut, 0, ToolType::Pen, false, QStringLiteral("minus"), {}});
+        rx -= 8;
+        rx -= 34; m_hits.append({QRectF(rx, 4, 34, 34), HitKind::Paper, 0, ToolType::Pen, false, QStringLiteral("paper"), {}});
         rx -= 10;
-        rx -= 28; m_hits.append({QRectF(rx, 5, 28, 28), HitKind::Redo, 0, ToolType::Pen, false, QStringLiteral("redo"), {}});
-        rx -= 30; m_hits.append({QRectF(rx, 5, 28, 28), HitKind::Undo, 0, ToolType::Pen, false, QStringLiteral("undo"), {}});
+        rx -= 34; m_hits.append({QRectF(rx, 4, 34, 34), HitKind::Redo, 0, ToolType::Pen, false, QStringLiteral("redo"), {}});
+        rx -= 36; m_hits.append({QRectF(rx, 4, 34, 34), HitKind::Undo, 0, ToolType::Pen, false, QStringLiteral("undo"), {}});
     }
 
-    if (m_dockMode != ToolbarDockMode::Top)
+    if (m_dockMode != ToolbarDockMode::Top) {
+        if (m_wedgeSlider)
+            m_wedgeSlider->hide();
         return;
+    }
 
-    // Fila 2 (y = 38..84, alto 46 px)
-    const qreal y2 = 44.0;
-    m_hits.append({QRectF(10, y2, 34, 34), HitKind::Undo, 0, ToolType::Pen, false, QStringLiteral("undo"), {}});
-    m_hits.append({QRectF(46, y2, 34, 34), HitKind::Redo, 0, ToolType::Pen, false, QStringLiteral("redo"), {}});
+    // Fila 2 (y = 42..98, alto 56 px, botones 40 px centrados en y2 = 50)
+    const qreal y2 = 50.0;
+    m_hits.append({QRectF(10, y2, 40, 40), HitKind::Undo, 0, ToolType::Pen, false, QStringLiteral("undo"), {}});
+    m_hits.append({QRectF(52, y2, 40, 40), HitKind::Redo, 0, ToolType::Pen, false, QStringLiteral("redo"), {}});
 
     // Calcular bloque derecho primero para evitar solapamientos
     int r2x = W - 10;
-    r2x -= 34; m_hits.append({QRectF(r2x, y2, 34, 34), HitKind::Gear, 0, ToolType::Pen, false, QStringLiteral("gear"), {}});
-    r2x -= 36; m_hits.append({QRectF(r2x, y2, 34, 34), HitKind::Export, 0, ToolType::Pen, false, QStringLiteral("export"), {}});
-    m_row2Dividers.append(r2x - 4.5);
-    r2x -= 9; // vdiv
-    r2x -= 28; m_hits.append({QRectF(r2x, y2 + 3, 28, 28), HitKind::ZoomIn, 0, ToolType::Pen, false, QStringLiteral("plus"), {}});
-    r2x -= 48; m_hits.append({QRectF(r2x, y2 + 3, 46, 28), HitKind::ZoomReset, 0, ToolType::Pen, false, {}, QStringLiteral("%1 %").arg(m_zoomPercent)});
-    r2x -= 30; m_hits.append({QRectF(r2x, y2 + 3, 28, 28), HitKind::ZoomOut, 0, ToolType::Pen, false, QStringLiteral("minus"), {}});
-    m_row2Dividers.append(r2x - 4.5);
-    r2x -= 9; // vdiv
-    r2x -= 34; m_hits.append({QRectF(r2x, y2, 34, 34), HitKind::Paper, 0, ToolType::Pen, false, QStringLiteral("paper"), {}});
+    r2x -= 40; m_hits.append({QRectF(r2x, y2, 40, 40), HitKind::Gear, 0, ToolType::Pen, false, QStringLiteral("gear"), {}});
+    r2x -= 42; m_hits.append({QRectF(r2x, y2, 40, 40), HitKind::Export, 0, ToolType::Pen, false, QStringLiteral("export"), {}});
+    m_row2Dividers.append(r2x - 9.5);
+    r2x -= 19; // 9 px margen + 1 px divisor + 9 px margen
+    r2x -= 34; m_hits.append({QRectF(r2x, y2 + 2, 34, 36), HitKind::ZoomIn, 0, ToolType::Pen, false, QStringLiteral("plus"), {}});
+    r2x -= 62; m_hits.append({QRectF(r2x, y2 + 3, 60, 34), HitKind::ZoomReset, 0, ToolType::Pen, false, {}, QStringLiteral("%1 %").arg(m_zoomPercent)});
+    r2x -= 36; m_hits.append({QRectF(r2x, y2 + 2, 34, 36), HitKind::ZoomOut, 0, ToolType::Pen, false, QStringLiteral("minus"), {}});
+    m_row2Dividers.append(r2x - 9.5);
+    r2x -= 19; // vdiv
+    r2x -= 40; m_hits.append({QRectF(r2x, y2, 40, 40), HitKind::Paper, 0, ToolType::Pen, false, QStringLiteral("paper"), {}});
 
-    // Reservar ancho fijo (herramientas + grosores + colores) para que los iconos
+    // Reservar ancho fijo (herramientas + slider-cuña + 5 colores + arcoíris) para que los iconos
     // de herramientas no salten horizontalmente al cambiar entre herramientas.
     const auto& tools = canonicalTools();
-    const int leftBound = 92;
-    const int rightBound = r2x - 8;
+    const int leftBound = 102;
+    const int rightBound = r2x - 10;
     const int availCenter = std::max(320, rightBound - leftBound);
 
-    const bool compact = (availCenter < 710);
-    const qreal sepGap = compact ? 5.0 : 9.0;
-    const qreal toolBtnW = compact ? 30.0 : 34.0;
-    const qreal toolStep = compact ? 31.0 : 36.0;
-    const qreal wSlotW = compact ? 25.0 : 30.0;
-    const qreal wSlotStep = compact ? 26.0 : 31.0;
-    const qreal swatchSz = compact ? 17.0 : 20.0;
+    const int colorSlots = 10;
+    const int fullToolsW = int(tools.size()) * 42 + 3 * 19;
+    const int fullReservedW = fullToolsW + (19 + 130) + (19 + colorSlots * 24 + 20 + 4);
+    const bool compact = (availCenter < fullReservedW);
+
+    const qreal sepGap = compact ? 11.0 : 19.0;
+    const qreal toolBtnW = compact ? 34.0 : 40.0;
+    const qreal toolStep = compact ? 36.0 : 42.0;
+    const int wedgeW = compact ? 96 : 130;
+    const qreal swatchSz = compact ? 18.0 : 20.0;
     const qreal colorStep = compact ? 20.0 : 24.0;
 
     int toolsW = 0;
@@ -664,8 +765,8 @@ void EditorTopBar::rebuildHits() {
             toolsW += int(sepGap);
         toolsW += int(toolStep);
     }
-    const int colorSlots = std::max(6, int(m_colors.size()));
-    const int reservedCenterW = toolsW + (int(sepGap) + 3 * int(wSlotStep))
+    const int reservedCenterW = toolsW
+        + (int(sepGap) + wedgeW)
         + (int(sepGap) + colorSlots * int(colorStep) + int(swatchSz) + 4);
 
     const int cx = std::clamp((W - reservedCenterW) / 2, leftBound, std::max(leftBound, rightBound - reservedCenterW));
@@ -677,25 +778,27 @@ void EditorTopBar::rebuildHits() {
             m_row2Dividers.append(x + sepGap * 0.5);
             x += sepGap;
         }
-        m_hits.append({QRectF(x, y2 + (34.0 - toolBtnW) * 0.5, toolBtnW, toolBtnW),
+        m_hits.append({QRectF(x, y2 + (40.0 - toolBtnW) * 0.5, toolBtnW, toolBtnW),
                        t.isElements ? HitKind::Elements : HitKind::Tool,
                        0, t.tool, t.hasSub, QString::fromLatin1(t.icon), {}});
         x += toolStep;
     }
 
-    if (m_showWidths) {
+    if (m_showWedge && m_wedgeSlider) {
         m_row2Dividers.append(x + sepGap * 0.5);
         x += sepGap;
-        for (int i = 0; i < 3; ++i) {
-            m_hits.append({QRectF(x, y2 + 3, wSlotW, 28), HitKind::WidthSlot, i, m_activeTool, false, {}, {}});
-            x += wSlotStep;
-        }
+        m_wedgeSlider->setFixedSize(wedgeW, 28);
+        m_wedgeSlider->move(int(std::round(x)), int(std::round(y2 + 6.0)));
+        m_wedgeSlider->show();
+        x += wedgeW;
+    } else if (m_wedgeSlider) {
+        m_wedgeSlider->hide();
     }
 
     if (m_showColors) {
         m_row2Dividers.append(x + sepGap * 0.5);
         x += sepGap;
-        const qreal sy = y2 + (34.0 - swatchSz) * 0.5;
+        const qreal sy = y2 + (40.0 - swatchSz) * 0.5;
         for (int i = 0; i < m_colors.size(); ++i) {
             m_hits.append({QRectF(x, sy, swatchSz, swatchSz), HitKind::ColorSwatch, i, m_activeTool, false, {}, {}});
             x += colorStep;
@@ -729,22 +832,23 @@ void EditorTopBar::paintEvent(QPaintEvent* event) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    // Fondo vidrio translúcido + fila 1 de pestañas
+    // Fondo vidrio translúcido + fila 1 de pestañas (42 px)
     p.fillRect(rect(), m_pal.surfaceGlass);
-    p.fillRect(QRectF(0, 0, width(), 38), m_pal.tabsBg);
+    p.fillRect(QRectF(0, 0, width(), 42), m_pal.tabsBg);
     p.setPen(QPen(m_pal.borderSoft, 1.0));
-    p.drawLine(QPointF(0, 37.5), QPointF(width(), 37.5));
+    p.drawLine(QPointF(0, 41.5), QPointF(width(), 41.5));
     if (m_dockMode == ToolbarDockMode::Top) {
         p.setPen(QPen(m_pal.border, 1.0));
         p.drawLine(QPointF(0, height() - 0.5), QPointF(width(), height() - 0.5));
     }
 
-    // Dibujar separadores verticales de fila 2 (sobre la línea media de botones)
+    // Dibujar separadores verticales de fila 2 (1 px, 24 px alto, rgba(255,255,255,.07))
     if (m_dockMode == ToolbarDockMode::Top) {
-        p.setPen(QPen(m_pal.border, 1.0));
+        const QColor divCol = m_dark ? QColor(255, 255, 255, 18) : QColor(15, 23, 42, 20);
+        p.setPen(QPen(divCol, 1.0));
         for (const qreal rawX : m_row2Dividers) {
             const qreal dx = std::round(rawX) + 0.5;
-            p.drawLine(QPointF(dx, 51.0), QPointF(dx, 71.0));
+            p.drawLine(QPointF(dx, 58.0), QPointF(dx, 82.0));
         }
     }
 
@@ -786,9 +890,9 @@ void EditorTopBar::paintEvent(QPaintEvent* event) {
             if (tab.dirty)
                 rightReserve += 10.0;
 
-            p.setFont(editorFont(11.5, active ? QFont::DemiBold : QFont::Medium));
+            p.setFont(editorFont(13.0, active ? QFont::DemiBold : QFont::Medium));
             p.setPen(active ? m_pal.text : m_pal.muted);
-            const QRectF titleRect(b.left() + 29.0, b.top(), std::max<qreal>(20.0, b.width() - 29.0 - rightReserve), b.height());
+            const QRectF titleRect(b.left() + 30.0, b.top(), std::max<qreal>(20.0, b.width() - 30.0 - rightReserve), b.height());
             const QString elided = QFontMetricsF(p.font()).elidedText(tab.title, Qt::ElideRight, titleRect.width());
             p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter, elided);
 
@@ -841,16 +945,44 @@ void EditorTopBar::paintEvent(QPaintEvent* event) {
             continue;
         }
 
+        if (h.kind == HitKind::WinMinimize || h.kind == HitKind::WinMaximize || h.kind == HitKind::WinClose) {
+            p.setPen(Qt::NoPen);
+            if (hovered) {
+                p.setBrush(h.kind == HitKind::WinClose ? QColor(220, 38, 38, 220) : m_pal.hover);
+                p.drawRoundedRect(h.rect, 8.0, 8.0);
+            }
+            const QColor fg = (hovered && h.kind == HitKind::WinClose) ? QColor(Qt::white) : m_pal.icon;
+            p.setPen(QPen(fg, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.setBrush(Qt::NoBrush);
+            const QPointF c = h.rect.center();
+            if (h.kind == HitKind::WinMinimize) {
+                p.drawLine(QPointF(c.x() - 5.0, c.y() + 1.0), QPointF(c.x() + 5.0, c.y() + 1.0));
+            } else if (h.kind == HitKind::WinMaximize) {
+                const bool maxed = window() && window()->isMaximized();
+                if (maxed) {
+                    p.drawRect(QRectF(c.x() - 4.5, c.y() - 2.5, 7.0, 7.0));
+                    p.drawLine(QPointF(c.x() - 2.0, c.y() - 4.5), QPointF(c.x() + 4.5, c.y() - 4.5));
+                    p.drawLine(QPointF(c.x() + 4.5, c.y() - 4.5), QPointF(c.x() + 4.5, c.y() + 2.0));
+                } else {
+                    p.drawRoundedRect(QRectF(c.x() - 4.5, c.y() - 4.5, 9.0, 9.0), 1.5, 1.5);
+                }
+            } else {
+                p.drawLine(QPointF(c.x() - 4.2, c.y() - 4.2), QPointF(c.x() + 4.2, c.y() + 4.2));
+                p.drawLine(QPointF(c.x() + 4.2, c.y() - 4.2), QPointF(c.x() - 4.2, c.y() + 4.2));
+            }
+            continue;
+        }
+
         if (h.kind == HitKind::Pages || h.kind == HitKind::ZoomReset) {
             p.setPen(Qt::NoPen);
             p.setBrush(hovered ? m_pal.hover : m_pal.subtle);
-            p.drawRoundedRect(h.rect, 8.0, 8.0);
-            p.setFont(editorFont(11.0, QFont::DemiBold));
+            p.drawRoundedRect(h.rect, 9.0, 9.0);
+            p.setFont(editorTabularFont(13.0, QFont::DemiBold));
             p.setPen(m_pal.text);
             if (h.kind == HitKind::Pages) {
-                paintUiIcon(&p, QRectF(h.rect.left() + 7.0, h.rect.center().y() - 6.5, 13.0, 13.0),
+                paintUiIcon(&p, QRectF(h.rect.left() + 7.0, h.rect.center().y() - 7.0, 14.0, 14.0),
                             QStringLiteral("pages"), m_pal.icon);
-                p.drawText(h.rect.adjusted(21.0, 0.0, -5.0, 0.0), Qt::AlignCenter, h.label);
+                p.drawText(h.rect.adjusted(22.0, 0.0, -5.0, 0.0), Qt::AlignCenter, h.label);
             } else {
                 p.drawText(h.rect, Qt::AlignCenter, h.label);
             }
@@ -874,28 +1006,36 @@ void EditorTopBar::paintEvent(QPaintEvent* event) {
             enabled = m_canRedo;
         }
 
+        const qreal btnRad = (h.rect.height() >= 38.0) ? 12.0 : 10.0;
         if (active) {
             p.setPen(Qt::NoPen);
             p.setBrush(m_pal.accent);
-            p.drawRoundedRect(h.rect, 9.0, 9.0);
+            p.drawRoundedRect(h.rect, btnRad, btnRad);
         } else if (hovered && enabled) {
             p.setPen(Qt::NoPen);
             p.setBrush(m_pal.hover);
-            p.drawRoundedRect(h.rect, 9.0, 9.0);
+            p.drawRoundedRect(h.rect, btnRad, btnRad);
         }
 
         QColor fg = active ? m_pal.accentFg : m_pal.icon;
         if (!enabled)
             fg.setAlphaF(0.32);
 
-        const qreal icSz = (h.rect.height() <= 30.0) ? 15.0 : 17.0;
-        const QRectF ir(h.rect.center().x() - icSz * 0.5, h.rect.center().y() - icSz * 0.5, icSz, icSz);
-        if (h.kind == HitKind::Tool && h.tool == ToolType::Pen)
-            paintDynamicPenIcon(&p, ir, fg, m_penNibColor);
-        else if (h.kind == HitKind::Tool && h.tool == ToolType::Highlighter)
-            paintDynamicHighlighterIcon(&p, ir, fg, m_hlBarColor);
-        else
-            paintUiIcon(&p, ir, h.iconName, fg);
+        const qreal icSz = (h.rect.height() >= 38.0) ? 22.0 : ((h.rect.height() <= 30.0) ? 16.0 : 19.0);
+        const bool hasColorBar = (h.kind == HitKind::Tool
+            && (h.tool == ToolType::Pen || h.tool == ToolType::Highlighter || h.tool == ToolType::Fill));
+        const qreal icYOff = hasColorBar ? -1.5 : 0.0;
+        const QRectF ir(h.rect.center().x() - icSz * 0.5, h.rect.center().y() - icSz * 0.5 + icYOff, icSz, icSz);
+        paintUiIcon(&p, ir, h.iconName, fg, QStringLiteral("tools"));
+
+        if (hasColorBar) {
+            const QColor barCol = (h.tool == ToolType::Pen) ? m_penNibColor
+                : ((h.tool == ToolType::Highlighter) ? m_hlBarColor : m_fillBarColor);
+            const QRectF barR(h.rect.center().x() - 5.0, h.rect.bottom() - 7.0, 10.0, 3.0);
+            p.setPen(Qt::NoPen);
+            p.setBrush(barCol);
+            p.drawRoundedRect(barR, 1.5, 1.5);
+        }
 
         if (h.hasSub)
             paintEditorSubChevron(p, h.rect, fg);
@@ -921,8 +1061,17 @@ void EditorTopBar::leaveEvent(QEvent*) {
 
 void EditorTopBar::mousePressEvent(QMouseEvent* event) {
     const int idx = hitIndexAt(event->position());
-    if (idx < 0)
+    if (idx < 0) {
+#ifdef Q_OS_WIN
+        if (event->button() == Qt::LeftButton && event->position().y() <= 42.0) {
+            if (QWidget* w = window()) {
+                if (QWindow* wh = w->windowHandle())
+                    wh->startSystemMove();
+            }
+        }
+#endif
         return;
+    }
     const auto& h = m_hits.at(idx);
 
     if (event->button() == Qt::RightButton) {
@@ -945,6 +1094,17 @@ void EditorTopBar::mouseDoubleClickEvent(QMouseEvent* event) {
         m_renameEdit->selectAll();
         m_renameEdit->setFocus();
     }
+#ifdef Q_OS_WIN
+    else if (idx < 0 && event->button() == Qt::LeftButton && event->position().y() <= 42.0) {
+        if (QWidget* w = window()) {
+            if (w->isMaximized())
+                w->showNormal();
+            else
+                w->showMaximized();
+            update();
+        }
+    }
+#endif
 }
 
 void EditorTopBar::startInlineRenameActiveTab() {
@@ -988,6 +1148,23 @@ void EditorTopBar::mouseReleaseEvent(QMouseEvent* event) {
     case HitKind::TabClose: emit closeTabRequested(h.index); break;
     case HitKind::NewTab: emit addTabRequested(anchorInParent); break;
     case HitKind::Fullscreen: emit fullscreenRequested(); break;
+    case HitKind::WinMinimize:
+        if (QWidget* w = window())
+            w->showMinimized();
+        break;
+    case HitKind::WinMaximize:
+        if (QWidget* w = window()) {
+            if (w->isMaximized())
+                w->showNormal();
+            else
+                w->showMaximized();
+            update();
+        }
+        break;
+    case HitKind::WinClose:
+        if (QWidget* w = window())
+            w->close();
+        break;
     case HitKind::Undo: if (m_canUndo) emit undoRequested(); break;
     case HitKind::Redo: if (m_canRedo) emit redoRequested(); break;
     case HitKind::Elements: emit elementsPanelToggled(); break;
@@ -1027,28 +1204,28 @@ QRect EditorTopBar::anchorRectForTool(ToolType tool) const {
             return QRect(mapTo(parentWidget(), h.rect.topLeft().toPoint()), h.rect.size().toSize());
         }
     }
-    return QRect(120, 44, 34, 34);
+    return QRect(120, 50, 40, 40);
 }
 
 QRect EditorTopBar::paperButtonRect() const {
     for (const auto& h : m_hits)
         if (h.kind == HitKind::Paper)
             return QRect(mapTo(parentWidget(), h.rect.topLeft().toPoint()), h.rect.size().toSize());
-    return QRect(width() - 180, 44, 34, 34);
+    return QRect(width() - 180, 50, 40, 40);
 }
 
 QRect EditorTopBar::pagesButtonRect() const {
     for (const auto& h : m_hits)
         if (h.kind == HitKind::Pages)
             return QRect(mapTo(parentWidget(), h.rect.topLeft().toPoint()), h.rect.size().toSize());
-    return QRect(width() - 240, 44, 60, 28);
+    return QRect(width() - 240, 50, 60, 34);
 }
 
 QRect EditorTopBar::exportButtonRect() const {
     for (const auto& h : m_hits)
         if (h.kind == HitKind::Export)
             return QRect(mapTo(parentWidget(), h.rect.topLeft().toPoint()), h.rect.size().toSize());
-    return QRect(width() - 80, 44, 34, 34);
+    return QRect(width() - 80, 50, 40, 40);
 }
 
 QRect EditorTopBar::activeColorAreaRect() const {
@@ -1094,8 +1271,10 @@ void EditorDetachedDock::syncFromCanvas(CanvasWidget* canvas, ToolbarDockMode mo
     m_darkSheet = canvas->isCurrentSheetDark();
     m_widths = canvas->toolWidths(m_activeTool);
     m_activeWidthSlot = canvas->activeWidthSlot(m_activeTool);
-    m_showWidths = toolUsesWidths(m_activeTool);
+    m_showWidths = false;
     m_colors = canvas->toolPalette(m_activeTool);
+    if (m_colors.size() > 10)
+        m_colors.resize(10);
     m_activeColorIdx = canvas->activeColorIndex(m_activeTool);
     m_showColors = toolUsesColors(m_activeTool);
 
@@ -1110,6 +1289,12 @@ void EditorDetachedDock::syncFromCanvas(CanvasWidget* canvas, ToolbarDockMode mo
     m_hlBarColor = hlPal.isEmpty()
         ? QColor("#FACC15")
         : hlPal.at(std::clamp(hlIdx, 0, int(hlPal.size()) - 1));
+
+    const auto fillPal = canvas->toolPalette(ToolType::Fill);
+    const int fillIdx = canvas->activeColorIndex(ToolType::Fill);
+    m_fillBarColor = fillPal.isEmpty()
+        ? m_penNibColor
+        : resolveAdaptableInkColor(fillPal.at(std::clamp(fillIdx, 0, int(fillPal.size()) - 1)), m_darkSheet);
 
     rebuildLayoutAndHits();
     update();
@@ -1245,21 +1430,29 @@ void EditorDetachedDock::paintEvent(QPaintEvent* event) {
         if (active) {
             p.setPen(Qt::NoPen);
             p.setBrush(m_pal.accent);
-            p.drawRoundedRect(h.rect, 9.0, 9.0);
+            p.drawRoundedRect(h.rect, 11.0, 11.0);
         } else if (hovered) {
             p.setPen(Qt::NoPen);
             p.setBrush(m_pal.hover);
-            p.drawRoundedRect(h.rect, 9.0, 9.0);
+            p.drawRoundedRect(h.rect, 11.0, 11.0);
         }
 
         const QColor fg = active ? m_pal.accentFg : m_pal.icon;
-        const QRectF ir(h.rect.center().x() - 8.5, h.rect.center().y() - 8.5, 17.0, 17.0);
-        if (h.kind == HitKind::Tool && h.tool == ToolType::Pen)
-            paintDynamicPenIcon(&p, ir, fg, m_penNibColor);
-        else if (h.kind == HitKind::Tool && h.tool == ToolType::Highlighter)
-            paintDynamicHighlighterIcon(&p, ir, fg, m_hlBarColor);
-        else
-            paintUiIcon(&p, ir, h.iconName, fg);
+        const bool hasColorBar = (h.kind == HitKind::Tool
+            && (h.tool == ToolType::Pen || h.tool == ToolType::Highlighter || h.tool == ToolType::Fill));
+        const qreal icSz = 20.0;
+        const qreal icYOff = hasColorBar ? -1.5 : 0.0;
+        const QRectF ir(h.rect.center().x() - icSz * 0.5, h.rect.center().y() - icSz * 0.5 + icYOff, icSz, icSz);
+        paintUiIcon(&p, ir, h.iconName, fg, QStringLiteral("tools"));
+
+        if (hasColorBar) {
+            const QColor barCol = (h.tool == ToolType::Pen) ? m_penNibColor
+                : ((h.tool == ToolType::Highlighter) ? m_hlBarColor : m_fillBarColor);
+            const QRectF barR(h.rect.center().x() - 5.0, h.rect.bottom() - 6.0, 10.0, 3.0);
+            p.setPen(Qt::NoPen);
+            p.setBrush(barCol);
+            p.drawRoundedRect(barR, 1.5, 1.5);
+        }
 
         if (h.hasSub)
             paintEditorSubChevron(p, h.rect, fg);

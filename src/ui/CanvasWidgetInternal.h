@@ -4,9 +4,12 @@
 
 #include <QElapsedTimer>
 #include <QFocusEvent>
+#include <QFontMetricsF>
 #include <QKeyEvent>
-#include <QLineEdit>
+#include <QPlainTextEdit>
 
+#include <algorithm>
+#include <cmath>
 #include <functional>
 
 namespace finily {
@@ -20,13 +23,18 @@ inline qint64 nowMs() {
     return timer.elapsed();
 }
 
-class InlineTextEditor final : public QLineEdit {
+class InlineTextEditor final : public QPlainTextEdit {
 public:
     explicit InlineTextEditor(QWidget* parent)
-        : QLineEdit(parent) {}
+        : QPlainTextEdit(parent) {
+        setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setLineWrapMode(QPlainTextEdit::NoWrap);
+        setTabChangesFocus(false);
+    }
 
     TextItem draft;
-    double origFontSize = 16.0;
+    double origFontSize = 22.0;
     int origFamilyIndex = 0;
     bool origBold = false;
     bool origItalic = false;
@@ -34,19 +42,31 @@ public:
     std::function<void(const QString&)> commit;
     std::function<void()> onClosed;
 
+    QString text() const { return toPlainText(); }
+    void setText(const QString& s) { setPlainText(s); }
+
+    void adjustSizeToText(int minW = 180) {
+        const QFontMetricsF fm(font());
+        const QStringList lines = toPlainText().split(QLatin1Char('\n'));
+        qreal maxW = 0.0;
+        for (const QString& ln : lines)
+            maxW = std::max(maxW, fm.horizontalAdvance(ln));
+        const int lineCount = std::max(1, int(lines.size()));
+        const int targetW = std::max(minW, int(std::ceil(maxW)) + 30);
+        const int targetH = std::max(32, int(std::ceil(fm.lineSpacing() * lineCount)) + 16);
+        resize(targetW, targetH);
+    }
+
     void applyTextStyle(double zoom, const QColor& textColor, const QColor& borderColor) {
         const double pxSize = std::max(10.0, draft.fontSize * zoom);
         setFont(textFont(pxSize, draft.fontFamilyIndex, draft.bold, draft.italic));
-        const QFontMetrics fm(font());
-        const int minW = std::max(150, fm.horizontalAdvance(text().isEmpty() ? QStringLiteral("Ag") : text()) + 28);
-        const int h = std::max(28, fm.height() + 10);
-        resize(std::max(width(), minW), h);
+        adjustSizeToText(180);
         const auto bg = textColor.lightness() > 140
             ? QStringLiteral("rgba(12,18,32,0.88)")
             : QStringLiteral("rgba(255,255,255,0.92)");
         setStyleSheet(QStringLiteral(
-            "QLineEdit { background: %1; color: %2; border: 1.5px solid %3;"
-            " border-radius: 6px; padding: 2px 6px; }")
+            "QPlainTextEdit { background: %1; color: %2; border: 1.5px solid %3;"
+            " border-radius: 6px; padding: 3px 6px; }")
             .arg(bg, textColor.name(), borderColor.name()));
     }
 
@@ -54,7 +74,7 @@ public:
         if (done)
             return;
         done = true;
-        const auto value = text();
+        const auto value = toPlainText();
         hide();
         if (accept && commit)
             commit(value);
@@ -71,7 +91,8 @@ protected:
             const bool ctrlTextEdit = ke->modifiers().testFlag(Qt::ControlModifier)
                 && !ke->modifiers().testFlag(Qt::AltModifier)
                 && (k == Qt::Key_C || k == Qt::Key_V || k == Qt::Key_X
-                    || k == Qt::Key_A || k == Qt::Key_Z || k == Qt::Key_Y);
+                    || k == Qt::Key_A || k == Qt::Key_Z || k == Qt::Key_Y
+                    || k == Qt::Key_Return || k == Qt::Key_Enter);
             if (k == Qt::Key_Escape || k == Qt::Key_Return || k == Qt::Key_Enter || k == Qt::Key_Tab
                 || k == Qt::Key_Backspace || k == Qt::Key_Delete || ctrlTextEdit
                 || (!ke->modifiers().testFlag(Qt::ControlModifier)
@@ -80,7 +101,7 @@ protected:
                 return true;
             }
         }
-        return QLineEdit::event(event);
+        return QPlainTextEdit::event(event);
     }
 
     void keyPressEvent(QKeyEvent* event) override {
@@ -89,16 +110,17 @@ protected:
             event->accept();
             return;
         }
-        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+            && event->modifiers().testFlag(Qt::ControlModifier)) {
             finish(true);
             event->accept();
             return;
         }
-        QLineEdit::keyPressEvent(event);
+        QPlainTextEdit::keyPressEvent(event);
     }
 
     void focusOutEvent(QFocusEvent* event) override {
-        QLineEdit::focusOutEvent(event);
+        QPlainTextEdit::focusOutEvent(event);
         finish(true);
     }
 

@@ -55,6 +55,10 @@ ToolStrokeBank defaultToolBank(BankKey key) {
             QColor(QStringLiteral("#16A34A")),
             QColor(QStringLiteral("#D97706")),
             QColor(QStringLiteral("#7C3AED")),
+            QColor(QStringLiteral("#0EA5E9")),
+            QColor(QStringLiteral("#EC4899")),
+            QColor(QStringLiteral("#14B8A6")),
+            QColor(QStringLiteral("#78716C")),
         };
         break;
     case BankKey::Highlighter:
@@ -67,6 +71,10 @@ ToolStrokeBank defaultToolBank(BankKey key) {
             QColor(QStringLiteral("#F9A8D4")),
             QColor(QStringLiteral("#FDBA74")),
             QColor(QStringLiteral("#C4B5FD")),
+            QColor(QStringLiteral("#67E8F9")),
+            QColor(QStringLiteral("#BEF264")),
+            QColor(QStringLiteral("#FDA4AF")),
+            QColor(QStringLiteral("#CBD5E1")),
         };
         break;
     case BankKey::Eraser:
@@ -83,6 +91,8 @@ ToolStrokeBank defaultToolBank(BankKey key) {
             QColor(QStringLiteral("#F59E0B")),
             QColor(QStringLiteral("#EC4899")),
             QColor(QStringLiteral("#8B5CF6")),
+            QColor(QStringLiteral("#06B6D4")),
+            QColor(QStringLiteral("#F97316")),
         };
         break;
     }
@@ -111,8 +121,15 @@ ToolStrokeBank loadBankFromSettings(QSettings& settings, BankKey key) {
             if (c.isValid())
                 loaded.append(c);
         }
-        if (!loaded.isEmpty())
+        if (!loaded.isEmpty()) {
+            for (const QColor& defCol : std::as_const(bank.palette)) {
+                if (loaded.size() >= bank.palette.size())
+                    break;
+                if (!loaded.contains(defCol))
+                    loaded.append(defCol);
+            }
             bank.palette = std::move(loaded);
+        }
     }
     if (!bank.palette.isEmpty()) {
         bank.activeColorIndex = std::clamp(
@@ -169,20 +186,16 @@ CanvasWidget::CanvasWidget(QWidget* parent)
     m_laserTimer = new QTimer(this);
     m_laserTimer->setInterval(25);
     connect(m_laserTimer, &QTimer::timeout, this, [this] {
+        if (m_mode == InteractionMode::LaserTrail) {
+            updateLaserDirtyRect();
+            return;
+        }
         const auto now = nowMs();
-        if (m_laserMode == LaserMode::Dot) {
-            if (m_laserDotFading && now - m_laserDotReleaseMs >= 180) {
-                m_laserTrail.clear();
-                m_laserDotFading = false;
-                m_laserTimer->stop();
-            }
-        } else {
-            const int maxAge = std::max(100, m_laserDurationMs);
-            m_laserTrail.removeIf([now, maxAge](const LaserSample& sample) {
-                return now - sample.timestampMs >= maxAge;
-            });
-            if (m_laserTrail.isEmpty())
-                m_laserTimer->stop();
+        const int maxAge = (m_laserMode == LaserMode::Dot) ? 180 : std::max(100, m_laserDurationMs);
+        if (m_laserDotFading && now - m_laserDotReleaseMs >= maxAge) {
+            m_laserTrail.clear();
+            m_laserDotFading = false;
+            m_laserTimer->stop();
         }
         updateLaserDirtyRect();
     });
@@ -366,12 +379,33 @@ void CanvasWidget::setCursorStyle(int style) {
     emit stateChanged();
 }
 
+void CanvasWidget::setShadeOpacity(double opacity) {
+    if (!isFinite(opacity))
+        return;
+    const double clamped = std::clamp(opacity, 0.10, 1.0);
+    if (std::abs(m_shadeOpacity - clamped) < 1e-6)
+        return;
+    m_shadeOpacity = clamped;
+    writeAppSetting(QStringLiteral("fill/opacity"), clamped);
+    emit stateChanged();
+}
+
 void CanvasWidget::setPenTip(int tip) {
     tip = std::clamp(tip, 0, 3);
+    if (m_penTip != tip) {
+        m_penTipWidths[size_t(std::clamp(m_penTip, 0, 3))] = std::clamp(m_size, 0.3, 20.0);
+        writeAppSetting(QStringLiteral("ink/penTipWidth%1").arg(m_penTip),
+                        m_penTipWidths[size_t(m_penTip)]);
+    }
     m_penTip = tip;
+    const double restoredW = std::clamp(m_penTipWidths[size_t(tip)], 0.3, 20.0);
+    const int slot = std::clamp(m_penBank.activeSlot, 0, 2);
+    m_penBank.widths[size_t(slot)] = restoredW;
+    saveToolBank(BankKey::Pen);
     if (m_tool == ToolType::Pen || m_tool == ToolType::Ballpoint) {
-        m_tool = (tip == 0) ? ToolType::Ballpoint : ToolType::Pen;
-        m_lastWriteTool = m_tool;
+        m_tool = ToolType::Pen;
+        m_lastWriteTool = ToolType::Pen;
+        m_size = restoredW;
     }
     writeAppSetting(QStringLiteral("ink/penTip"), tip);
     emit stateChanged();
@@ -501,16 +535,26 @@ void CanvasWidget::setInkColor(const QColor& color) {
         if (key == BankKey::Laser)
             m_laserColor = color;
     }
+    // Cambio de color en 1 clic si hay editor de texto inline abierto
+    if (m_textEditor) {
+        m_textEditor->draft.color = color;
+        const ThemeConfig theme = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground());
+        m_textEditor->applyTextStyle(m_doc.viewport().zoom, color, theme.accent);
+        emit stateChanged();
+        return;
+    }
     // Cambio de color en 1 clic si hay objetos seleccionados (estilo Xournal++ / PDF Annotator)
     if (m_mode == InteractionMode::None && !m_polylineActive && hasSelection()) {
         const uint64_t revBefore = m_doc.revision();
         SelectionStyle edits;
         edits.color = color;
         setSelectionStyle(edits);
+        updateCursorShape();
         if (m_doc.revision() == revBefore)
             emit stateChanged();
         return;
     }
+    updateCursorShape();
     emit stateChanged();
 }
 
@@ -526,6 +570,10 @@ void CanvasWidget::setStrokeSize(double size) {
         const int slot = std::clamp(bank.activeSlot, 0, 2);
         bank.widths[size_t(slot)] = width;
         saveToolBank(key);
+        if (key == BankKey::Pen) {
+            m_penTipWidths[size_t(std::clamp(m_penTip, 0, 3))] = width;
+            writeAppSetting(QStringLiteral("ink/penTipWidth%1").arg(m_penTip), width);
+        }
     }
     if (m_mode == InteractionMode::None && !m_polylineActive && hasSelection()) {
         const uint64_t revBefore = m_doc.revision();
@@ -585,7 +633,7 @@ void CanvasWidget::setStabilizer(double strength) {
 void CanvasWidget::setHighlighterOpacity(double opacity) {
     if (!isFinite(opacity))
         return;
-    const double clamped = std::clamp(opacity, 0.10, 0.70);
+    const double clamped = std::clamp(opacity, 0.15, 0.90);
     if (std::abs(m_highlighterOpacity - clamped) < 1e-6)
         return;
     m_highlighterOpacity = clamped;
@@ -694,16 +742,25 @@ void CanvasWidget::loadToolBanksAndSettings() {
     m_showAutoMeasurements = settings->value(QStringLiteral("ink/showAutoMeasurements"), false).toBool();
     m_cursorStyle = std::clamp(settings->value(QStringLiteral("ink/cursorStyle"), 0).toInt(), 0, 2);
     m_penTip = std::clamp(settings->value(QStringLiteral("ink/penTip"), 1).toInt(), 0, 3);
+    const std::array<double, 4> defaultTipWidths{1.2, 2.4, 2.0, 4.6};
+    for (int i = 0; i < 4; ++i) {
+        m_penTipWidths[size_t(i)] = std::clamp(
+            settings->value(QStringLiteral("ink/penTipWidth%1").arg(i), defaultTipWidths[size_t(i)]).toDouble(),
+            0.3, 20.0);
+    }
+    m_penBank.widths[size_t(std::clamp(m_penBank.activeSlot, 0, 2))] = m_penTipWidths[size_t(m_penTip)];
+    m_shadeOpacity = std::clamp(settings->value(QStringLiteral("fill/opacity"), 0.70).toDouble(), 0.10, 1.0);
+    m_lastTextFontSize = std::clamp(settings->value(QStringLiteral("text/fontSize"), 22.0).toDouble(), 10.0, 96.0);
     m_tipPredictionEnabled = settings->value(QStringLiteral("ink/tipPrediction"), true).toBool();
     m_fountainFlickEnabled = settings->value(QStringLiteral("ink/fountainFlick"), true).toBool();
-    m_highlighterTip = std::clamp(settings->value(QStringLiteral("ink/highlighterTip"), 0).toInt(), 0, 2);
-    m_hlDrawBehindInk = settings->value(QStringLiteral("highlighter/drawBehindInk"), true).toBool();
-    m_hlStraightenOnRelease = settings->value(QStringLiteral("highlighter/straightenOnRelease"), false).toBool();
-    m_hlRoundTip = settings->value(QStringLiteral("highlighter/roundTip"), false).toBool();
+    m_highlighterTip = 0;
+    m_hlDrawBehindInk = true;
+    m_hlStraightenOnRelease = false;
+    m_hlRoundTip = false;
     m_pressureSensitivity =
         std::clamp(settings->value(QStringLiteral("ink/pressureSensitivity"), 0.5).toDouble(), 0.0, 1.0);
     m_highlighterOpacity =
-        std::clamp(settings->value(QStringLiteral("ink/highlighterOpacity"), 0.25).toDouble(), 0.10, 0.70);
+        std::clamp(settings->value(QStringLiteral("ink/highlighterOpacity"), 0.35).toDouble(), 0.15, 0.90);
 
     m_eraserPreserveShapes = settings->value(QStringLiteral("ink/eraserPreserveShapes"), false).toBool();
     m_eraserOnlyHighlight = settings->value(QStringLiteral("ink/eraserOnlyHighlight"), false).toBool();
@@ -714,7 +771,7 @@ void CanvasWidget::loadToolBanksAndSettings() {
         || settings->contains(QStringLiteral("eraser/targetShapes"))) {
         m_eraserTargets.ink = settings->value(QStringLiteral("eraser/targetInk"), true).toBool();
         m_eraserTargets.highlighter = settings->value(QStringLiteral("eraser/targetHighlighter"), true).toBool();
-        m_eraserTargets.shapes = settings->value(QStringLiteral("eraser/targetShapes"), false).toBool();
+        m_eraserTargets.shapes = settings->value(QStringLiteral("eraser/targetShapes"), true).toBool();
         m_eraserOnlyHighlight = !m_eraserTargets.ink && m_eraserTargets.highlighter && !m_eraserTargets.shapes;
         m_eraserPreserveShapes = !m_eraserTargets.shapes;
     } else {
@@ -726,10 +783,9 @@ void CanvasWidget::loadToolBanksAndSettings() {
     m_lassoFilter.ink = settings->value(QStringLiteral("lasso/grabInk"), true).toBool();
     m_lassoFilter.shapes = settings->value(QStringLiteral("lasso/grabShapes"), true).toBool();
     m_lassoFilter.media = settings->value(QStringLiteral("lasso/grabMedia"), true).toBool();
-    m_lassoRectMode = settings->value(QStringLiteral("lasso/rectMode"), false).toBool();
+    m_lassoRectMode = false;
 
-    const int savedLaserMode = settings->value(QStringLiteral("laser/mode"), int(LaserMode::Trail)).toInt();
-    m_laserMode = (savedLaserMode == int(LaserMode::Dot)) ? LaserMode::Dot : LaserMode::Trail;
+    m_laserMode = LaserMode::Trail;
     m_laserDurationMs = sanitizeLaserDuration(settings->value(QStringLiteral("laser/durationMs"), 1000).toInt());
 
     m_autoShapeOptions.line = settings->value(QStringLiteral("autoShape/line"), true).toBool();
@@ -745,11 +801,11 @@ void CanvasWidget::loadToolBanksAndSettings() {
 
     m_gestureOptions.angleArc = settings->value(QStringLiteral("gesture/angleArc"), true).toBool();
     m_gestureOptions.rightAngle = settings->value(QStringLiteral("gesture/rightAngle"), true).toBool();
-    m_gestureOptions.freehandArrow = settings->value(QStringLiteral("gesture/freehandArrow"), true).toBool();
-    m_gestureOptions.attachArrowhead = settings->value(QStringLiteral("gesture/attachArrowhead"), true).toBool();
-    m_gestureOptions.dividerDot = settings->value(QStringLiteral("gesture/dividerDot"), true).toBool();
-    m_gestureOptions.edgeMarks = settings->value(QStringLiteral("gesture/edgeMarks"), true).toBool();
-    m_gestureOptions.holdEdgeMenu = settings->value(QStringLiteral("gesture/holdEdgeMenu"), true).toBool();
+    m_gestureOptions.freehandArrow = false;
+    m_gestureOptions.attachArrowhead = false;
+    m_gestureOptions.dividerDot = false;
+    m_gestureOptions.edgeMarks = false;
+    m_gestureOptions.holdEdgeMenu = false;
 
     m_smartGuideOptions.enabled = settings->value(QStringLiteral("smartGuide/enabled"), true).toBool();
     m_smartGuideOptions.snapKeyPoints = settings->value(QStringLiteral("smartGuide/snapKeyPoints"), true).toBool();
@@ -797,6 +853,7 @@ void CanvasWidget::setToolWidthSlot(ToolType tool, int slot) {
     if (bankKeyForTool(m_tool) == key)
         syncActiveToolFromBank();
     clearPenCursor();
+    updateCursorShape();
     update();
     emit stateChanged();
 }
@@ -810,9 +867,14 @@ void CanvasWidget::setToolFineWidth(ToolType tool, double mm) {
     const int slot = std::clamp(bank.activeSlot, 0, 2);
     bank.widths[size_t(slot)] = clamped;
     saveToolBank(key);
+    if (key == BankKey::Pen) {
+        m_penTipWidths[size_t(std::clamp(m_penTip, 0, 3))] = clamped;
+        writeAppSetting(QStringLiteral("ink/penTipWidth%1").arg(m_penTip), clamped);
+    }
     if (bankKeyForTool(m_tool) == key)
         syncActiveToolFromBank();
     clearPenCursor();
+    updateCursorShape();
     update();
     emit stateChanged();
 }
@@ -838,6 +900,7 @@ void CanvasWidget::setToolColorIndex(ToolType tool, int idx) {
     if (bankKeyForTool(m_tool) == key)
         syncActiveToolFromBank();
     clearPenCursor();
+    updateCursorShape();
     update();
     emit stateChanged();
 }
@@ -861,6 +924,7 @@ void CanvasWidget::setCustomSwatchColor(ToolType tool, const QColor& color) {
     if (bankKeyForTool(m_tool) == key)
         syncActiveToolFromBank();
     clearPenCursor();
+    updateCursorShape();
     update();
     emit stateChanged();
 }
@@ -1749,39 +1813,6 @@ void CanvasWidget::switchTabletTool(ToolType tool) {
     if (m_tool == tool)
         return;
     setTool(tool);
-    QString label = QStringLiteral("Pluma fuente");
-    switch (tool) {
-    case ToolType::Eraser:
-        label = QStringLiteral("Borrador");
-        break;
-    case ToolType::Highlighter:
-        label = QStringLiteral("Resaltador");
-        break;
-    case ToolType::Ballpoint:
-        label = QStringLiteral("Bolígrafo gel");
-        break;
-    case ToolType::Lasso:
-        label = QStringLiteral("Lazo");
-        break;
-    case ToolType::Select:
-        label = QStringLiteral("Seleccionar");
-        break;
-    case ToolType::Shape:
-        label = QStringLiteral("Figuras");
-        break;
-    case ToolType::Polyline:
-        label = QStringLiteral("Trazado");
-        break;
-    case ToolType::Hand:
-        label = QStringLiteral("Mano");
-        break;
-    case ToolType::Laser:
-        label = QStringLiteral("Puntero láser");
-        break;
-    default:
-        break;
-    }
-    emit toastRequested(label);
 }
 
 void CanvasWidget::executeTabletAction(TabletAction action, const QPointF& screenPos) {
@@ -1899,6 +1930,100 @@ void CanvasWidget::dropEvent(QDropEvent* event) {
     }
 }
 
+namespace {
+QCursor makeNativeToolCursor(ToolType tool, const QColor& ink, bool darkSheet) {
+    constexpr int kSz = 32;
+    QPixmap pm(kSz, kSz);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    const QColor outline = darkSheet ? QColor("#0f172a") : QColor("#18181b");
+    const QColor bodyCol = darkSheet ? QColor("#f8fafc") : QColor("#ffffff");
+
+    if (tool == ToolType::Laser) {
+        QColor glow = ink;
+        glow.setAlpha(80);
+        p.setPen(Qt::NoPen);
+        p.setBrush(glow);
+        p.drawEllipse(QPointF(16, 16), 11.0, 11.0);
+        p.setBrush(ink);
+        p.drawEllipse(QPointF(16, 16), 5.0, 5.0);
+        p.setBrush(Qt::white);
+        p.drawEllipse(QPointF(16, 16), 2.0, 2.0);
+        return QCursor(pm, 16, 16);
+    }
+
+    if (tool == ToolType::Highlighter) {
+        p.translate(3, 28);
+        p.rotate(-45.0);
+        QPainterPath tip;
+        tip.moveTo(0, 0);
+        tip.lineTo(7, -4.5);
+        tip.lineTo(7, 4.5);
+        tip.closeSubpath();
+        p.setPen(QPen(outline, 1.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(ink);
+        p.drawPath(tip);
+        p.setBrush(bodyCol);
+        p.drawRoundedRect(QRectF(7, -5.0, 18, 10.0), 2.2, 2.2);
+        p.setPen(Qt::NoPen);
+        p.setBrush(ink);
+        p.drawRect(QRectF(10, -4.2, 4.5, 8.4));
+        return QCursor(pm, 3, 28);
+    }
+
+    if (tool == ToolType::Fill) {
+        QPainterPath drop;
+        drop.moveTo(6, 20);
+        drop.cubicTo(2, 25, 2, 29, 6, 29);
+        drop.cubicTo(10, 29, 10, 25, 6, 20);
+        p.setPen(QPen(outline, 1.1));
+        p.setBrush(ink);
+        p.drawPath(drop);
+
+        p.save();
+        p.translate(17, 15);
+        p.rotate(-40.0);
+        p.setPen(QPen(outline, 1.3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(bodyCol);
+        p.drawRoundedRect(QRectF(-7, -7, 14, 14), 2.5, 2.5);
+        p.setBrush(ink);
+        p.drawRect(QRectF(-6.5, -1, 13, 7.5));
+        p.restore();
+        return QCursor(pm, 6, 27);
+    }
+
+    // Pinceles: lápiz bonito y proporcionado con punta exacta en (2, 2)
+    p.setPen(Qt::NoPen);
+    p.setBrush(ink);
+    p.drawEllipse(QPointF(2.5, 2.5), 2.0, 2.0);
+    p.translate(2.5, 2.5);
+    p.rotate(45.0);
+    QPainterPath tip;
+    tip.moveTo(0.0, 0.0);
+    tip.lineTo(8.5, -3.8);
+    tip.lineTo(8.5, 3.8);
+    tip.closeSubpath();
+    p.setPen(QPen(outline, 1.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(QColor("#e2e8f0"));
+    p.drawPath(tip);
+    QPainterPath nib;
+    nib.moveTo(0.0, 0.0);
+    nib.lineTo(3.8, -1.7);
+    nib.lineTo(3.8, 1.7);
+    nib.closeSubpath();
+    p.setPen(Qt::NoPen);
+    p.setBrush(ink);
+    p.drawPath(nib);
+    p.setPen(QPen(outline, 1.2));
+    p.setBrush(ink);
+    p.drawRect(QRectF(8.5, -3.8, 5.0, 7.6));
+    p.setBrush(bodyCol);
+    p.drawRoundedRect(QRectF(13.5, -3.8, 14.5, 7.6), 2.0, 2.0);
+    return QCursor(pm, 2, 2);
+}
+} // namespace
+
 void CanvasWidget::updateCursorShape() {
     if (m_radialOpen) {
         setCursor(Qt::ArrowCursor);
@@ -1909,12 +2034,17 @@ void CanvasWidget::updateCursorShape() {
     } else if (m_spaceHeld || m_tool == ToolType::Hand) {
         setCursor(Qt::OpenHandCursor);
     } else if (m_tool == ToolType::Eraser || m_mode == InteractionMode::Erase
-               || m_holdEraseUpper || m_holdEraseLower
-               || m_tool == ToolType::Pen || m_tool == ToolType::Ballpoint
-               || m_tool == ToolType::Highlighter || m_tool == ToolType::Laser) {
+               || m_holdEraseUpper || m_holdEraseLower) {
         setCursor(Qt::BlankCursor);
+    } else if (m_tool == ToolType::Pen || m_tool == ToolType::Ballpoint
+               || m_tool == ToolType::Highlighter || m_tool == ToolType::Fill
+               || m_tool == ToolType::Laser) {
+        const QColor col = (m_tool == ToolType::Laser) ? m_laserColor : m_color;
+        setCursor(makeNativeToolCursor(m_tool, col, isCurrentSheetDark()));
     } else if (m_tool == ToolType::Select) {
         setCursor(Qt::ArrowCursor);
+    } else if (m_tool == ToolType::Text) {
+        setCursor(Qt::IBeamCursor);
     } else {
         setCursor(Qt::CrossCursor);
     }

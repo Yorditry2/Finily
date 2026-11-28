@@ -1705,8 +1705,12 @@ ShapeFamily classifyShapeFamily(const ShapeItem& shape, int* outVariant) {
 
     switch (shape.kind) {
     case ShapeKind::Triangle:
-        if (shape.vertices.size() >= 3)
-            return finish(ShapeFamily::Triangle, classifyTriangleVariant(shape.vertices));
+        if (shape.vertices.size() >= 3) {
+            const int var = (shape.shapeVariant >= 0 && shape.shapeVariant <= 3)
+                ? shape.shapeVariant
+                : 0;
+            return finish(ShapeFamily::Triangle, var);
+        }
         break;
     case ShapeKind::Rectangle:
         if (shape.vertices.size() >= 2 && !parseTableSpec(shape.label)) {
@@ -1777,10 +1781,8 @@ bool morphShapeToVariant(ShapeItem& shape, ShapeFamily family, int variant) {
         if (variant < 0 || variant > 3)
             return false;
         if (variant == 0) {
-            if (shape.kind == ShapeKind::Triangle && shape.vertices.size() >= 3)
-                shape.vertices = shape.vertices.mid(0, 3);
-            else
-                shape.vertices = {{r.center().x(), r.top()}, r.bottomRight(), r.bottomLeft()};
+            // Libre (escaleno): deshacer simetría si era isósceles para que el usuario pueda editar libremente
+            shape.vertices = {{r.left() + r.width() * 0.35, r.top()}, r.bottomRight(), r.bottomLeft()};
         } else if (variant == 1) {
             shape.vertices = {{r.center().x(), r.top()}, r.bottomRight(), r.bottomLeft()};
         } else if (variant == 2) {
@@ -1796,6 +1798,7 @@ bool morphShapeToVariant(ShapeItem& shape, ShapeFamily family, int variant) {
             };
         }
         shape.kind = ShapeKind::Triangle;
+        shape.shapeVariant = variant;
         shape.closed = true;
         break;
 
@@ -1804,7 +1807,15 @@ bool morphShapeToVariant(ShapeItem& shape, ShapeFamily family, int variant) {
             return false;
         if (variant == 0) {
             shape.kind = ShapeKind::Rectangle;
-            shape.vertices = {r.topLeft(), r.bottomRight()};
+            const double maxSide = std::max(r.width(), r.height());
+            if (maxSide > 1e-4 && std::abs(r.width() - r.height()) <= maxSide * 0.05) {
+                const double side = (r.width() + r.height()) * 0.5;
+                const QPointF half(side * 0.65, side * 0.35);
+                const QPointF c = r.center();
+                shape.vertices = {c - half, c + half};
+            } else {
+                shape.vertices = {r.topLeft(), r.bottomRight()};
+            }
         } else if (variant == 1) {
             const double side = (r.width() + r.height()) * 0.5;
             const QPointF half(side * 0.5, side * 0.5);
@@ -1856,7 +1867,7 @@ bool morphShapeToVariant(ShapeItem& shape, ShapeFamily family, int variant) {
         break;
 
     case ShapeFamily::Circle: {
-        if (variant < 0 || variant > 3)
+        if (variant < 0 || variant > 5)
             return false;
         const bool hasRadialOrigin = (shape.kind == ShapeKind::Circle && shape.vertices.size() >= 2)
             || ((shape.kind == ShapeKind::Arc || shape.kind == ShapeKind::Sector) && shape.vertices.size() >= 3);
@@ -1873,17 +1884,27 @@ bool morphShapeToVariant(ShapeItem& shape, ShapeFamily family, int variant) {
                 && shape.vertices.size() >= 3
                 && length(shape.vertices[1] - shape.vertices[0]) > 1e-4
                 && length(shape.vertices[2] - shape.vertices[0]) > 1e-4;
-            if (keepRays)
+            if (keepRays && variant == 1)
                 shape.vertices = shape.vertices.mid(0, 3);
             else
                 shape.vertices = {c, c + QPointF(rad, 0.0), c + QPointF(0.0, -rad)};
             shape.kind = (variant == 1) ? ShapeKind::Arc : ShapeKind::Sector;
             shape.closed = (variant == 2);
+        } else if (variant == 4) {
+            // Media pizza (180°)
+            shape.kind = ShapeKind::Sector;
+            shape.closed = true;
+            shape.vertices = {c, c + QPointF(rad, 0.0), c + QPointF(-rad, 0.0)};
+        } else if (variant == 5) {
+            // Tres cuartos de pizza (270°)
+            shape.kind = ShapeKind::Sector;
+            shape.closed = true;
+            shape.vertices = {c, c + QPointF(rad, 0.0), c + QPointF(0.0, rad)};
         } else {
             if (shape.kind == ShapeKind::Ellipse && shape.vertices.size() >= 2)
                 shape.vertices = {r.topLeft(), r.bottomRight()};
             else
-                shape.vertices = {c - QPointF(rad, rad), c + QPointF(rad, rad)};
+                shape.vertices = {c - QPointF(rad * 1.25, rad * 0.75), c + QPointF(rad * 1.25, rad * 0.75)};
             shape.kind = ShapeKind::Ellipse;
             shape.closed = true;
         }

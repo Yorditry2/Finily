@@ -18,6 +18,7 @@
 #include <QFileInfo>
 #include <QKeySequence>
 #include <QLineEdit>
+#include <QMouseEvent>
 #include <QProcess>
 #include <QShortcut>
 #include <QStackedWidget>
@@ -25,6 +26,7 @@
 #include <QTimer>
 #include <QUrl>
 #include <QWidget>
+#include <QWindow>
 
 #include <algorithm>
 
@@ -52,6 +54,10 @@ QString normalizedFilePath(const QString& path) {
 
 MainWindow::MainWindow() {
     setWindowTitle(tr("Finily"));
+#ifdef Q_OS_WIN
+    setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+    qApp->installEventFilter(this);
+#endif
     resize(1360, 840);
     setMinimumSize(960, 640);
 
@@ -1254,6 +1260,38 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
     if (watched == m_container && (event->type() == QEvent::Resize || event->type() == QEvent::Show))
         layoutChildren();
+#ifdef Q_OS_WIN
+    if (!isMaximized() && !isFullScreen()
+        && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove)) {
+        auto* w = qobject_cast<QWidget*>(watched);
+        if (w && w->window() == this) {
+            const auto* me = static_cast<QMouseEvent*>(event);
+            const QPoint gp = me->globalPosition().toPoint();
+            const QRect fg = frameGeometry();
+            constexpr int margin = 6;
+            Qt::Edges edges;
+            if (gp.x() <= fg.left() + margin) edges |= Qt::LeftEdge;
+            if (gp.x() >= fg.right() - margin) edges |= Qt::RightEdge;
+            if (gp.y() <= fg.top() + margin) edges |= Qt::TopEdge;
+            if (gp.y() >= fg.bottom() - margin) edges |= Qt::BottomEdge;
+            if (event->type() == QEvent::MouseButtonPress && me->button() == Qt::LeftButton && edges) {
+                if (QWindow* wh = windowHandle()) {
+                    if (wh->startSystemResize(edges))
+                        return true;
+                }
+            } else if (event->type() == QEvent::MouseMove && edges) {
+                if ((edges == (Qt::LeftEdge | Qt::TopEdge)) || (edges == (Qt::RightEdge | Qt::BottomEdge)))
+                    setCursor(Qt::SizeFDiagCursor);
+                else if ((edges == (Qt::RightEdge | Qt::TopEdge)) || (edges == (Qt::LeftEdge | Qt::BottomEdge)))
+                    setCursor(Qt::SizeBDiagCursor);
+                else if (edges & (Qt::LeftEdge | Qt::RightEdge))
+                    setCursor(Qt::SizeHorCursor);
+                else if (edges & (Qt::TopEdge | Qt::BottomEdge))
+                    setCursor(Qt::SizeVerCursor);
+            }
+        }
+    }
+#endif
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -1331,27 +1369,19 @@ void MainWindow::installShortcuts() {
         if (m_toolbar)
             m_toolbar->refreshFromCanvas();
     });
-    addShortcut(QKeySequence("B"), [this] { m_toolbar->selectTool(ToolType::Ballpoint); });
     addShortcut(QKeySequence("H"), [this] { m_toolbar->selectTool(ToolType::Highlighter); });
     addShortcut(QKeySequence("T"), [this] { m_toolbar->selectTool(ToolType::Text); });
     addShortcut(QKeySequence("K"), [this] { m_toolbar->selectTool(ToolType::Laser); });
     addShortcut(QKeySequence("E"), [this] { m_toolbar->selectTool(ToolType::Eraser); });
     addShortcut(QKeySequence("F"), [this] { m_toolbar->selectTool(ToolType::Fill); });
-    addShortcut(QKeySequence("G"), [this] { m_toolbar->selectTool(ToolType::Fill); });
-    addShortcut(QKeySequence("U"), [this] { m_toolbar->selectTool(ToolType::Select); });
     addShortcut(QKeySequence("V"), [this] { m_toolbar->selectTool(ToolType::Select); });
 
-    // Figuras, polilínea y renombrar pestaña
+    // Figuras y renombrar pestaña
     addShortcut(QKeySequence("S"), [this] { m_toolbar->selectTool(ToolType::Shape); });
     addShortcut(QKeySequence("L"), [this] { m_toolbar->selectTool(ToolType::Lasso); });
-    addShortcut(QKeySequence("Shift+L"), [this] { m_toolbar->selectTool(ToolType::Polyline); });
     addShortcut(QKeySequence("F2"), [this] {
         if (m_toolbar)
             m_toolbar->startInlineRenameActiveTab();
-    });
-    addShortcut(QKeySequence("R"), [this] {
-        m_canvas->setShapeKind(ShapeKind::Radical);
-        m_toolbar->selectTool(ToolType::Shape);
     });
     auto finishPolyline = [this] {
         if (m_canvas->isDrawingPolyline()) {
@@ -1368,8 +1398,7 @@ void MainWindow::installShortcuts() {
             return;
         m_canvas->cancelInteraction();
     });
-    // Lazo, portapapeles, línea auxiliar y PDF
-    addShortcut(QKeySequence("A"), [this] { m_toolbar->selectTool(ToolType::Lasso); });
+    // Portapapeles, línea auxiliar y PDF
     addShortcut(QKeySequence("M"), [this] {
         m_canvas->setMathBeautifyEnabled(!m_canvas->mathBeautifyEnabled());
         m_toolbar->refreshFromCanvas();

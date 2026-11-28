@@ -18,6 +18,7 @@
 #include <QSizePolicy>
 #include <QToolButton>
 #include <QVariantAnimation>
+#include <QWindow>
 
 #include <algorithm>
 #include <cmath>
@@ -587,6 +588,42 @@ HomeHeader::HomeHeader(QWidget* parent)
     connect(m_escBtn, &HeaderKbdButton::clicked, this, &HomeHeader::settingsCloseRequested);
     row->addWidget(m_escBtn);
 
+#ifdef Q_OS_WIN
+    auto makeWinBtn = [this](int kind, const QString& tip) {
+        auto* btn = new QToolButton(this);
+        btn->setFixedSize(30, 30);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setToolTip(tip);
+        btn->setAttribute(Qt::WA_Hover, true);
+        btn->setProperty("winKind", kind);
+        btn->setStyleSheet(QStringLiteral(
+            "QToolButton { border: none; border-radius: 8px; background: transparent; }"
+            "QToolButton:hover { background: %1; }")
+            .arg(kind == 2 ? QStringLiteral("rgba(220,38,38,220)") : QStringLiteral("rgba(128,128,128,45)")));
+        btn->installEventFilter(this);
+        connect(btn, &QToolButton::clicked, this, [this, kind] {
+            QWidget* w = window();
+            if (!w)
+                return;
+            if (kind == 0)
+                w->showMinimized();
+            else if (kind == 1) {
+                if (w->isMaximized())
+                    w->showNormal();
+                else
+                    w->showMaximized();
+            } else {
+                w->close();
+            }
+        });
+        return btn;
+    };
+    row->addSpacing(6);
+    row->addWidget(makeWinBtn(0, QStringLiteral("Minimizar")));
+    row->addWidget(makeWinBtn(1, QStringLiteral("Maximizar / Restaurar")));
+    row->addWidget(makeWinBtn(2, QStringLiteral("Cerrar")));
+#endif
+
     m_searchField = new HeaderSearchField(this);
     m_search = m_searchField->edit;
     m_search->installEventFilter(this);
@@ -933,6 +970,38 @@ bool HomeHeader::eventFilter(QObject* watched, QEvent* event) {
         if (event->type() == QEvent::FocusOut && m_search->text().isEmpty())
             setSearchOpen(false);
     }
+#ifdef Q_OS_WIN
+    if (event->type() == QEvent::Paint && watched && watched->property("winKind").isValid()) {
+        auto* btn = qobject_cast<QWidget*>(watched);
+        if (btn) {
+            const bool result = QWidget::eventFilter(watched, event);
+            QPainter p(btn);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            const int kind = watched->property("winKind").toInt();
+            const bool hovered = btn->underMouse();
+            const QColor fg = (kind == 2 && hovered) ? QColor(Qt::white) : m_pal.text;
+            p.setPen(QPen(fg, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.setBrush(Qt::NoBrush);
+            const QPointF c = QRectF(btn->rect()).center();
+            if (kind == 0) {
+                p.drawLine(QPointF(c.x() - 5.0, c.y() + 1.0), QPointF(c.x() + 5.0, c.y() + 1.0));
+            } else if (kind == 1) {
+                const bool maxed = window() && window()->isMaximized();
+                if (maxed) {
+                    p.drawRect(QRectF(c.x() - 4.5, c.y() - 2.5, 7.0, 7.0));
+                    p.drawLine(QPointF(c.x() - 2.0, c.y() - 4.5), QPointF(c.x() + 4.5, c.y() - 4.5));
+                    p.drawLine(QPointF(c.x() + 4.5, c.y() - 4.5), QPointF(c.x() + 4.5, c.y() + 2.0));
+                } else {
+                    p.drawRoundedRect(QRectF(c.x() - 4.5, c.y() - 4.5, 9.0, 9.0), 1.5, 1.5);
+                }
+            } else {
+                p.drawLine(QPointF(c.x() - 4.2, c.y() - 4.2), QPointF(c.x() + 4.2, c.y() + 4.2));
+                p.drawLine(QPointF(c.x() + 4.2, c.y() - 4.2), QPointF(c.x() - 4.2, c.y() + 4.2));
+            }
+            return result;
+        }
+    }
+#endif
     return QWidget::eventFilter(watched, event);
 }
 
@@ -971,6 +1040,35 @@ void HomeHeader::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     if (m_searchProgress > 0.001 && m_searchField)
         m_searchField->setGeometry(searchTargetRect());
+}
+
+void HomeHeader::mousePressEvent(QMouseEvent* event) {
+#ifdef Q_OS_WIN
+    if (event->button() == Qt::LeftButton && !childAt(event->pos())) {
+        if (QWidget* w = window()) {
+            if (QWindow* wh = w->windowHandle()) {
+                wh->startSystemMove();
+                return;
+            }
+        }
+    }
+#endif
+    QWidget::mousePressEvent(event);
+}
+
+void HomeHeader::mouseDoubleClickEvent(QMouseEvent* event) {
+#ifdef Q_OS_WIN
+    if (event->button() == Qt::LeftButton && !childAt(event->pos())) {
+        if (QWidget* w = window()) {
+            if (w->isMaximized())
+                w->showNormal();
+            else
+                w->showMaximized();
+            return;
+        }
+    }
+#endif
+    QWidget::mouseDoubleClickEvent(event);
 }
 
 } // namespace finily

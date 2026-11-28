@@ -155,16 +155,16 @@ LiquidShape liquidShapeRange(const Stroke& stroke, qsizetype startPoint,
         const double fast = sample.speed / (sample.speed + 0.7);
         double factor = 0.85;
         if (stroke.tool == ToolType::Ballpoint || stroke.tipStyle == 0) {
-            // Bolígrafo: monolínea nítida y predecible para números y fórmulas.
+            // Bolígrafo: monolínea fina, densa y 100% pareja para números y apuntes.
             const double pressure = stroke.hasHardwarePressure
                                         ? std::clamp(sample.point.pressure, 0.0, 1.0)
                                         : 0.5;
-            factor = 0.96 + 0.06 * pressure - 0.02 * fast;
-            const double ballTaper = std::min(4.0, total * 0.20);
+            factor = 0.84 + 0.03 * pressure;
+            const double ballTaper = std::min(3.0, total * 0.16);
             if (ballTaper > 1e-6) {
                 const double edgeDist = std::min(distances[i], total - distances[i]);
                 const double t = std::clamp(edgeDist / ballTaper, 0.0, 1.0);
-                factor *= 0.65 + 0.35 * t * t * (3.0 - 2.0 * t);
+                factor *= 0.78 + 0.22 * t * t * (3.0 - 2.0 * t);
             }
         } else if (stroke.tipStyle == 2) {
             // Lápiz grafito: sensible a presión (según sensibilidad 0..1) y a inclinación (tilt).
@@ -523,9 +523,9 @@ QBrush texturedStrokeBrush(const Stroke& stroke) {
                 else
                     mask = 0.85 + (n - 0.37) * 0.24;
             } else {
-                // Grafito: grano microscópico fino y sedoso.
-                const double n = 0.86 * fine + 0.14 * coarse;
-                mask = 0.64 + 0.36 * n;
+                // Grafito: grano de papel visible y seco, distinto de la tiza porosa.
+                const double grain = 0.60 * fine + 0.40 * coarse;
+                mask = (grain < 0.28) ? (0.32 + grain * 0.9) : (0.55 + grain * 0.42);
             }
             const int a = std::clamp(int(std::lround(baseA * mask)), 0, 255);
             const int pr = (baseR * a + 127) / 255;
@@ -535,7 +535,7 @@ QBrush texturedStrokeBrush(const Stroke& stroke) {
         }
     }
     QBrush brush(img);
-    const double scale = isChalk ? 0.30 : 0.26;
+    const double scale = isChalk ? 0.36 : 0.44;
     brush.setTransform(QTransform::fromScale(scale, scale));
     cache.insert(key, brush);
     return brush;

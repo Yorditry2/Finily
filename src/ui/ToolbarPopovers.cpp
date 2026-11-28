@@ -33,6 +33,7 @@ void FloatingToolbar::showExportMenu(const QRect& anchorRect) {
         {4, QStringLiteral("Abrir otro archivo…"), QStringLiteral("Ctrl+Shift+O"), QStringLiteral("open"), QStringLiteral("ui")},
         {5, QStringLiteral("Importar PDF…"), QStringLiteral("Ctrl+O"), QStringLiteral("pdf"), QStringLiteral("ui"), true},
     };
+    closeTransientPopovers();
     const QPoint pos(std::max(12, anchorRect.right() - 248), anchorRect.bottom() + 8);
     m_dropdownMenu->openMenu(items, pos, size(), [this](int id) {
         updateOverlayMask();
@@ -79,6 +80,7 @@ void FloatingToolbar::showNewTabMenu(const QRect& anchorRect) {
     items.append({13, QStringLiteral("Explorar cuadernos y pizarras…"), {}, QStringLiteral("folder"), QStringLiteral("ui"), true});
     items.append({11, QStringLiteral("Importar PDF…"), QStringLiteral("Ctrl+O"), QStringLiteral("pdf"), QStringLiteral("ui")});
 
+    closeTransientPopovers();
     const QPoint pos(anchorRect.left(), anchorRect.bottom() + 6);
     m_dropdownMenu->openMenu(items, pos, size(), [this, recentPaths](int id) {
         updateOverlayMask();
@@ -130,6 +132,7 @@ void FloatingToolbar::showTabMenu(int index, const QPoint& globalPos) {
         {5, QStringLiteral("Exportar a PDF…"), QStringLiteral("Ctrl+E"), QStringLiteral("pdf"), QStringLiteral("ui"), true},
         {6, QStringLiteral("Cerrar pestaña"), QStringLiteral("Ctrl+W"), QStringLiteral("x"), QStringLiteral("ui"), true, true},
     };
+    closeTransientPopovers();
     const QPoint pos = mapFromGlobal(globalPos);
     m_dropdownMenu->openMenu(items, pos, size(), [this, index](int id) {
         updateOverlayMask();

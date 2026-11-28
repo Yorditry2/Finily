@@ -1,5 +1,6 @@
 #include "CanvasWidget.h"
 #include "CanvasWidgetInternal.h"
+#include "editor/EditorTheme.h"
 #include "engine/GeometryEngine.h"
 #include "engine/InkEngine.h"
 #include "engine/LassoEngine.h"
@@ -18,19 +19,6 @@ namespace finily {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-
-QVector<QColor> radialPaletteColors(bool isDark) {
-    if (isDark) {
-        return {
-            QColor("#f8fafc"), QColor("#fde047"), QColor("#fb923c"), QColor("#f87171"),
-            QColor("#f472b6"), QColor("#c084fc"), QColor("#38bdf8"), QColor("#4ade80"),
-        };
-    }
-    return {
-        QColor("#0f172a"), QColor("#ca8a04"), QColor("#ea580c"), QColor("#dc2626"),
-        QColor("#db2777"), QColor("#9333ea"), QColor("#0284c7"), QColor("#16a34a"),
-    };
-}
 
 bool hasPdfBackground(const QVector<ImageItem>& images) {
     return std::any_of(images.cbegin(), images.cend(), [](const ImageItem& img) {
@@ -134,14 +122,12 @@ void CanvasWidget::rebuildStaticCache() {
                 p.fillRect(image.rect.translated(4.0 / vp.zoom, 5.0 / vp.zoom), QColor(0, 0, 0, 38));
                 p.fillRect(image.rect, Qt::white);
             }
-            if (image.opacity < 0.999) {
-                p.save();
+            p.save();
+            p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+            if (image.opacity < 0.999)
                 p.setOpacity(p.opacity() * image.opacity);
-                p.drawImage(image.rect, image.image);
-                p.restore();
-            } else {
-                p.drawImage(image.rect, image.image);
-            }
+            p.drawImage(image.rect, image.image);
+            p.restore();
         }
     }
 
@@ -453,6 +439,14 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
             p.drawRoundedRect(
                 item.bounds.adjusted(-4.0 / vp.zoom, -3.0 / vp.zoom, 4.0 / vp.zoom, 3.0 / vp.zoom),
                 2.0, 2.0);
+            if (!item.locked) {
+                p.setPen(QPen(theme.accent, 1.4 / vp.zoom));
+                p.setBrush(theme.isDark ? theme.background : QColor(Qt::white));
+                for (const auto& pt : {item.bounds.topLeft(), item.bounds.topRight(),
+                                       item.bounds.bottomRight(), item.bounds.bottomLeft()}) {
+                    p.drawEllipse(pt, 5.0 / vp.zoom, 5.0 / vp.zoom);
+                }
+            }
         }
     }
 
@@ -460,6 +454,11 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     const auto laserNow = nowMs();
     // Láser continuo de seda o punto brillante
     if (m_laserMode == LaserMode::Trail) {
+        const bool holding = (m_mode == InteractionMode::LaserTrail);
+        const double holdFade = holding
+            ? 1.0
+            : std::clamp(1.0 - double(laserNow - m_laserDotReleaseMs) / std::max(1.0, double(m_laserDurationMs)),
+                         0.0, 1.0);
         qsizetype segStart = 0;
         while (segStart < m_laserTrail.size()) {
             qsizetype segEnd = segStart + 1;
@@ -467,13 +466,10 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
                 ++segEnd;
             QVector<QPointF> livePts;
             double avgFade = 0.0;
-            for (qsizetype i = segStart; i < segEnd; ++i) {
-                const double f = std::clamp(
-                    1.0 - double(laserNow - m_laserTrail[i].timestampMs) / std::max(1.0, double(m_laserDurationMs)), 0.0, 1.0);
-                if (f > 0.02) {
+            if (holdFade > 0.02) {
+                for (qsizetype i = segStart; i < segEnd; ++i)
                     livePts.append(m_laserTrail[i].pos);
-                    avgFade = std::max(avgFade, f);
-                }
+                avgFade = holdFade;
             }
             if (livePts.size() >= 2 && avgFade > 0.02) {
                 QPainterPath smoothPath;
@@ -508,14 +504,9 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     if (!m_laserTrail.isEmpty()) {
         const auto& tip = m_laserTrail.back();
         double fade = 1.0;
-        if (m_laserMode == LaserMode::Dot) {
-            fade = m_laserDotFading
-                ? std::clamp(1.0 - double(laserNow - m_laserDotReleaseMs) / 180.0, 0.0, 1.0)
-                : 1.0;
-        } else {
-            fade = std::clamp(
-                1.0 - double(laserNow - tip.timestampMs) / std::max(1.0, double(m_laserDurationMs)),
-                0.0, 1.0);
+        if (m_mode != InteractionMode::LaserTrail && m_laserDotFading) {
+            const double dur = (m_laserMode == LaserMode::Dot) ? 180.0 : std::max(1.0, double(m_laserDurationMs));
+            fade = std::clamp(1.0 - double(laserNow - m_laserDotReleaseMs) / dur, 0.0, 1.0);
         }
         if (fade > 0.02) {
             p.setPen(Qt::NoPen);
@@ -535,84 +526,6 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     }
 
     drawSmartGuides(p, m_activeGuides, theme, vp.zoom);
-
-    if (m_showPenCursor) {
-        p.save();
-        p.resetTransform();
-        const QPointF c = m_hoverWorldPos * vp.zoom + QPointF(vp.x, vp.y);
-        if (m_tool == ToolType::Laser) {
-            p.setPen(Qt::NoPen);
-            QColor glow = m_laserColor;
-            glow.setAlpha(75);
-            p.setBrush(glow);
-            p.drawEllipse(c, 10.0, 10.0);
-            p.setBrush(m_laserColor);
-            p.drawEllipse(c, 4.5, 4.5);
-            p.setBrush(QColor("#ffffff"));
-            p.drawEllipse(c, 1.9, 1.9);
-        } else if (m_cursorStyle == 0) {
-            // Plantilla 0: Lapicito estilizado cuya punta exacta está en c!
-            const QColor outline = theme.isDark ? QColor("#0f172a") : QColor("#1e293b");
-            const QColor bodyCol = theme.isDark ? QColor("#f8fafc") : QColor("#ffffff");
-            QColor ink = inkColor();
-            if (m_tool == ToolType::Highlighter)
-                ink.setAlpha(200);
-            p.setPen(Qt::NoPen);
-            p.setBrush(ink);
-            p.drawEllipse(c, 1.8, 1.8);
-            p.save();
-            p.translate(c);
-            p.rotate(-45.0);
-            QPainterPath tip;
-            tip.moveTo(0.0, 0.0);
-            tip.lineTo(6.5, -2.8);
-            tip.lineTo(6.5, 2.8);
-            tip.closeSubpath();
-            p.setPen(QPen(outline, 1.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-            p.setBrush(QColor("#e2e8f0"));
-            p.drawPath(tip);
-            QPainterPath nib;
-            nib.moveTo(0.0, 0.0);
-            nib.lineTo(2.8, -1.2);
-            nib.lineTo(2.8, 1.2);
-            nib.closeSubpath();
-            p.setPen(Qt::NoPen);
-            p.setBrush(ink);
-            p.drawPath(nib);
-            p.setPen(QPen(outline, 1.0));
-            p.setBrush(ink);
-            p.drawRect(QRectF(6.5, -2.8, 4.0, 5.6));
-            p.setBrush(bodyCol);
-            p.drawRoundedRect(QRectF(10.5, -2.8, 11.0, 5.6), 1.6, 1.6);
-            p.restore();
-        } else if (m_cursorStyle == 1) {
-            // Plantilla 1: Aro de precisión + punto de tinta real
-            const double rawR = strokeSize() * vp.zoom / 2.0;
-            const double ringR = std::max(5.0, rawR + 1.5);
-            const QColor outer = theme.isDark ? QColor(255, 255, 255, 215) : QColor(15, 23, 42, 195);
-            const QColor halo = theme.isDark ? QColor(0, 0, 0, 155) : QColor(255, 255, 255, 210);
-            p.setPen(QPen(halo, 2.4));
-            p.setBrush(Qt::NoBrush);
-            p.drawEllipse(c, ringR, ringR);
-            p.setPen(QPen(outer, 1.3));
-            p.drawEllipse(c, ringR, ringR);
-            p.setPen(Qt::NoPen);
-            p.setBrush(inkColor());
-            p.drawEllipse(c, std::max(2.0, rawR), std::max(2.0, rawR));
-        } else {
-            // Plantilla 2: Cruz fina técnica + punto central de tinta
-            const QColor lineCol = theme.isDark ? QColor(255, 255, 255, 210) : QColor(15, 23, 42, 195);
-            p.setPen(QPen(lineCol, 1.3, Qt::SolidLine, Qt::RoundCap));
-            p.drawLine(c + QPointF(-8.0, 0.0), c + QPointF(-3.0, 0.0));
-            p.drawLine(c + QPointF(3.0, 0.0), c + QPointF(8.0, 0.0));
-            p.drawLine(c + QPointF(0.0, -8.0), c + QPointF(0.0, -3.0));
-            p.drawLine(c + QPointF(0.0, 3.0), c + QPointF(0.0, 8.0));
-            p.setPen(Qt::NoPen);
-            p.setBrush(inkColor());
-            p.drawEllipse(c, 2.0, 2.0);
-        }
-        p.restore();
-    }
 
     if (m_showEraserCursor) {
         p.setRenderHint(QPainter::Antialiasing);
@@ -643,36 +556,37 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         p.setBrush(bg);
         p.drawPath(ring);
 
-        const QVector<QColor> rColors = radialPaletteColors(theme.isDark);
-        for (int i = 0; i < 8; ++i) {
-            const double ang = -kPi / 2.0 + i * (kPi / 4.0);
-            const QPointF pt = c + QPointF(std::cos(ang) * 50.0, std::sin(ang) * 50.0);
+        const ToolType targetPen = (m_lastWriteTool == ToolType::Ballpoint) ? ToolType::Ballpoint : ToolType::Pen;
+        QVector<QColor> rColors = toolPalette(targetPen);
+        if (rColors.size() > 10)
+            rColors.resize(10);
+        if (rColors.isEmpty())
+            rColors.append(m_color);
+        const bool darkSheet = isCurrentSheetDark();
+        for (QColor& col : rColors)
+            col = resolveAdaptableInkColor(col, darkSheet);
+
+        const int count = int(rColors.size());
+        const double step = (2.0 * kPi) / std::max(1, count);
+        for (int i = 0; i < count; ++i) {
+            const double ang = -kPi / 2.0 + i * step;
+            const QPointF pt = c + QPointF(std::cos(ang) * 51.0, std::sin(ang) * 51.0);
             const bool hov = (m_radialHoveredColor == i);
             if (hov) {
-                p.setPen(QPen(theme.accent, 2.2));
+                p.setPen(QPen(theme.accent, 2.0));
                 p.setBrush(QColor(theme.accent.red(), theme.accent.green(), theme.accent.blue(), 55));
-                p.drawEllipse(pt, 16.5, 16.5);
+                p.drawEllipse(pt, 14.5, 14.5);
             }
             p.setPen(QPen(theme.isDark ? QColor(255, 255, 255, 150) : QColor(15, 23, 42, 110),
                           hov ? 1.8 : 1.0));
             p.setBrush(rColors[i]);
-            p.drawEllipse(pt, hov ? 12.0 : 9.5, hov ? 12.0 : 9.5);
-        }
-
-        const QPointF dir = m_radialCursorPos - c;
-        const double dist = std::hypot(dir.x(), dir.y());
-        if (dist > 4.0) {
-            const double clamped = std::min(dist, 64.0);
-            const QPointF tip = c + (dir / dist) * clamped;
-            p.setPen(QPen(theme.accent, 2.0, Qt::SolidLine, Qt::RoundCap));
-            p.drawLine(c, tip);
-            p.setPen(Qt::NoPen);
-            p.setBrush(theme.accent);
-            p.drawEllipse(tip, 3.6, 3.6);
+            p.drawEllipse(pt, hov ? 11.0 : 8.5, hov ? 11.0 : 8.5);
         }
 
         p.setPen(QPen(ringCol, 1.0));
-        p.setBrush(m_radialHoveredColor >= 0 ? rColors[m_radialHoveredColor] : m_color);
+        p.setBrush((m_radialHoveredColor >= 0 && m_radialHoveredColor < count)
+                       ? rColors[m_radialHoveredColor]
+                       : m_color);
         p.drawEllipse(c, 8.0, 8.0);
         p.restore();
     }
@@ -684,12 +598,15 @@ void CanvasWidget::updateRadialHover(const QPointF& screenPos) {
     const double r = std::hypot(d.x(), d.y());
     int newCol = -1;
     if (r >= 20.0 && r <= 110.0) {
-        double ang = std::atan2(d.y(), d.x()) + kPi / 2.0 + kPi / 8.0;
+        const ToolType targetPen = (m_lastWriteTool == ToolType::Ballpoint) ? ToolType::Ballpoint : ToolType::Pen;
+        const int count = std::clamp(int(toolPalette(targetPen).size()), 1, 10);
+        const double step = (2.0 * kPi) / count;
+        double ang = std::atan2(d.y(), d.x()) + kPi / 2.0 + step * 0.5;
         while (ang < 0.0)
             ang += 2.0 * kPi;
         while (ang >= 2.0 * kPi)
             ang -= 2.0 * kPi;
-        newCol = std::clamp(int(ang / (kPi / 4.0)), 0, 7);
+        newCol = std::clamp(int(ang / step), 0, count - 1);
     }
     m_radialHoveredColor = newCol;
     update(radialMenuRect());
@@ -703,14 +620,19 @@ void CanvasWidget::commitRadialSelection(bool quickTap) {
     m_radialHoveredTool = -1;
     const ToolType targetPen = (m_lastWriteTool == ToolType::Ballpoint) ? ToolType::Ballpoint : ToolType::Pen;
     if (colIdx >= 0) {
-        const ThemeConfig th = effectiveThemeConfig(m_doc.themeId(), m_doc.customBackground());
-        const QVector<QColor> rColors = radialPaletteColors(th.isDark);
-        // Primero volvemos al lápiz y limpiamos selección para no recolorear objetos por accidente.
-        if (m_tool != ToolType::Pen && m_tool != ToolType::Ballpoint)
-            setTool(targetPen);
-        if (hasSelection())
-            clearSelection();
-        setInkColor(rColors[colIdx]);
+        QVector<QColor> rColors = toolPalette(targetPen);
+        if (rColors.size() > 10)
+            rColors.resize(10);
+        const bool darkSheet = isCurrentSheetDark();
+        if (colIdx < rColors.size()) {
+            // Primero volvemos al lápiz y limpiamos selección para no recolorear objetos por accidente.
+            if (m_tool != ToolType::Pen && m_tool != ToolType::Ballpoint)
+                setTool(targetPen);
+            if (hasSelection())
+                clearSelection();
+            setToolColorIndex(targetPen, colIdx);
+            setInkColor(resolveAdaptableInkColor(rColors[colIdx], darkSheet));
+        }
     } else if (quickTap) {
         setTool(targetPen);
     }

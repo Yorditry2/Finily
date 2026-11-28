@@ -29,6 +29,11 @@
 
 namespace finily {
 namespace {
+// Grosor del arco de un ángulo automático según el grosor de su figura.
+double autoAngleStrokeWidth(double shapeSize) {
+    return std::clamp(shapeSize * 0.85, 1.4, 24.0);
+}
+
 
 constexpr auto objectMimeType = "application/x-finily-objects";
 
@@ -369,7 +374,39 @@ void CanvasWidget::deleteSelection() {
         return ids.contains(item.id);
     };
     m_doc.strokes().removeIf(selected);
-    m_doc.shapes().removeIf([&](const ShapeItem& s) { return !s.locked && selected(s); });
+
+    // Recopilar vértices e IDs de figuras eliminadas para limpiar sus ángulos automáticos huérfanos.
+    QVector<QPointF> deletedShapeVertices;
+    QSet<QString> deletedShapeIds;
+    for (const ShapeItem& s : m_doc.shapes()) {
+        if (!s.locked && selected(s) && !isAutoVertexAngle(s)) {
+            deletedShapeIds.insert(s.id);
+            if (s.kind == ShapeKind::Rectangle && s.vertices.size() == 2) {
+                const QRectF r = QRectF(s.vertices[0], s.vertices[1]).normalized();
+                deletedShapeVertices << r.topLeft() << r.topRight() << r.bottomRight() << r.bottomLeft();
+            } else {
+                deletedShapeVertices.append(s.vertices);
+            }
+        }
+    }
+    const double angleTol = 6.0 / std::max(0.25, m_doc.viewport().zoom);
+    m_doc.shapes().removeIf([&](const ShapeItem& s) {
+        if (!s.locked && selected(s))
+            return true;
+        if (!s.locked && isAutoVertexAngle(s)) {
+            for (const auto& att : s.attachments) {
+                if (deletedShapeIds.contains(att.targetId))
+                    return true;
+            }
+            if (!s.vertices.isEmpty()) {
+                for (const QPointF& v : deletedShapeVertices) {
+                    if (pointDistance(s.vertices.front(), v) <= angleTol)
+                        return true;
+                }
+            }
+        }
+        return false;
+    });
     m_doc.images().removeIf([&](const ImageItem& image) {
         return !image.isPdfPage && !image.locked && selected(image);
     });
@@ -556,6 +593,43 @@ void CanvasWidget::setSelectionStyle(const SelectionStyle& style) {
             }
         }
     }
+    // Los ángulos automáticos siguen el color y grosor de su figura.
+    if (style.color || style.width) {
+        const double tol = 6.0 / std::max(0.25, m_doc.viewport().zoom);
+        QVector<const ShapeItem*> owners;
+        for (const auto& shape : updated.shapes) {
+            if (ids.contains(shape.id) && !shape.locked && !isAutoVertexAngle(shape)
+                && shape.kind != ShapeKind::ShadedRegion)
+                owners.append(&shape);
+        }
+        QVector<std::pair<qsizetype, const ShapeItem*>> targets;
+        for (qsizetype m = 0; m < updated.shapes.size(); ++m) {
+            const auto& marker = updated.shapes[m];
+            if (!isAutoVertexAngle(marker) || marker.locked || marker.vertices.isEmpty())
+                continue;
+            for (const ShapeItem* owner : owners) {
+                QVector<QPointF> poly = owner->vertices;
+                if (owner->kind == ShapeKind::Rectangle && poly.size() == 2) {
+                    const QRectF r = QRectF(poly[0], poly[1]).normalized();
+                    poly = {r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()};
+                }
+                if (poly.size() >= 3 && std::any_of(poly.cbegin(), poly.cend(), [&](const QPointF& v) {
+                        return pointDistance(marker.vertices.front(), v) <= tol;
+                    })) {
+                    targets.append({m, owner});
+                    break;
+                }
+            }
+        }
+        for (const auto& [m, owner] : targets) {
+            auto& marker = updated.shapes[m];
+            if (style.color)
+                assign(marker.color, std::optional<QColor>(owner->color));
+            if (style.width)
+                assign(marker.size, std::optional<double>(autoAngleStrokeWidth(owner->size)));
+            marker.bounds = computeShapeBounds(marker);
+        }
+    }
     if (!changed && newFills.isEmpty() && removedFills.isEmpty())
         return;
     updated.shapes.removeIf([&](const auto& shape) { return removedFills.contains(shape.id); });
@@ -720,8 +794,23 @@ void CanvasWidget::flipSelectionAxis(bool horizontal) {
     const auto originalShapes = m_doc.shapes();
     pushUndoSnapshot(currentSnapshot());
     flipSelection(m_doc.strokes(), m_doc.shapes(), m_selectedStrokeIds, shapeIds, bounds, horizontal);
-    if (!shapeIds.isEmpty())
+    if (!shapeIds.isEmpty()) {
         updateShapeLinks(m_doc.shapes(), originalShapes, shapeIds);
+        for (const QString& sid : shapeIds) {
+            const ShapeItem* oldShape = nullptr;
+            for (const auto& s : originalShapes) {
+                if (s.id == sid) {
+                    oldShape = &s;
+                    break;
+                }
+            }
+            if (!oldShape || oldShape->kind == ShapeKind::AngleMarker)
+                continue;
+            if (const auto* newShape = findShapeById(sid)) {
+                syncAutoAnglesAfterShapeChange(*oldShape, *newShape);
+            }
+        }
+    }
     m_lassoBounds = lassoSelectionBounds();
     invalidateStaticCache();
     saveAutosave();
@@ -1282,9 +1371,179 @@ bool CanvasWidget::applySelectedShapeVariant(ShapeFamily family, int variant) {
     }
     if (found < 0 || shapes.at(found).locked)
         return false;
-    ShapeItem updated = shapes.at(found);
+    const ShapeItem oldShape = shapes.at(found);
+    ShapeItem updated = oldShape;
     if (!morphShapeToVariant(updated, family, variant))
         return false;
+    const DocumentSnapshot before = currentSnapshot();
+    shapes[found] = updated;
+    updateShapeLinks(shapes, before.shapes, {id});
+    syncAutoAnglesAfterShapeChange(oldShape, updated);
+    pushUndoSnapshot(before);
+    m_lassoBounds = lassoSelectionBounds();
+    invalidateStaticCache();
+    saveAutosave();
+    emit stateChanged();
+    return true;
+}
+
+void CanvasWidget::syncAutoAnglesAfterShapeChange(const ShapeItem& oldShape, const ShapeItem& newShape) {
+    auto polyFor = [](const ShapeItem& sh) {
+        QVector<QPointF> p = sh.vertices;
+        if (sh.kind == ShapeKind::Rectangle && p.size() == 2) {
+            const QRectF r = QRectF(p[0], p[1]).normalized();
+            p = {r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()};
+        }
+        return p;
+    };
+    const QVector<QPointF> oldPoly = polyFor(oldShape);
+    if (oldPoly.size() < 3)
+        return;
+
+    const double zoom = std::max(0.25, m_doc.viewport().zoom);
+    const double tol = 6.0 / zoom;
+    double savedArm = 42.0 / zoom;
+    QSet<QString> oldAngleIds;
+    for (const ShapeItem& s : m_doc.shapes()) {
+        if (!isAutoVertexAngle(s) || s.vertices.isEmpty())
+            continue;
+        bool match = false;
+        for (const auto& att : s.attachments) {
+            if (att.targetId == oldShape.id) {
+                match = true;
+                break;
+            }
+        }
+        if (!match) {
+            for (const QPointF& v : oldPoly) {
+                if (pointDistance(s.vertices.front(), v) <= tol) {
+                    match = true;
+                    break;
+                }
+            }
+        }
+        if (match) {
+            oldAngleIds.insert(s.id);
+            if (s.vertices.size() >= 2) {
+                const double d = pointDistance(s.vertices[0], s.vertices[1]);
+                if (d > 1e-3)
+                    savedArm = d;
+            }
+        }
+    }
+    if (oldAngleIds.isEmpty())
+        return;
+
+    m_doc.shapes().removeIf([&](const ShapeItem& s) { return oldAngleIds.contains(s.id); });
+    m_selectedShapeIds.subtract(oldAngleIds);
+
+    const QVector<QPointF> newPoly = polyFor(newShape);
+    if (newPoly.size() < 3)
+        return;
+
+    const qsizetype n = newPoly.size();
+    for (qsizetype i = 0; i < n; ++i) {
+        const QPointF prev = newPoly[(i - 1 + n) % n];
+        const QPointF curr = newPoly[i];
+        const QPointF next = newPoly[(i + 1) % n];
+        const double l1 = pointDistance(curr, prev);
+        const double l2 = pointDistance(curr, next);
+        if (l1 < 1e-3 || l2 < 1e-3)
+            continue;
+        const double arm = std::min({savedArm, l1 * 0.45, l2 * 0.45});
+        ShapeItem marker;
+        marker.id = freshId();
+        marker.kind = ShapeKind::AngleMarker;
+        marker.label = autoVertexAngleLabel();
+        marker.closed = false;
+        marker.color = newShape.color;
+        marker.size = std::clamp(newShape.size * 0.85, 1.4, 3.2);
+        marker.opacity = newShape.opacity;
+        marker.attachments = {ShapeAttachment{0, newShape.id, 0, 0.0}};
+        marker.vertices = {
+            curr,
+            curr + ((prev - curr) / l1) * arm,
+            curr + ((next - curr) / l2) * arm
+        };
+        marker.bounds = computeShapeBounds(marker);
+        m_doc.shapes().append(std::move(marker));
+    }
+}
+
+double CanvasWidget::selectedCircleSweepDegrees() const {
+    const QString id = singleSelectedShapeId(m_selectedShapeId, m_selectedShapeIds);
+    const ShapeItem* shape = id.isEmpty() ? nullptr : findShapeById(id);
+    if (!shape)
+        return 360.0;
+    if (shape->kind == ShapeKind::Sector && shape->vertices.size() >= 3) {
+        const QPointF c = shape->vertices[0];
+        const QPointF r1 = shape->vertices[1] - c;
+        const QPointF r2 = shape->vertices[2] - c;
+        const double a1 = std::atan2(-r1.y(), r1.x());
+        const double a2 = std::atan2(-r2.y(), r2.x());
+        double deg = (a2 - a1) * 180.0 / M_PI;
+        while (deg <= 0.0)
+            deg += 360.0;
+        while (deg > 360.0)
+            deg -= 360.0;
+        return std::clamp(deg, 15.0, 360.0);
+    }
+    return 360.0;
+}
+
+bool CanvasWidget::setSelectedCircleSweepDegrees(double degrees) {
+    if (m_mode != InteractionMode::None || m_polylineActive)
+        return false;
+    const QString id = singleSelectedShapeId(m_selectedShapeId, m_selectedShapeIds);
+    if (id.isEmpty())
+        return false;
+    auto& shapes = m_doc.shapes();
+    qsizetype found = -1;
+    for (qsizetype i = 0; i < shapes.size(); ++i) {
+        if (shapes.at(i).id == id) {
+            found = i;
+            break;
+        }
+    }
+    if (found < 0 || shapes.at(found).locked)
+        return false;
+    ShapeItem updated = shapes.at(found);
+    if (updated.kind != ShapeKind::Circle && updated.kind != ShapeKind::Sector
+        && updated.kind != ShapeKind::Ellipse) {
+        return false;
+    }
+    QPointF center;
+    double rad = 40.0;
+    double startAngle = 0.0;
+    if ((updated.kind == ShapeKind::Circle || updated.kind == ShapeKind::Sector)
+        && updated.vertices.size() >= 2) {
+        center = updated.vertices[0];
+        const QPointF ray = updated.vertices[1] - center;
+        rad = std::max(4.0, std::hypot(ray.x(), ray.y()));
+        startAngle = std::atan2(-ray.y(), ray.x());
+    } else if (updated.vertices.size() >= 2) {
+        const QRectF r = QRectF(updated.vertices[0], updated.vertices[1]).normalized();
+        center = r.center();
+        rad = std::max(4.0, (r.width() + r.height()) * 0.25);
+    } else {
+        return false;
+    }
+    const double clamped = std::clamp(degrees, 15.0, 360.0);
+    if (clamped >= 359.0) {
+        updated.kind = ShapeKind::Circle;
+        updated.closed = true;
+        updated.vertices = {center, center + QPointF(rad * std::cos(startAngle), -rad * std::sin(startAngle))};
+    } else {
+        const double endAngle = startAngle + clamped * M_PI / 180.0;
+        updated.kind = ShapeKind::Sector;
+        updated.closed = true;
+        updated.vertices = {
+            center,
+            center + QPointF(rad * std::cos(startAngle), -rad * std::sin(startAngle)),
+            center + QPointF(rad * std::cos(endAngle), -rad * std::sin(endAngle)),
+        };
+    }
+    updated.bounds = computeShapeBounds(updated);
     const DocumentSnapshot before = currentSnapshot();
     shapes[found] = std::move(updated);
     updateShapeLinks(shapes, before.shapes, {id});
@@ -1311,6 +1570,104 @@ bool CanvasWidget::setSelectedShapeFillColor(const QColor& color) {
             style.fillPattern = m_shadePattern;
     }
     setSelectionStyle(style);
+    return true;
+}
+
+bool CanvasWidget::selectedShapeHasAngles() const {
+    const QString id = singleSelectedShapeId(m_selectedShapeId, m_selectedShapeIds);
+    const ShapeItem* base = id.isEmpty() ? nullptr : findShapeById(id);
+    if (!base)
+        return false;
+    QVector<QPointF> poly = base->vertices;
+    if (base->kind == ShapeKind::Rectangle && poly.size() == 2) {
+        const QRectF r = QRectF(poly[0], poly[1]).normalized();
+        poly = {r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()};
+    }
+    if (poly.size() < 3)
+        return false;
+    const double tol = 6.0 / std::max(0.25, m_doc.viewport().zoom);
+    for (const ShapeItem& s : m_doc.shapes()) {
+        if (!isAutoVertexAngle(s) || s.vertices.isEmpty())
+            continue;
+        for (const QPointF& v : poly) {
+            if (pointDistance(s.vertices.front(), v) <= tol)
+                return true;
+        }
+    }
+    return false;
+}
+
+double CanvasWidget::selectedShapeAnglesRadius() const {
+    const QString id = singleSelectedShapeId(m_selectedShapeId, m_selectedShapeIds);
+    const ShapeItem* base = id.isEmpty() ? nullptr : findShapeById(id);
+    if (!base)
+        return 42.0;
+    QVector<QPointF> poly = base->vertices;
+    if (base->kind == ShapeKind::Rectangle && poly.size() == 2) {
+        const QRectF r = QRectF(poly[0], poly[1]).normalized();
+        poly = {r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()};
+    }
+    if (poly.size() < 3)
+        return 42.0;
+    const double zoom = std::max(0.25, m_doc.viewport().zoom);
+    const double tol = 6.0 / zoom;
+    for (const ShapeItem& s : m_doc.shapes()) {
+        if (!isAutoVertexAngle(s) || s.vertices.size() < 3)
+            continue;
+        for (const QPointF& v : poly) {
+            if (pointDistance(s.vertices[0], v) <= tol)
+                return std::clamp(pointDistance(s.vertices[0], s.vertices[1]) * zoom, 14.0, 160.0);
+        }
+    }
+    return 42.0;
+}
+
+bool CanvasWidget::setSelectedShapeAnglesRadius(double armPx) {
+    if (m_mode != InteractionMode::None || m_polylineActive)
+        return false;
+    const QString id = singleSelectedShapeId(m_selectedShapeId, m_selectedShapeIds);
+    const ShapeItem* base = id.isEmpty() ? nullptr : findShapeById(id);
+    if (!base || base->locked)
+        return false;
+    QVector<QPointF> poly = base->vertices;
+    if (base->kind == ShapeKind::Rectangle && poly.size() == 2) {
+        const QRectF r = QRectF(poly[0], poly[1]).normalized();
+        poly = {r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()};
+    }
+    if (poly.size() < 3)
+        return false;
+    const double zoom = std::max(0.25, m_doc.viewport().zoom);
+    const double tol = 6.0 / zoom;
+    const double targetArm = std::clamp(armPx, 14.0, 160.0) / zoom;
+    bool changed = false;
+    for (ShapeItem& s : m_doc.shapes()) {
+        if (!isAutoVertexAngle(s) || s.vertices.size() < 3)
+            continue;
+        for (qsizetype i = 0; i < poly.size(); ++i) {
+            if (pointDistance(s.vertices[0], poly[i]) <= tol) {
+                const QPointF d1 = s.vertices[1] - s.vertices[0];
+                const QPointF d2 = s.vertices[2] - s.vertices[0];
+                const double l1 = vecLength(d1);
+                const double l2 = vecLength(d2);
+                if (l1 > 1e-4 && l2 > 1e-4) {
+                    const QPointF prev = poly[(i - 1 + poly.size()) % poly.size()];
+                    const QPointF next = poly[(i + 1) % poly.size()];
+                    const double maxArm = std::min(pointDistance(poly[i], prev), pointDistance(poly[i], next)) * 0.48;
+                    const double arm = std::min(targetArm, std::max(4.0 / zoom, maxArm));
+                    s.vertices[1] = s.vertices[0] + (d1 / l1) * arm;
+                    s.vertices[2] = s.vertices[0] + (d2 / l2) * arm;
+                    s.bounds = computeShapeBounds(s);
+                    changed = true;
+                }
+                break;
+            }
+        }
+    }
+    if (!changed)
+        return false;
+    invalidateStaticCache();
+    saveAutosave();
+    update();
     return true;
 }
 
@@ -1370,8 +1727,9 @@ bool CanvasWidget::toggleSelectedShapeAngles() {
         marker.label = autoVertexAngleLabel();
         marker.closed = false;
         marker.color = base->color;
-        marker.size = std::clamp(base->size * 0.85, 1.4, 3.2);
+        marker.size = autoAngleStrokeWidth(base->size);
         marker.opacity = base->opacity;
+        marker.attachments = {ShapeAttachment{0, base->id, 0, 0.0}};
         marker.vertices = {
             curr,
             curr + ((prev - curr) / l1) * arm,
@@ -1522,6 +1880,8 @@ InlineTextState CanvasWidget::inlineTextState() const {
 bool CanvasWidget::setInlineTextStyle(int familyIdx, double fontSize, bool bold, bool italic) {
     const int fam = std::clamp(familyIdx, 0, 2);
     const double sz = std::clamp(fontSize, 9.0, 96.0);
+    m_lastTextFontSize = sz;
+    writeAppSetting(QStringLiteral("text/fontSize"), sz);
     if (m_textEditor) {
         m_textEditor->draft.fontFamilyIndex = fam;
         m_textEditor->draft.fontSize = sz;

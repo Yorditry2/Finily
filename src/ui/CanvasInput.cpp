@@ -198,44 +198,6 @@ bool sameHighlightGeometry(const ShapeItem& a, const ShapeItem& b) {
     return false;
 }
 
-QString recognizedShapeLabel(ShapeKind kind) {
-    switch (kind) {
-    case ShapeKind::Line:
-        return QStringLiteral("Línea");
-    case ShapeKind::Circle:
-        return QStringLiteral("Círculo");
-    case ShapeKind::Ellipse:
-        return QStringLiteral("Elipse");
-    case ShapeKind::Triangle:
-        return QStringLiteral("Triángulo");
-    case ShapeKind::Rectangle:
-        return QStringLiteral("Rectángulo");
-    case ShapeKind::Radical:
-        return QStringLiteral("Raíz √");
-    case ShapeKind::Polyline:
-        return QStringLiteral("Polígono");
-    case ShapeKind::Curve:
-        return QStringLiteral("Curva");
-    case ShapeKind::RightAngle:
-        return QStringLiteral("Ángulo recto");
-    case ShapeKind::Brace:
-        return QStringLiteral("Llave");
-    case ShapeKind::Axes:
-        return QStringLiteral("Ejes");
-    case ShapeKind::Solid3D:
-        return QStringLiteral("Sólido");
-    case ShapeKind::Arc:
-        return QStringLiteral("Arco");
-    case ShapeKind::Sector:
-        return QStringLiteral("Sector");
-    case ShapeKind::AngleMarker:
-        return QStringLiteral("Ángulo");
-    case ShapeKind::ShadedRegion:
-        return {};
-    }
-    return {};
-}
-
 } // namespace
 
 ShapeItem* CanvasWidget::findShapeById(const QString& id) {
@@ -403,22 +365,17 @@ void CanvasWidget::openInlineTextEditor(const TextItem& draft,
         ? QStringLiteral("rgba(12,18,32,0.88)")
         : QStringLiteral("rgba(255,255,255,0.92)");
     const QString style = isOcr
-        ? QStringLiteral("QLineEdit { background: %1; color: %2; border: 1.5px solid %3; "
+        ? QStringLiteral("QPlainTextEdit { background: %1; color: %2; border: 1.5px solid %3; "
                          "border-radius: 6px; padding: 4px 6px; }")
-        : QStringLiteral("QLineEdit { background: %1; color: %2; border: 1px solid %3; "
-                         "border-radius: 5px; padding: 3px; }");
+        : QStringLiteral("QPlainTextEdit { background: %1; color: %2; border: 1.5px solid %3; "
+                         "border-radius: 6px; padding: 3px 6px; }");
     editor->setStyleSheet(style.arg(bgCss, draft.color.name(), theme.accent.name()));
 
     const int minW = isOcr ? 220 : 180;
-    const int padW = isOcr ? 36 : 24;
-    const int padH = isOcr ? 14 : 12;
-    const QFontMetricsF metrics(editor->font());
     editor->move(anchorScreen.toPoint());
-    editor->resize(std::max(minW, qRound(metrics.horizontalAdvance(draft.text) + padW)),
-                   qRound(metrics.height() + padH));
-    connect(editor, &QLineEdit::textChanged, editor, [this, editor, minW, padW](const QString& text) {
-        const QFontMetricsF fm(editor->font());
-        editor->resize(std::max(minW, qRound(fm.horizontalAdvance(text) + padW)), editor->height());
+    editor->adjustSizeToText(minW);
+    connect(editor, &QPlainTextEdit::textChanged, editor, [this, editor, minW]() {
+        editor->adjustSizeToText(minW);
         emit inlineTextEditorChanged(true, editor->geometry());
     });
 
@@ -540,6 +497,7 @@ void CanvasWidget::startShapeEdit(const ShapeItem& shape, InteractionMode mode, 
     m_activeHandleIndex = handle;
     m_shapeDragOriginalVertices = shape.vertices;
     m_shapeDragOriginalKind = shape.kind;
+    m_shapeDragOriginalDimensionGap = shape.dimensionGap;
     m_mode = mode;
     invalidateStaticCache();
     emit stateChanged();
@@ -627,10 +585,12 @@ void CanvasWidget::beginFillAt(const QPointF& world) {
         // Máximo 3 capas superpuestas en una misma región.
         shapes[lastSameRegionIdx].color = region->color;
         shapes[lastSameRegionIdx].shadePattern = m_shadePattern;
+        shapes[lastSameRegionIdx].opacity = m_shadeOpacity;
     } else {
         // Añadir nueva capa encima desplazada/alternada para distinguir ambos colores.
         region->id = freshId();
         region->shadeLayer = sameRegionCount;
+        region->opacity = m_shadeOpacity;
         shapes.append(*region);
     }
     invalidateStaticCache();
@@ -680,7 +640,12 @@ bool CanvasWidget::tryBeginSelectTool(const QPointF& world) {
     // Textos por encima de formas, trazos e imágenes (salvo los tiradores ya activos).
     const auto& texts = m_doc.texts();
     for (qsizetype i = texts.size(); i-- > 0;) {
-        if (texts.at(i).bounds.adjusted(-4.0, -4.0, 4.0, 4.0).contains(world)) {
+        const auto& t = texts.at(i);
+        if (t.id == m_selectedTextId && !t.locked
+            && hitTestLassoHandle(t.bounds, world, zoom) >= 0) {
+            return false;
+        }
+        if (t.bounds.adjusted(-4.0, -4.0, 4.0, 4.0).contains(world)) {
             return false;
         }
     }
@@ -804,7 +769,25 @@ bool CanvasWidget::tryBeginTextInput(const QPointF& screen, const QPointF& world
     if (m_tool != ToolType::Text && m_tool != ToolType::Lasso && m_tool != ToolType::Select) {
         return false;
     }
+    const double zoom = m_doc.viewport().zoom;
     const auto& texts = m_doc.texts();
+    if (!forceEdit && !m_selectedTextId.isEmpty()) {
+        for (const auto& t : texts) {
+            if (t.id == m_selectedTextId && !t.locked) {
+                const int handle = hitTestLassoHandle(t.bounds, world, zoom);
+                if (handle >= 0 && handle < 4) {
+                    m_snapshotBeforeTextEdit = currentSnapshot();
+                    m_textOriginalPos = t.pos;
+                    m_textOriginalFontSize = t.fontSize;
+                    m_textOriginalBounds = t.bounds;
+                    m_textDragStartWorld = world;
+                    m_textHandleIndex = handle;
+                    m_mode = InteractionMode::TextMove;
+                    return true;
+                }
+            }
+        }
+    }
     const TextItem* hitItem = nullptr;
     for (qsizetype i = texts.size(); i-- > 0;) {
         if (texts.at(i).bounds.adjusted(-4.0, -4.0, 4.0, 4.0).contains(world)) {
@@ -829,6 +812,7 @@ bool CanvasWidget::tryBeginTextInput(const QPointF& screen, const QPointF& world
         }
         m_snapshotBeforeTextEdit = currentSnapshot();
         m_textOriginalPos = origPos;
+        m_textHandleIndex = -1;
         m_textDragStartWorld = world;
         m_mode = InteractionMode::TextMove;
         invalidateStaticCache();
@@ -844,7 +828,7 @@ bool CanvasWidget::tryBeginTextInput(const QPointF& screen, const QPointF& world
         TextItem draft;
         draft.id = freshId();
         draft.pos = world;
-        draft.fontSize = std::clamp(m_size * 7.5, 16.0, 56.0);
+        draft.fontSize = m_lastTextFontSize;
         draft.color = m_color;
         openInlineTextEditor(draft, screen, {}, {});
         return true;
@@ -998,9 +982,7 @@ void CanvasWidget::beginFreehandStroke(const QPointF& world,
     m_activeStroke.pressureProfile = m_pressureProfile;
     m_activeStroke.pressureSensitivity = m_pressureSensitivity;
     m_activeStroke.hasHardwarePressure = hardware;
-    m_activeStroke.tipStyle = (m_tool == ToolType::Highlighter)
-        ? (m_hlRoundTip ? 1 : m_highlighterTip)
-        : m_penTip;
+    m_activeStroke.tipStyle = (m_tool == ToolType::Highlighter) ? 0 : m_penTip;
     if (m_tool == ToolType::Highlighter) {
         m_activeStroke.opacity = m_highlighterOpacity;
     }
@@ -1016,7 +998,7 @@ void CanvasWidget::beginFreehandStroke(const QPointF& world,
     m_holdLastWorld = world;
     if (m_holdToShapeEnabled
         && (m_tool == ToolType::Pen || m_tool == ToolType::Ballpoint
-            || (m_tool == ToolType::Highlighter && m_highlighterTip != 2 && !m_hlStraightenOnRelease))) {
+            || m_tool == ToolType::Highlighter)) {
         m_holdTimer->start();
     }
     if (m_activeStroke.tool == ToolType::Highlighter) {
@@ -1066,7 +1048,7 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
         m_erasedAnything = false;
         m_eraserWorldPos = world;
         m_showEraserCursor = true;
-        applyEraseAt(world, mods.testFlag(Qt::ShiftModifier));
+        applyEraseAt(world, false);
         updateCursorShape();
         return;
     }
@@ -1090,20 +1072,14 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
     if (m_tool == ToolType::Laser) {
         m_mode = InteractionMode::LaserTrail;
         m_laserDotFading = false;
-        if (m_laserMode == LaserMode::Dot) {
-            m_laserTrail = {{world, nowMs(), true}};
-        } else {
-            m_laserTrail.append({world, nowMs(), true});
-        }
+        m_laserTrail.clear();
+        m_laserTrail.append({world, nowMs(), true});
         m_laserTimer->start();
         updateLaserDirtyRect();
         return;
     }
     if (m_tool == ToolType::Fill) {
-        if (m_fillSegmentMode)
-            highlightSegmentAt(world, m_color, 0);
-        else
-            beginFillAt(world);
+        beginFillAt(world);
         return;
     }
 
@@ -1123,12 +1099,10 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
     }
 
     const double zoom = m_doc.viewport().zoom;
-    const bool drawingGeometry = (m_tool == ToolType::Polyline || m_tool == ToolType::Shape);
     const bool drawingLine =
         (m_tool == ToolType::Polyline || (m_tool == ToolType::Shape && m_shapeKind == ShapeKind::Line));
     const bool writing = (m_tool == ToolType::Pen || m_tool == ToolType::Ballpoint);
-    const bool editModifier = mods.testFlag(Qt::ShiftModifier);
-    if (!m_polylineActive && !drawingLine && (writing || m_tool == ToolType::Shape || editModifier)) {
+    if (!m_polylineActive && !drawingLine && (writing || m_tool == ToolType::Shape)) {
         if (auto* selected = findShapeById(m_selectedShapeId)) {
             const int handle = hitTestHandle(*selected, world, (writing ? 12.0 : 10.0) / zoom);
             if (handle >= 0) {
@@ -1141,28 +1115,6 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
                         .adjusted(-12.0 / zoom, -12.0 / zoom, 12.0 / zoom, 12.0 / zoom)
                         .contains(world)) {
                 clearSelection();
-                if (writing) {
-                    return;
-                }
-            }
-        }
-        if (drawingGeometry && editModifier) {
-            auto& shapes = m_doc.shapes();
-            for (qsizetype i = shapes.size(); i-- > 0;) {
-                if (shapes.at(i).kind == ShapeKind::ShadedRegion) {
-                    continue;
-                }
-                const int handle = hitTestHandle(shapes.at(i), world, 9.0 / zoom);
-                if (handle >= 0) {
-                    m_shapeDragStartWorld = world;
-                    startShapeEdit(shapes.at(i), InteractionMode::ShapeDragHandle, handle);
-                    return;
-                }
-                if (hitTestShape(shapes.at(i), world, 6.0 / zoom)) {
-                    m_shapeDragStartWorld = world;
-                    startShapeEdit(shapes.at(i), InteractionMode::ShapeMove);
-                    return;
-                }
             }
         }
     }
@@ -1180,7 +1132,27 @@ void CanvasWidget::beginInput(const QPointF& screenPos,
 
 void CanvasWidget::moveText(const QPointF& world) {
     for (auto& item : m_doc.texts()) {
-        if (item.id == m_selectedTextId) {
+        if (item.id != m_selectedTextId)
+            continue;
+        if (m_textHandleIndex >= 0 && m_textHandleIndex < 4) {
+            const QVector<QPointF> corners{
+                m_textOriginalBounds.topLeft(),
+                m_textOriginalBounds.topRight(),
+                m_textOriginalBounds.bottomRight(),
+                m_textOriginalBounds.bottomLeft(),
+            };
+            const QPointF anchor = corners.at((m_textHandleIndex + 2) % 4);
+            const QPointF diagonal = corners.at(m_textHandleIndex) - anchor;
+            const QPointF target = diagonal + world - m_textDragStartWorld;
+            const double denom = diagonal.x() * diagonal.x() + diagonal.y() * diagonal.y();
+            const double scale = std::clamp(
+                denom > 1e-8 ? (diagonal.x() * target.x() + diagonal.y() * target.y()) / denom : 1.0,
+                0.35, 5.0);
+            item.fontSize = std::clamp(m_textOriginalFontSize * scale, 10.0, 96.0);
+            item.pos = anchor + (m_textOriginalPos - anchor) * scale;
+            item.bounds = textBounds(item);
+            m_lastTextFontSize = item.fontSize;
+        } else {
             item.pos = m_textOriginalPos + world - m_textDragStartWorld;
             item.bounds = textBounds(item);
         }
@@ -1204,18 +1176,18 @@ void CanvasWidget::movePan(const QPointF& screen) {
 }
 
 void CanvasWidget::moveErase(const QPointF& world, Qt::KeyboardModifiers mods) {
+    Q_UNUSED(mods);
     const QPointF previous = m_eraserWorldPos;
     const int steps = std::max(
         1, int(std::ceil(pointDistance(world, previous) / std::max(0.5, m_eraserSize / 4.0))));
-    const bool trimIntersections = mods.testFlag(Qt::ShiftModifier);
     for (int i = 1; i <= steps; ++i) {
-        applyEraseAt(previous + (world - previous) * (double(i) / steps), trimIntersections);
+        applyEraseAt(previous + (world - previous) * (double(i) / steps), false);
     }
     updateEraserCursor(world, true);
 }
 
 void CanvasWidget::moveLassoDraw(const QPointF& world) {
-    if (m_lassoRectMode || m_tool == ToolType::Select) {
+    if (m_tool == ToolType::Select) {
         const QRectF r(m_lassoRectOrigin, world);
         m_lassoPolygon = QPolygonF{r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()};
     } else if (m_lassoPolygon.isEmpty()
@@ -1372,6 +1344,7 @@ void CanvasWidget::moveShapeEdit(const QPointF& world) {
     if (auto* shape = findShapeById(m_selectedShapeId)) {
         shape->vertices = m_shapeDragOriginalVertices;
         shape->kind = m_shapeDragOriginalKind;
+        shape->dimensionGap = m_shapeDragOriginalDimensionGap;
         const QPointF delta = world - m_shapeDragStartWorld;
         if (m_tool == ToolType::Select && std::hypot(delta.x(), delta.y()) * zoom <= 0.5) {
             m_activeGuides.clear();
@@ -1442,6 +1415,15 @@ void CanvasWidget::moveShapeEdit(const QPointF& world) {
         }
     }
     updateLinkedPreview(m_snapshotBeforeShapeEdit.shapes, {m_selectedShapeId});
+    if (const auto* edited = findShapeById(m_selectedShapeId)) {
+        for (const auto& orig : m_snapshotBeforeShapeEdit.shapes) {
+            if (orig.id == m_selectedShapeId) {
+                const ShapeItem editedCopy = *edited;
+                syncAutoAnglesAfterShapeChange(orig, editedCopy);
+                break;
+            }
+        }
+    }
     update();
 }
 
@@ -1489,20 +1471,17 @@ void CanvasWidget::moveShapeCreate(const QPointF& world, Qt::KeyboardModifiers m
             start = reverse.point;
         }
     }
-    QPointF finalEnd = end;
-    // Mayús: óvalo -> círculo perfecto, rectángulo -> cuadrado perfecto.
-    if (mods.testFlag(Qt::ShiftModifier)
-        && (m_activeShape.kind == ShapeKind::Ellipse || m_activeShape.kind == ShapeKind::Rectangle)) {
-        const QPointF d = end - start;
-        const double side = std::max(std::abs(d.x()), std::abs(d.y()));
-        finalEnd = start + QPointF(d.x() < 0 ? -side : side, d.y() < 0 ? -side : side);
-    }
+    Q_UNUSED(mods);
+    const QPointF finalEnd = end;
     createShapeVertices(m_activeShape, start, finalEnd, m_polygonSides, m_quadVariant);
     if (m_activeShape.kind == ShapeKind::Triangle) {
         const QRectF r = QRectF(start, finalEnd).normalized();
-        const int variant =
-            (mods.testFlag(Qt::ShiftModifier) && m_triangleVariant == 0) ? 1 : m_triangleVariant;
-        if (variant == 1) {
+        const int variant = m_triangleVariant;
+        m_activeShape.shapeVariant = variant;
+        if (variant == 0) {
+            m_activeShape.vertices = {{r.left() + r.width() * 0.35, r.top()}, r.bottomRight(), r.bottomLeft()};
+            m_activeShape.bounds = computeShapeBounds(m_activeShape);
+        } else if (variant == 2) {
             m_activeShape.vertices = {r.topLeft(), r.bottomRight(), r.bottomLeft()};
             m_activeShape.bounds = computeShapeBounds(m_activeShape);
         } else if (variant == 3) {
@@ -1531,13 +1510,12 @@ void CanvasWidget::moveFreehandStroke(const QPointF& world,
         m_holdAnchorWorld = world;
         m_holdTimer->start();
     }
+    Q_UNUSED(mods);
     StrokePoint point = m_stabilizerFilter->filter(inputPoint(world, pressure, tiltX, tiltY));
-    if (mods.testFlag(Qt::ShiftModifier) || m_holdSnappedToShape) {
+    if (m_holdSnappedToShape) {
         m_liveInk.reset(m_liveInkLayer);
         m_liveInkPending = false;
         point = snappedPoint(m_rawStartPoint, point);
-        m_activeStroke.points = {m_rawStartPoint, point};
-    } else if (m_activeStroke.tool == ToolType::Highlighter && m_activeStroke.tipStyle == 2) {
         m_activeStroke.points = {m_rawStartPoint, point};
     } else if (!m_activeStroke.points.isEmpty()) {
         const auto& last = m_activeStroke.points.back();
@@ -1552,7 +1530,6 @@ void CanvasWidget::moveFreehandStroke(const QPointF& world,
         // Qt agrupa los update(): prepara la capa de tinta una vez al pintar.
         m_liveInkPending = true;
     }
-    // Conservar también la zona del trazo anterior al alternar Shift.
     m_liveStrokeBounds.setCoords(std::min(m_liveStrokeBounds.left(), point.x),
                                 std::min(m_liveStrokeBounds.top(), point.y),
                                 std::max(m_liveStrokeBounds.right(), point.x),
@@ -1562,7 +1539,7 @@ void CanvasWidget::moveFreehandStroke(const QPointF& world,
     const QSize pixels(int(std::ceil(width() * dpr)), int(std::ceil(height() * dpr)));
     QRectF tailWorld = m_liveStrokeBounds;
     if (m_liveInk.usable(vp, pixels, dpr) && LiveInkRenderer::eligible(m_activeStroke)
-        && !mods.testFlag(Qt::ShiftModifier) && !m_holdSnappedToShape) {
+        && !m_holdSnappedToShape) {
         const qsizetype fromPt = std::max<qsizetype>(0, m_liveInk.frozenPointIndex() - 2);
         const auto& pts = m_activeStroke.points;
         double l = pts[fromPt].x;
@@ -1649,11 +1626,7 @@ void CanvasWidget::moveInput(const QPointF& screenPos,
     switch (m_mode) {
     case InteractionMode::LaserTrail:
         m_laserDotFading = false;
-        if (m_laserMode == LaserMode::Dot) {
-            m_laserTrail = {{world, nowMs(), true}};
-        } else {
-            m_laserTrail.append({world, nowMs(), false});
-        }
+        m_laserTrail.append({world, nowMs(), false});
         if (!m_laserTimer->isActive()) {
             m_laserTimer->start();
         }
@@ -1721,7 +1694,8 @@ void CanvasWidget::finishAutoGeometry(const ShapeItem& pulseShape) {
 }
 
 bool CanvasWidget::tryCommitFreehandGeometry(Qt::KeyboardModifiers mods) {
-    if (mods.testFlag(Qt::ShiftModifier) || m_holdSnappedToShape) {
+    Q_UNUSED(mods);
+    if (m_holdSnappedToShape) {
         return false;
     }
     if (m_activeStroke.tool != ToolType::Pen && m_activeStroke.tool != ToolType::Ballpoint) {
@@ -1746,59 +1720,6 @@ bool CanvasWidget::tryCommitFreehandGeometry(Qt::KeyboardModifiers mods) {
         }
     }
 
-    if (m_gestureOptions.dividerDot) {
-        auto candidate = shapes;
-        QString createdId;
-        if (trySnapFreehandDividerOnEdge(m_activeStroke, candidate, zoom, &createdId)) {
-            pushUndoSnapshot(currentSnapshot());
-            shapes = std::move(candidate);
-            ShapeItem pulse;
-            if (const auto* placed = findShapeById(createdId)) {
-                pulse = *placed;
-            }
-            emit toastRequested(edgeMarkToast(EdgeMarkKind::Divider));
-            finishAutoGeometry(pulse);
-            return true;
-        }
-    }
-
-    if (m_gestureOptions.attachArrowhead) {
-        auto candidate = shapes;
-        QString updatedId;
-        if (tryAttachArrowheadToLine(m_activeStroke, candidate, zoom, &updatedId)) {
-            pushUndoSnapshot(currentSnapshot());
-            shapes = std::move(candidate);
-            ShapeItem pulse;
-            if (const auto* updated = findShapeById(updatedId)) {
-                pulse = *updated;
-            }
-            emit toastRequested(QStringLiteral("Flecha ✓"));
-            finishAutoGeometry(pulse);
-            return true;
-        }
-    }
-
-    if (m_gestureOptions.freehandArrow) {
-        if (const auto arrow = tryRecognizeFreehandArrow(m_activeStroke, zoom)) {
-            pushUndoSnapshot(currentSnapshot());
-            shapes.append(*arrow);
-            attachNewShape(shapes);
-            emit toastRequested(QStringLiteral("Flecha ✓"));
-            finishAutoGeometry(*arrow);
-            return true;
-        }
-    }
-
-    if (m_gestureOptions.edgeMarks) {
-        if (const auto mark = trySnapCongruenceStrokeOnEdge(m_activeStroke, shapes, zoom, false)) {
-            pushUndoSnapshot(currentSnapshot());
-            shapes.append(*mark);
-            emit toastRequested(edgeMarkToast(parseEdgeMark(mark->label)));
-            finishAutoGeometry(*mark);
-            return true;
-        }
-    }
-
     return false;
 }
 
@@ -1809,7 +1730,7 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
     }
     if (m_mode == InteractionMode::LaserTrail) {
         m_mode = InteractionMode::None;
-        if (m_laserMode == LaserMode::Dot && !m_laserTrail.isEmpty()) {
+        if (!m_laserTrail.isEmpty()) {
             m_laserDotFading = true;
             m_laserDotReleaseMs = nowMs();
             m_laserTimer->start();
@@ -1832,13 +1753,19 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
     case InteractionMode::TextMove:
         moveText(world);
         if (pointDistance(world, m_textDragStartWorld) * zoom > 0.01) {
+            if (m_textHandleIndex >= 0)
+                writeAppSetting(QStringLiteral("text/fontSize"), m_lastTextFontSize);
             pushUndoSnapshot(m_snapshotBeforeTextEdit);
             documentChanged = true;
         }
+        m_textHandleIndex = -1;
         invalidateStaticCache();
         break;
     case InteractionMode::LassoDraw: {
-        if (m_lassoPolygon.isEmpty() || pointDistance(world, m_lassoPolygon.back()) > 0.001) {
+        if (m_tool == ToolType::Select) {
+            const QRectF selR = QRectF(m_lassoRectOrigin, world).normalized();
+            m_lassoPolygon = QPolygonF({selR.topLeft(), selR.topRight(), selR.bottomRight(), selR.bottomLeft()});
+        } else if (m_lassoPolygon.isEmpty() || pointDistance(world, m_lassoPolygon.back()) > 0.001) {
             m_lassoPolygon.append(world);
         }
         const auto& strokes = m_doc.strokes();
@@ -1849,13 +1776,18 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
             (m_tool == ToolType::Lasso) ? m_lassoFilter : LassoTargetFilter{};
         selectByLasso(m_lassoPolygon, strokes, shapes, m_selectedStrokeIds, m_selectedShapeIds, filter);
         if (filter.media && m_lassoPolygon.size() >= 3) {
+            const bool isRectSelect = (m_tool == ToolType::Select);
+            const QRectF selR = m_lassoPolygon.boundingRect();
             for (const auto& text : texts) {
-                if (m_lassoPolygon.containsPoint(text.bounds.center(), Qt::OddEvenFill)) {
+                if (isRectSelect ? text.bounds.intersects(selR)
+                                 : m_lassoPolygon.containsPoint(text.bounds.center(), Qt::OddEvenFill)) {
                     m_selectedTextIds.insert(text.id);
                 }
             }
             for (const auto& image : images) {
-                if (!image.isPdfPage && m_lassoPolygon.containsPoint(image.rect.center(), Qt::OddEvenFill)) {
+                if (!image.isPdfPage
+                    && (isRectSelect ? image.rect.intersects(selR)
+                                     : m_lassoPolygon.containsPoint(image.rect.center(), Qt::OddEvenFill))) {
                     m_selectedImageIds.insert(image.id);
                 }
             }
@@ -1906,6 +1838,19 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
             }
             if (!m_selectedShapeIds.isEmpty()) {
                 updateShapeLinks(shapes, m_snapshotBeforeLassoTransform.shapes, m_selectedShapeIds);
+                for (const QString& sid : std::as_const(m_selectedShapeIds)) {
+                    const ShapeItem* oldShape = nullptr;
+                    for (const auto& s : m_snapshotBeforeLassoTransform.shapes) {
+                        if (s.id == sid) {
+                            oldShape = &s;
+                            break;
+                        }
+                    }
+                    if (!oldShape || oldShape->kind == ShapeKind::AngleMarker)
+                        continue;
+                    if (const auto* newShape = findShapeById(sid))
+                        syncAutoAnglesAfterShapeChange(*oldShape, *newShape);
+                }
             }
             m_lassoBounds = lassoSelectionBounds();
             pushUndoSnapshot(m_snapshotBeforeLassoTransform);
@@ -1918,6 +1863,22 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
     case InteractionMode::LassoRotate:
         moveLassoTransform(world);
         if (pointDistance(world, m_lassoDragStartWorld) * zoom > 0.01) {
+            if (!m_selectedShapeIds.isEmpty()) {
+                updateShapeLinks(m_doc.shapes(), m_snapshotBeforeLassoTransform.shapes, m_selectedShapeIds);
+                for (const QString& sid : std::as_const(m_selectedShapeIds)) {
+                    const ShapeItem* oldShape = nullptr;
+                    for (const auto& s : m_snapshotBeforeLassoTransform.shapes) {
+                        if (s.id == sid) {
+                            oldShape = &s;
+                            break;
+                        }
+                    }
+                    if (!oldShape || oldShape->kind == ShapeKind::AngleMarker)
+                        continue;
+                    if (const auto* newShape = findShapeById(sid))
+                        syncAutoAnglesAfterShapeChange(*oldShape, *newShape);
+                }
+            }
             pushUndoSnapshot(m_snapshotBeforeLassoTransform);
             documentChanged = true;
         }
@@ -1938,7 +1899,9 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
         moveShapeEdit(world);
         if (const auto* shape = findShapeById(m_selectedShapeId);
             shape
-            && (shape->vertices != m_shapeDragOriginalVertices || shape->kind != m_shapeDragOriginalKind)) {
+            && (shape->vertices != m_shapeDragOriginalVertices
+                || shape->kind != m_shapeDragOriginalKind
+                || shape->dimensionGap != m_shapeDragOriginalDimensionGap)) {
             pushUndoSnapshot(m_snapshotBeforeShapeEdit);
             documentChanged = true;
         }
@@ -1997,28 +1960,18 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
         if (!m_activeStroke.points.isEmpty()) {
             const auto& last = m_activeStroke.points.back();
             const StrokePoint end = inputPoint(world, last.pressure, last.tiltX, last.tiltY);
-            if (mods.testFlag(Qt::ShiftModifier) || m_holdSnappedToShape) {
+            if (m_holdSnappedToShape) {
                 m_activeStroke.points = {m_rawStartPoint, snappedPoint(m_rawStartPoint, end)};
-            } else if (m_activeStroke.tool == ToolType::Highlighter
-                       && (m_activeStroke.tipStyle == 2 || m_hlStraightenOnRelease)) {
-                m_activeStroke.points = {m_rawStartPoint, end};
             } else if (pointDistance({last.x, last.y}, {end.x, end.y}) > 0.001) {
                 m_activeStroke.points.append(end);
                 m_inkSmoother.push(m_activeStroke);
             }
         }
-        if (!mods.testFlag(Qt::ShiftModifier)
-            && (m_activeStroke.tool == ToolType::Pen || m_activeStroke.tool == ToolType::Ballpoint)) {
+        if (m_activeStroke.tool == ToolType::Pen || m_activeStroke.tool == ToolType::Ballpoint) {
             trimPenHooks(m_activeStroke, zoom);
         }
-        if (m_fountainFlickEnabled && m_activeStroke.tool == ToolType::Pen && m_activeStroke.tipStyle == 1
-            && !mods.testFlag(Qt::ShiftModifier)) {
+        if (m_fountainFlickEnabled && m_activeStroke.tool == ToolType::Pen && m_activeStroke.tipStyle == 1) {
             taperPenFlick(m_activeStroke, zoom);
-        }
-        if (m_activeStroke.tool == ToolType::Highlighter
-            && (m_activeStroke.tipStyle == 2 || m_hlStraightenOnRelease)
-            && m_activeStroke.points.size() >= 2) {
-            m_activeStroke.points = {m_activeStroke.points.front(), m_activeStroke.points.back()};
         }
         m_liveInk.reset(m_liveInkLayer);
         m_activeStroke.bounds = computeBounds(m_activeStroke.points, m_activeStroke.size * 0.7);
@@ -2030,7 +1983,7 @@ void CanvasWidget::endInput(const QPointF& screenPos, Qt::KeyboardModifiers mods
         documentChanged = true;
         m_doc.strokes().append(m_activeStroke);
         m_hasActiveStroke = false;
-        if (m_mathBeautifyEnabled && !mods.testFlag(Qt::ShiftModifier)
+        if (m_mathBeautifyEnabled
             && (m_activeStroke.tool == ToolType::Pen || m_activeStroke.tool == ToolType::Ballpoint)) {
             const QRectF nb = m_activeStroke.bounds;
             if (!m_pendingBeautifyIds.isEmpty() && !m_pendingBeautifyBox.isEmpty()) {
@@ -2215,20 +2168,7 @@ void CanvasWidget::triggerHoldToShape() {
         return;
     }
 
-    // 1. Mantener presionado un punto sobre una arista -> abrir mini-barra rápida de marcas.
     if (total * vp.zoom < 16.0) {
-        QPointF edgePt;
-        if (m_gestureOptions.holdEdgeMenu
-            && isPointNearGeometryEdge(m_holdLastWorld, m_doc.shapes(), vp.zoom, 22.0, &edgePt)) {
-            m_hasActiveStroke = false;
-            m_liveInk.reset(m_liveInkLayer);
-            m_lastLiveDirtyRect = {};
-            m_mode = InteractionMode::None;
-            m_holdTimer->stop();
-            update();
-            const QPointF screenPos(edgePt.x() * vp.zoom + vp.x, edgePt.y() * vp.zoom + vp.y);
-            emit edgeMarkMenuRequested(screenPos, edgePt);
-        }
         return;
     }
 
@@ -2243,7 +2183,6 @@ void CanvasWidget::triggerHoldToShape() {
             pushUndoSnapshot(currentSnapshot());
             m_doc.shapes().append(*autoAngle);
             attachNewShape(m_doc.shapes());
-            emit toastRequested(QStringLiteral("Ángulo ✓"));
             finishAutoGeometry(*autoAngle);
             return;
         }
@@ -2251,16 +2190,6 @@ void CanvasWidget::triggerHoldToShape() {
 
     if (total * vp.zoom < 25.0) {
         return;
-    }
-
-    if (m_gestureOptions.edgeMarks) {
-        if (const auto mark = trySnapCongruenceStrokeOnEdge(m_activeStroke, m_doc.shapes(), vp.zoom, true)) {
-            pushUndoSnapshot(currentSnapshot());
-            m_doc.shapes().append(*mark);
-            emit toastRequested(edgeMarkToast(parseEdgeMark(mark->label)));
-            finishAutoGeometry(*mark);
-            return;
-        }
     }
 
     const auto recognized = recognizeFreehandShape(m_activeStroke, m_autoShapeOptions);
@@ -2321,10 +2250,6 @@ void CanvasWidget::triggerHoldToShape() {
     m_shapePulseShape = m_activeShape;
     m_shapePulseAlpha = 1.0;
     m_shapePulseAnimation->start();
-    const QString name = recognizedShapeLabel(m_activeShape.kind);
-    if (!name.isEmpty()) {
-        emit toastRequested(name + QStringLiteral(" ✓"));
-    }
     invalidateStaticCache();
     emit stateChanged();
 }
@@ -2442,26 +2367,40 @@ void CanvasWidget::applyEraseAt(const QPointF& worldPos, bool trimToIntersection
     eraseShapes(false);
 
     QSet<QString> removedTextIds;
-    if (m_eraserTargets.ink) {
-        const QRectF eraserRect(worldPos - QPointF(radius, radius), QSizeF(m_eraserSize, m_eraserSize));
-        auto& texts = m_doc.texts();
-        const auto removedTexts = texts.removeIf([&](const TextItem& item) {
-            if (!item.locked && item.bounds.intersects(eraserRect)) {
-                removedTextIds.insert(item.id);
-                return true;
-            }
-            return false;
-        });
-        if (removedTexts > 0) {
-            changed = true;
-        }
-    }
-
     if (!changed) {
         eraseShapes(true);
     }
 
     if (changed) {
+        if (!removedShapeIds.isEmpty() && m_eraserMode == EraserMode::Stroke) {
+            QVector<QPointF> erasedVertices;
+            for (const ShapeItem& orig : m_doc.shapes()) {
+                if (removedShapeIds.contains(orig.id) && !isAutoVertexAngle(orig)) {
+                    if (orig.kind == ShapeKind::Rectangle && orig.vertices.size() == 2) {
+                        const QRectF r = QRectF(orig.vertices[0], orig.vertices[1]).normalized();
+                        erasedVertices << r.topLeft() << r.topRight() << r.bottomRight() << r.bottomLeft();
+                    } else {
+                        erasedVertices.append(orig.vertices);
+                    }
+                }
+            }
+            const double angleTol = 6.0 / std::max(0.25, m_doc.viewport().zoom);
+            shapes.removeIf([&](const ShapeItem& s) {
+                if (s.locked || !isAutoVertexAngle(s))
+                    return false;
+                for (const auto& att : s.attachments) {
+                    if (removedShapeIds.contains(att.targetId))
+                        return true;
+                }
+                if (!s.vertices.isEmpty()) {
+                    for (const QPointF& v : erasedVertices) {
+                        if (pointDistance(s.vertices.front(), v) <= angleTol)
+                            return true;
+                    }
+                }
+                return false;
+            });
+        }
         if (shapes.size() != m_doc.shapes().size() || !removedShapeIds.isEmpty()) {
             updateShapeLinks(shapes, m_doc.shapes(), {});
         }

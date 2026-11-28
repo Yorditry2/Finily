@@ -311,6 +311,8 @@ struct ShapeItem {
     bool shadeVisible = true;
     bool locked = false;
     int solidKind = 0; // Para ShapeKind::Solid3D: 0=Cubo,1=Prisma,2=Cilindro,3=Cono,4=Esfera,5=Pirámide,6=Tetraedro,7=Octaedro,8=TroncoCono,9=TroncoPirámide
+    double dimensionGap = -1.0; // Para LinePattern::Dimension: semiancho del hueco central (< 0 = automático)
+    int shapeVariant = -1; // Variante explícita (p.ej. Triángulo: 0=Libre, 1=Isósceles, 2=Rectángulo, 3=Equilátero)
 };
 
 struct SmartGuide {
@@ -403,7 +405,7 @@ inline ThemeConfig getThemeConfig(ThemeId id) {
         case ThemeId::DarkBoard:
             return {
                 ThemeId::DarkBoard, "Pizarra Oscura",
-                QColor("#16181d"), QColor(255, 255, 255, 20),
+                QColor("#16181d"), QColor(255, 255, 255, 10),
                 QColor(28, 31, 38, 232), QColor(255, 255, 255, 28),
                 QColor("#f3f4f6"), QColor("#9ca3af"),
                 QColor("#60a5fa"), QColor("#f8fafc"), true
@@ -411,7 +413,7 @@ inline ThemeConfig getThemeConfig(ThemeId id) {
         case ThemeId::GreenBoard:
             return {
                 ThemeId::GreenBoard, "Pizarra Academia",
-                QColor("#132a23"), QColor(255, 255, 255, 20),
+                QColor("#132a23"), QColor(255, 255, 255, 10),
                 QColor(18, 43, 36, 235), QColor(255, 255, 255, 32),
                 QColor("#ecfdf5"), QColor("#94b8ac"),
                 QColor("#34d399"), QColor("#f8fafc"), true
@@ -443,7 +445,7 @@ inline ThemeConfig effectiveThemeConfig(ThemeId id, const QColor& customBg) {
     cfg.background = customBg;
     const double lum = 0.299 * customBg.red() + 0.587 * customBg.green() + 0.114 * customBg.blue();
     cfg.isDark = lum < 140.0;
-    cfg.patternColor = cfg.isDark ? QColor(255, 255, 255, 22) : QColor(15, 23, 42, 28);
+    cfg.patternColor = cfg.isDark ? QColor(255, 255, 255, 10) : QColor(15, 23, 42, 16);
     cfg.defaultInk = cfg.isDark ? QColor("#f8fafc") : QColor("#0f172a");
     return cfg;
 }

@@ -33,10 +33,10 @@ QVector<ImageItem> importPdfPages(const QString& path, double startY) {
         const double worldScale = 1000.0 / points.width();
         const QSizeF world = points * worldScale;
         // Bound both a single raster and the aggregate raster storage of long PDFs.
-        const double pixelBudget = 256.0 * 1024.0 * 1024.0 / (4.0 * std::max(1, document.pageCount()));
+        const double pixelBudget = 512.0 * 1024.0 * 1024.0 / (4.0 * std::max(1, document.pageCount()));
         const double rasterScale = std::min({
-            2.0 * worldScale,
-            2200.0 / std::max(points.width(), points.height()),
+            3.0 * worldScale,
+            3200.0 / std::max(points.width(), points.height()),
             std::sqrt(pixelBudget / (points.width() * points.height())),
         });
         if (!isFinite(rasterScale) || rasterScale <= 0.0)

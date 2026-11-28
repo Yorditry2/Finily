@@ -848,21 +848,44 @@ void selectByLasso(const QPolygonF& poly,
         return;
     }
     if (filter.ink) {
+        const QRectF polyRect = poly.boundingRect();
+        const bool isRectPoly = (poly.size() == 4);
+        auto segmentIntersectsRect = [](const QPointF& a, const QPointF& b, const QRectF& r) -> bool {
+            if (r.contains(a) || r.contains(b))
+                return true;
+            if (std::max(a.x(), b.x()) < r.left() || std::min(a.x(), b.x()) > r.right()
+                || std::max(a.y(), b.y()) < r.top() || std::min(a.y(), b.y()) > r.bottom())
+                return false;
+            const QLineF seg(a, b);
+            const QPointF tl = r.topLeft(), tr = r.topRight(), br = r.bottomRight(), bl = r.bottomLeft();
+            QPointF hit;
+            return seg.intersects(QLineF(tl, tr), &hit) == QLineF::BoundedIntersection
+                || seg.intersects(QLineF(tr, br), &hit) == QLineF::BoundedIntersection
+                || seg.intersects(QLineF(br, bl), &hit) == QLineF::BoundedIntersection
+                || seg.intersects(QLineF(bl, tl), &hit) == QLineF::BoundedIntersection;
+        };
         for (const auto& s : strokes) {
             if (s.points.isEmpty()) {
                 continue;
             }
             qsizetype inside = 0;
+            bool crossesRect = false;
             QPointF center;
-            for (const auto& p : s.points) {
-                const QPointF q(p.x, p.y);
+            for (qsizetype i = 0; i < s.points.size(); ++i) {
+                const QPointF q(s.points[i].x, s.points[i].y);
                 center += q;
                 if (poly.containsPoint(q, Qt::OddEvenFill)) {
                     ++inside;
                 }
+                if (isRectPoly && !crossesRect && i + 1 < s.points.size()) {
+                    const QPointF next(s.points[i + 1].x, s.points[i + 1].y);
+                    if (segmentIntersectsRect(q, next, polyRect))
+                        crossesRect = true;
+                }
             }
             center /= double(s.points.size());
-            if (double(inside) / double(s.points.size()) >= 0.40
+            if ((isRectPoly && (inside > 0 || crossesRect))
+                || double(inside) / double(s.points.size()) >= 0.35
                 || poly.containsPoint(center, Qt::OddEvenFill)) {
                 strokeIds.insert(s.id);
             }

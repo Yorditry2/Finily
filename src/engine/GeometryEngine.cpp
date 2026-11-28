@@ -6,6 +6,7 @@
 #include <QPainterPath>
 #include <QPainterPathStroker>
 #include <QPolygonF>
+#include <QScopeGuard>
 #include <QTransform>
 
 #include <algorithm>
@@ -461,6 +462,17 @@ ShapeMeasurement measurement(const ShapeItem& shape) {
     return {text, QRectF(position - QPointF(size.width() / 2, size.height() / 2), size)};
 }
 
+double dimensionGapHalf(const ShapeItem& shape, double len, const QPointF& u, const ShapeMeasurement& label) {
+    double gapHalf = (shape.dimensionGap >= 0.0)
+        ? std::clamp(shape.dimensionGap, 0.0, len * 0.45)
+        : std::min(len * 0.18, std::max(16.0, shape.size * 6.5));
+    if (!label.text.isEmpty() && label.bounds.contains((shape.vertices[0] + shape.vertices[1]) * 0.5)) {
+        gapHalf = std::max(gapHalf, (std::abs(u.x()) * label.bounds.width()
+            + std::abs(u.y()) * label.bounds.height()) / 2 + 4);
+    }
+    return std::min(gapHalf, len * 0.46);
+}
+
 void drawMeasurement(QPainter& painter, const ShapeItem& shape, const ShapeMeasurement& label) {
     if (label.text.isEmpty())
         return;
@@ -847,6 +859,10 @@ void drawShadedRegion(QPainter& painter, const ShapeItem& region) {
     const double span = bounds.width() + bounds.height();
     const double spacing = std::isfinite(span) ? std::max(12.0, span / 160.0) : 12.0;
 
+    painter.save();
+    painter.setOpacity(painter.opacity() * std::clamp(region.opacity, 0.05, 1.0));
+    auto restoreGuard = qScopeGuard([&painter] { painter.restore(); });
+
     if (region.shadePattern == ShadePattern::Solid) {
         if (layer > 0)
             tone.setAlphaF(tone.alphaF() * 0.72);
@@ -1030,13 +1046,55 @@ int hitTestResizeHandle(const ShapeItem& shape, QPointF point, double zoom) {
 QVector<QPointF> getShapeHandles(const ShapeItem& shape) {
     const auto& v=shape.vertices;
     if(shape.kind==ShapeKind::ShadedRegion)return {};
-    if((shape.kind==ShapeKind::Ellipse||shape.kind==ShapeKind::Rectangle||shape.kind==ShapeKind::Axes||shape.kind==ShapeKind::Solid3D)&&v.size()>=2){const QRectF r=QRectF(v[0],v[1]).normalized();return {r.topLeft(),r.topRight(),r.bottomRight(),r.bottomLeft()};}
+    if(shape.kind==ShapeKind::Ellipse&&v.size()>=2) {
+        // 4 handles cardinales (N, E, S, O) sobre la elipse para editar ancho (rx) y largo (ry)
+        const QRectF r=QRectF(v[0],v[1]).normalized();
+        const QPointF c=r.center();
+        return {{c.x(),r.top()},{r.right(),c.y()},{c.x(),r.bottom()},{r.left(),c.y()}};
+    }
+    if(shape.kind==ShapeKind::Line&&shape.linePattern==LinePattern::Dimension&&v.size()>=2) {
+        const QPointF a=v[0], b=v[1];
+        const QPointF d=b-a;
+        const double len=length(d);
+        if(len>1e-3) {
+            const QPointF u=d/len;
+            const QPointF mid=(a+b)*0.5;
+            const double gapHalf=dimensionGapHalf(shape,len,u,measurement(shape));
+            return {a,b,mid-u*gapHalf,mid+u*gapHalf};
+        }
+    }
+    if((shape.kind==ShapeKind::Rectangle||shape.kind==ShapeKind::Axes||shape.kind==ShapeKind::Solid3D)&&v.size()>=2){const QRectF r=QRectF(v[0],v[1]).normalized();return {r.topLeft(),r.topRight(),r.bottomRight(),r.bottomLeft()};}
     return v;
 }
 void applyHandleDrag(ShapeItem& shape,int index,const QPointF& point) {
     auto& v=shape.vertices;
     if(index<0)return;
-    if((shape.kind==ShapeKind::Rectangle||shape.kind==ShapeKind::Ellipse||shape.kind==ShapeKind::Axes||shape.kind==ShapeKind::Solid3D)&&v.size()>=2) {
+    if(shape.kind==ShapeKind::Line&&shape.linePattern==LinePattern::Dimension&&v.size()>=2) {
+        if(index==0||index==1) {
+            v[index]=point;
+        } else if(index==2||index==3) {
+            const QPointF a=v[0], b=v[1];
+            const QPointF d=b-a;
+            const double len=length(d);
+            if(len>1e-3) {
+                const QPointF u=d/len;
+                const QPointF mid=(a+b)*0.5;
+                const double proj=dot(point-mid,u);
+                shape.dimensionGap=std::clamp(index==2 ? -proj : proj, 0.0, len*0.45);
+            }
+        }
+    } else if(shape.kind==ShapeKind::Ellipse&&v.size()>=2) {
+        // Editar semieje horizontal (ancho) o vertical (largo) manteniendo el centro fijo
+        const QRectF r=QRectF(v[0],v[1]).normalized();
+        const QPointF c=r.center();
+        double rx=std::max(4.0,r.width()*0.5);
+        double ry=std::max(4.0,r.height()*0.5);
+        if(index==0||index==2)
+            ry=std::max(4.0,std::abs(point.y()-c.y()));
+        else if(index==1||index==3)
+            rx=std::max(4.0,std::abs(point.x()-c.x()));
+        v={QPointF(c.x()-rx,c.y()-ry),QPointF(c.x()+rx,c.y()+ry)};
+    } else if((shape.kind==ShapeKind::Rectangle||shape.kind==ShapeKind::Axes||shape.kind==ShapeKind::Solid3D)&&v.size()>=2) {
         const auto handles=getShapeHandles(shape);if(index>=handles.size())return;
         const QRectF rect=QRectF(point,handles[(index+2)%4]).normalized();v={rect.topLeft(),rect.bottomRight()};
     } else if(index<v.size()) {
@@ -1070,6 +1128,47 @@ void applyHandleDrag(ShapeItem& shape,int index,const QPointF& point) {
             if(index==0)v[0]=point;
             else if(index==1){v[1]=point;v[2].setY(point.y());v[2].setX(std::max(v[2].x(),point.x()+.5));}
             else if(index==2){v[2]=QPointF(std::max(v[1].x()+.5,point.x()),v[1].y());}
+        } else if(shape.kind==ShapeKind::Triangle&&v.size()>=3&&shape.shapeVariant==1) {
+            int apex = 0;
+            const double l01 = length(v[0] - v[1]), l12 = length(v[1] - v[2]), l20 = length(v[2] - v[0]);
+            auto nearEq = [](double a, double b) {
+                const double m = std::max(a, b);
+                return m > 1e-4 && std::abs(a - b) <= 0.03 * m;
+            };
+            if (nearEq(l01, l20)) apex = 0;
+            else if (nearEq(l01, l12)) apex = 1;
+            else if (nearEq(l12, l20)) apex = 2;
+            {
+                const int b = (apex + 1) % 3;
+                const int c = (apex + 2) % 3;
+                if (index == apex) {
+                    const QPointF mid = (v[b] + v[c]) * 0.5;
+                    const QPointF base = v[c] - v[b];
+                    const double baseLen = length(base);
+                    if (baseLen > 1e-6) {
+                        const QPointF perp(-base.y() / baseLen, base.x() / baseLen);
+                        v[apex] = mid + perp * dot(point - mid, perp);
+                    } else {
+                        v[apex] = point;
+                    }
+                } else {
+                    const int other = (index == b) ? c : b;
+                    const QPointF midOld = (v[b] + v[c]) * 0.5;
+                    QPointF axis = midOld - v[apex];
+                    const double axisLen = length(axis);
+                    if (axisLen <= 1e-6) {
+                        const QPointF baseOld = v[c] - v[b];
+                        const double baseLen = length(baseOld);
+                        axis = (baseLen > 1e-6) ? QPointF(-baseOld.y() / baseLen, baseOld.x() / baseLen)
+                                                : QPointF(0.0, 1.0);
+                    } else {
+                        axis /= axisLen;
+                    }
+                    const double proj = dot(point - v[apex], axis);
+                    v[index] = point;
+                    v[other] = 2.0 * (v[apex] + axis * proj) - point;
+                }
+            }
         } else v[index]=point;
     }
     shape.bounds=computeShapeBounds(shape);
@@ -1184,15 +1283,12 @@ void drawShape(QPainter& painter,const ShapeItem& shape) {
             const double cap=std::clamp(shape.size*3.2,8.0,22.0);
             const auto label = measurement(shape);
             const QPointF mid=(a+b)*0.5;
-            double gapHalf = std::min(len * .18, std::max(16.0, shape.size * 6.5));
-            if (!label.text.isEmpty() && label.bounds.contains(mid))
-                gapHalf = std::max(gapHalf, (std::abs(u.x()) * label.bounds.width()
-                    + std::abs(u.y()) * label.bounds.height()) / 2 + 4);
+            const double gapHalf = dimensionGapHalf(shape, len, u, label);
             QPainterPath dimPath;
             // Topes perpendiculares en ambos extremos
             dimPath.moveTo(a-n*cap); dimPath.lineTo(a+n*cap);
             dimPath.moveTo(b-n*cap); dimPath.lineTo(b+n*cap);
-            if(len>gapHalf*2.4) {
+            if(len>gapHalf*2.05 && gapHalf > 0.5) {
                 dimPath.moveTo(a); dimPath.lineTo(mid-u*gapHalf);
                 dimPath.moveTo(mid+u*gapHalf); dimPath.lineTo(b);
             } else {
@@ -1229,6 +1325,14 @@ void drawShape(QPainter& painter,const ShapeItem& shape) {
         }
     }
     painter.setPen(pen);painter.setBrush(Qt::NoBrush);painter.drawPath(shapePath(shape));
+    if ((shape.kind == ShapeKind::Circle || shape.kind == ShapeKind::Sector) && shape.vertices.size() >= 2) {
+        QColor centerCol = shape.color;
+        centerCol.setAlphaF(centerCol.alphaF() * 0.85);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(centerCol);
+        const double cr = std::clamp(shape.size * 0.95, 2.2, 5.5);
+        painter.drawEllipse(shape.vertices[0], cr, cr);
+    }
     if(shape.kind==ShapeKind::Rectangle&&shape.vertices.size()>=2) {
         if(const auto spec=parseTableSpec(shape.label)) {
             const QRectF r=QRectF(shape.vertices[0],shape.vertices[1]).normalized();
@@ -1769,6 +1873,17 @@ bool updateShapeLinks(QVector<ShapeItem>& shapes, const QVector<ShapeItem>& orig
         }
         dependentChanged = true;
     }
+    const qsizetype beforeCount = shapes.size();
+    shapes.erase(std::remove_if(shapes.begin(), shapes.end(), [&](const ShapeItem& shape) {
+        if (!isAutoVertexAngle(shape) || shape.attachments.isEmpty())
+            return false;
+        return std::any_of(shape.attachments.cbegin(), shape.attachments.cend(),
+                           [&](const ShapeAttachment& link) {
+                               return !link.targetId.isEmpty() && !indices.contains(link.targetId);
+                           });
+    }), shapes.end());
+    if (shapes.size() != beforeCount)
+        dependentChanged = true;
     return dependentChanged;
 }
 

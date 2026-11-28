@@ -85,7 +85,9 @@ private:
     QString m_msg;
     bool m_withUndo = false;
     bool m_hoverUndo = false;
+    qreal m_countdown = 1.0;
     QTimer* m_timer = nullptr;
+    QVariantAnimation* m_barAnim = nullptr;
 };
 
 // Tarjeta de confirmación propia (reemplaza QMessageBox al cerrar pestaña sin guardar).
@@ -150,6 +152,7 @@ signals:
     void elementsPanelToggled();
     void fineWidthRequested(ToolType tool, const QRect& anchorRect);
     void widthSlotSelected(ToolType tool, int slotIndex);
+    void toolWidthChanged(ToolType tool, double mm);
     void colorSwatchSelected(ToolType tool, int colorIndex);
     void customColorRequested(ToolType tool, const QRect& anchorRect);
     void undoRequested();
@@ -182,6 +185,7 @@ protected:
 private:
     enum class HitKind {
         None, Home, Tab, TabClose, NewTab, Fullscreen,
+        WinMinimize, WinMaximize, WinClose,
         Undo, Redo, Tool, Elements,
         WidthSlot, ColorSwatch, ColorWheel,
         Pages, Paper, ZoomOut, ZoomReset, ZoomIn, Export, Gear
@@ -199,6 +203,7 @@ private:
     void rebuildHits();
     int hitIndexAt(const QPointF& pos) const;
     void finishInlineRename(bool accept);
+    bool showWindowControls() const;
 
     ToolbarDockMode m_dockMode = ToolbarDockMode::Top;
     QVector<EditorTabItem> m_tabs;
@@ -218,13 +223,18 @@ private:
 
     std::array<double, 3> m_widths{1.2, 2.4, 4.5};
     int m_activeWidthSlot = 1;
-    bool m_showWidths = true;
+    bool m_showWidths = false;
+    bool m_showWedge = true;
+    int m_lastPenTip = -1;
+    ToolType m_lastWedgeTool = ToolType::Select;
+    EditorWedgeSlider* m_wedgeSlider = nullptr;
 
     QVector<QColor> m_colors;
     int m_activeColorIdx = 0;
     bool m_showColors = true;
     QColor m_penNibColor;
     QColor m_hlBarColor;
+    QColor m_fillBarColor;
 
     EditorLineEdit* m_renameEdit = nullptr;
     int m_renamingTab = -1;
@@ -251,6 +261,7 @@ signals:
     void elementsPanelToggled();
     void fineWidthRequested(ToolType tool, const QRect& anchorRect);
     void widthSlotSelected(ToolType tool, int slotIndex);
+    void toolWidthChanged(ToolType tool, double mm);
     void colorSwatchSelected(ToolType tool, int colorIndex);
     void customColorRequested(ToolType tool, const QRect& anchorRect);
 
@@ -290,6 +301,7 @@ private:
     bool m_showColors = true;
     QColor m_penNibColor;
     QColor m_hlBarColor;
+    QColor m_fillBarColor;
 };
 
 // Cápsula inferior de páginas (oculta en pizarra infinita).

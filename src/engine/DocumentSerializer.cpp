@@ -62,6 +62,10 @@ QJsonObject shapeJson(const ShapeItem& shape) {
                        {"vertices", vertices}};
     if (!shape.label.isEmpty())
         result.insert("label", shape.label);
+    if (shape.dimensionGap >= 0.0)
+        result.insert("dimensionGap", shape.dimensionGap);
+    if (shape.shapeVariant >= 0)
+        result.insert("shapeVariant", shape.shapeVariant);
     if (shape.kind == ShapeKind::ShadedRegion) {
         result.insert("shadePattern", int(shape.shadePattern));
         if (shape.shadeLayer > 0)
@@ -395,6 +399,8 @@ PageData deserializePage(const QJsonObject& root,
         }
         shape.label = o.value("label").toString().left(512);
         shape.solidKind = std::clamp(o.value("solidKind").toInt(0), 0, 9);
+        shape.dimensionGap = o.value("dimensionGap").toDouble(-1.0);
+        shape.shapeVariant = o.value("shapeVariant").toInt(-1);
         shape.id = o.value("id").toString();
         if (shape.id.isEmpty())
             shape.id = freshId();

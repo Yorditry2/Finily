@@ -72,7 +72,7 @@ public:
     }
     void setPolygonSides(int sides);
     int quadVariant() const { return m_quadVariant; }
-    void setQuadVariant(int variant) { m_quadVariant = std::clamp(variant, 0, 4); emit stateChanged(); }
+    void setQuadVariant(int variant) { m_quadVariant = std::clamp(variant, 0, 6); emit stateChanged(); }
     int solidKind() const { return m_solidKind; }
     void setSolidKind(int kind) { m_solidKind = std::clamp(kind, 0, 9); emit stateChanged(); }
     QString congruenceMarkSpec() const { return m_congruenceMarkSpec; }
@@ -94,6 +94,10 @@ public:
             || !m_selectedTextIds.isEmpty() || !m_selectedImageIds.isEmpty();
     }
     bool hasSelectedStrokes() const { return !m_selectedStrokeIds.isEmpty(); }
+    int selectedElementCount() const {
+        return int(m_selectedStrokeIds.size() + m_selectedShapeIds.size()
+                 + m_selectedTextIds.size() + m_selectedImageIds.size());
+    }
     bool canGroupSelection() const;
     bool canUngroupSelection() const;
     bool hasSelectedImage() const { return !m_selectedImageId.isEmpty(); }
@@ -132,6 +136,7 @@ public:
     void setLassoTargetFilter(const LassoTargetFilter& filter);
 
     int penTip() const { return m_penTip; }
+    double penTipWidth(int tip) const { return m_penTipWidths[size_t(std::clamp(tip, 0, 3))]; }
     int highlighterTip() const { return m_highlighterTip; }
     EraserMode eraserMode() const { return m_eraserMode; }
     double eraserSize() const { return m_eraserSize; }
@@ -195,8 +200,14 @@ public:
 
     ShapeFamily selectedShapeFamily(int* outVariant = nullptr) const;
     bool applySelectedShapeVariant(ShapeFamily family, int variant);
+    double selectedCircleSweepDegrees() const;
+    bool setSelectedCircleSweepDegrees(double degrees);
     bool setSelectedShapeFillColor(const QColor& color);
+    bool selectedShapeHasAngles() const;
+    double selectedShapeAnglesRadius() const;
+    bool setSelectedShapeAnglesRadius(double armPx);
     bool toggleSelectedShapeAngles();
+    void syncAutoAnglesAfterShapeChange(const ShapeItem& oldShape, const ShapeItem& newShape);
     double selectedImageOpacity() const;
     bool setSelectedImageOpacity(double opacity);
     bool cropSelectedImageToRect(const QRectF& normalizedRect);
@@ -238,6 +249,8 @@ public:
     void setShapeKind(ShapeKind kind);
     ShadePattern shadePattern() const { return m_shadePattern; }
     void setShadePattern(ShadePattern pattern);
+    double shadeOpacity() const { return m_shadeOpacity; }
+    void setShadeOpacity(double opacity);
     bool fillSegmentMode() const { return m_fillSegmentMode; }
     void setFillSegmentMode(bool segmentMode);
     void setHoldToShapeEnabled(bool enabled);
@@ -511,7 +524,7 @@ private:
     bool m_swapPenButtons = false;
     Qt::MouseButtons m_lastTabletButtons = Qt::NoButton;
     ShapeKind m_shapeKind = ShapeKind::Triangle;
-    int m_triangleVariant = 0; // 0 libre, 1 rectángulo, 2 isósceles, 3 equilátero
+    int m_triangleVariant = 0; // 0 libre, 1 isósceles, 2 rectángulo, 3 equilátero
     int m_polygonSides = 6;    // lados del polígono regular (herramienta Figuras > Polígono)
     // 0 polígono regular, 1 paralelogramo, 2 trapecio isósceles, 3 trapecio rectángulo, 4 trapezoide
     int m_quadVariant = 0;
@@ -531,7 +544,13 @@ private:
     QColor m_operatorColor = QColor("#ef4444");
     bool m_showAutoMeasurements = false;
     int m_cursorStyle = 0;      // 0 = Lapicito, 1 = Aro, 2 = Cruz
-    int m_penTip = 1;           // 0 = Bolígrafo, 1 = Pluma, 2 = Plumón, 3 = Pincel
+    int m_penTip = 1;           // 0 = Bolígrafo, 1 = Pluma, 2 = Grafito, 3 = Tiza
+    std::array<double, 4> m_penTipWidths{1.2, 2.4, 2.0, 4.6};
+    double m_shadeOpacity = 0.70;
+    double m_lastTextFontSize = 22.0;
+    int m_textHandleIndex = -1;
+    double m_textOriginalFontSize = 22.0;
+    QRectF m_textOriginalBounds;
     bool m_tipPredictionEnabled = true;
     bool m_fountainFlickEnabled = true;
     int m_highlighterTip = 0;   // 0 = Biselado, 1 = Redondo, 2 = Recto
@@ -602,6 +621,7 @@ private:
     QPointF m_shapeDragStartWorld;
     QVector<QPointF> m_shapeDragOriginalVertices;
     ShapeKind m_shapeDragOriginalKind = ShapeKind::Line;
+    double m_shapeDragOriginalDimensionGap = -1.0;
     DocumentSnapshot m_snapshotBeforeShapeEdit;
     bool m_polylineActive = false;
     qint64 m_lastPolylineTapMs = -1;

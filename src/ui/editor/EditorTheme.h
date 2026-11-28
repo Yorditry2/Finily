@@ -1,8 +1,10 @@
 #pragma once
 
+#include "core/Types.h"
 #include "ui/DesignTokens.h"
 
 #include <QColor>
+#include <QEasingCurve>
 #include <QFont>
 #include <QImage>
 #include <QLineEdit>
@@ -16,6 +18,7 @@
 
 class QPainter;
 class QTabletEvent;
+class QVariantAnimation;
 
 namespace finily {
 
@@ -47,7 +50,13 @@ struct EditorPalette {
 
 EditorPalette editorPaletteFor(bool dark);
 QFont editorFont(qreal px, int weight = QFont::Normal);
+QFont editorTabularFont(qreal px, int weight = QFont::Normal);
 QColor resolveAdaptableInkColor(const QColor& stored, bool sheetDark);
+
+// Curvas de movimiento aprobadas en DESIGN.md §7 (120 / 200 / 320 ms).
+QEasingCurve editorEasingOut();
+QEasingCurve editorEasingIn();
+QEasingCurve editorEasingSpring();
 
 struct EditorDropdownItem {
     int id = 0;
@@ -76,6 +85,9 @@ void paintEditorWidthSlot(QPainter& p, const QRectF& rect, qreal pillThickness,
                           const EditorPalette& pal);
 void paintEditorSubChevron(QPainter& p, const QRectF& btnRect, const QColor& color);
 void paintEditorFamilyCorner(QPainter& p, const QRectF& btnRect, const QColor& color);
+void paintShapeVariantGlyph(QPainter& p, const QRectF& box, ShapeFamily family,
+                            int variant, const QColor& color);
+void paintLineEndingGlyph(QPainter& p, const QRectF& box, int endingVariant, const QColor& color);
 QString editorScrollAreaStyle(bool dark);
 
 // Superficie flotante / panel / cápsula pintada con QPainter (Wayland + Wacom safe).
@@ -103,6 +115,9 @@ public:
     bool isDark() const { return m_dark; }
     const EditorPalette& palette() const { return m_pal; }
 
+    void setRevealProgress(qreal progress);
+    qreal revealProgress() const { return m_reveal; }
+
     // Captura fondo 1/4 blur una sola vez al abrir/mover (nunca en paintEvent).
     void refreshBackdrop(QWidget* canvasSource);
     void clearBackdrop();
@@ -117,6 +132,7 @@ protected:
     bool m_dark = false;
     Role m_role = Role::PopoverSolid;
     qreal m_radius = 16.0;
+    qreal m_reveal = 1.0;
     QImage m_blurredBackdrop;
     bool m_grabbingBackdrop = false;
 };
@@ -215,9 +231,11 @@ private:
 
     QStringList m_labels;
     int m_current = 0;
+    qreal m_animPos = 0.0;
     int m_hovered = -1;
     bool m_dark = false;
     EditorPalette m_pal;
+    QVariantAnimation* m_slideAnim = nullptr;
 };
 
 // Chip redondeado (.chip) opcionalmente con punto de color o ícono.
@@ -353,6 +371,85 @@ private:
     double m_max = 100.0;
     double m_step = 1.0;
     double m_value = 50.0;
+    bool m_dragging = false;
+    bool m_dark = false;
+    EditorPalette m_pal;
+};
+
+// Deslizador de cuña reutilizable (barra superior 130x28 y cápsula compacta 78x26).
+class EditorWedgeSlider : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit EditorWedgeSlider(QWidget* parent = nullptr);
+
+    void setRange(double minVal, double maxVal, double step = 0.1);
+    void setValue(double value, bool animated = false);
+    double value() const { return m_value; }
+    void setThumbColor(const QColor& color);
+    void setCompact(bool compact);
+    void setEraserStyle(bool isEraser);
+    void applyEditorTheme(bool dark);
+
+signals:
+    void valueChanged(double value);
+    void draggingChanged(bool dragging);
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+    void tabletEvent(QTabletEvent* e) override;
+
+private:
+    void updateFromX(qreal x);
+
+    double m_min = 0.3;
+    double m_max = 8.0;
+    double m_step = 0.1;
+    double m_value = 1.2;
+    double m_displayValue = 1.2;
+    QColor m_thumbColor{"#18181B"};
+    bool m_compact = false;
+    bool m_eraserStyle = false;
+    bool m_dragging = false;
+    bool m_dark = false;
+    EditorPalette m_pal;
+    QVariantAnimation* m_anim = nullptr;
+};
+
+// Deslizador de opacidad/intensidad sobre damero con degradado del color (sin números).
+class EditorOpacitySlider : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit EditorOpacitySlider(QWidget* parent = nullptr);
+
+    void setRange(double minVal, double maxVal, double step = 0.01);
+    void setValue(double value);
+    double value() const { return m_value; }
+    void setColor(const QColor& color);
+    void applyEditorTheme(bool dark);
+
+signals:
+    void valueChanged(double value);
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+    void tabletEvent(QTabletEvent* e) override;
+
+private:
+    void updateFromX(qreal x);
+
+    double m_min = 0.15;
+    double m_max = 0.90;
+    double m_step = 0.01;
+    double m_value = 0.50;
+    QColor m_color{"#FACC15"};
     bool m_dragging = false;
     bool m_dark = false;
     EditorPalette m_pal;
